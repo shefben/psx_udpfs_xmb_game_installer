@@ -30,8 +30,10 @@ or pfsshell) so the disk can be restored.
 | P10 | Release build graph order / embedding / no spurious re-sign | `make test-graph` (fake kelftool) | PASS |
 | P11 | Signed release built with real kelftool + PS2KEYS | `PS2KEYS=... KELF_MODE=none make dist` with xfwcfw kelftool 6b9b471; both KELFs pass `kelftool decrypt` (all signatures) and decrypt to the exact input ELF | PASS (mode none) |
 | P12 | Signed release in canonical `KELF_MODE=mbr` | needs a kelftool fork with `encrypt mbr` | NOT RUN |
-| P13 | udpfsd `-install-dir`: listing, read-only, no path escape, install-dir-only mode | Go tests in `patches/udpfsd/0001` (`make test-udpfsd`) | PASS |
+| P13 | udpfsd mounts (`-install-dir` / `udpfsd.cfg` folders): listing, always read-only, no path escape, mounts-only mode | Go tests in `patches/udpfsd/0002` (`make test-udpfsd`) | PASS |
 | P14 | Batch selection/summary logic | `test_batch.c` | PASS |
+| P15 | udpfsd.cfg parsing/precedence; game prep: ISO/ZSO probe, titles (CFG > game list > file name), art lookup + 74x108 PNG, cover download (local test server), manifest format/atomic write, scan cache | Go tests in `patches/udpfsd/0002` (`make test-udpfsd`) | PENDING |
+| P16 | PS2 manifest parser, server-launcher check (hash/size/KELF), OPL cfg decision, auto-install selection, journal fields | `test_manifest.c`, `test_server_assets.c`, `test_batch.c`, `test_state.c` | PENDING |
 
 ## Level 2 - DESR NON-DESTRUCTIVE VERIFIED
 
@@ -47,6 +49,7 @@ Run in this order. Nothing here creates or deletes a game partition.
 | N6 | Unplug network, select a game | source error, no HDD change | NOT RUN |
 | N7 | Diagnostics > HDD self-test (`PP.UDPFS-TEST`) | all 10 steps PASS; partition count unchanged | NOT RUN |
 | N9 | Install All Games list with `-install-dir` (ISO, ZSO, CD/ DVD/ subfolders, an invalid file, a game already installed) | correct statuses, only `new` selected; back out writes nothing | NOT RUN |
+| N10 | Install All with `udpfsd.cfg` game folders (DVD/CD/GAMES): list appears without probing, real titles from CFG/game list, same game as .iso + .zso shown once as `duplicate` | correct statuses; back out writes nothing | NOT RUN |
 | N8 | Installed Games on a disk with existing hdl-dump games | visible hdl-dump games (PP., type HDL) not listed; `-hide` games listed as UNKNOWN/UNVERIFIED | NOT RUN |
 
 ## Level 3 - DESR DESTRUCTIVE/BOOT VERIFIED
@@ -70,6 +73,11 @@ Run in this order. Nothing here creates or deletes a game partition.
 | D15 | Delete refused for `__common` etc. (cannot be selected in the UI) | | NOT RUN |
 | D16 | Reboot after successful installs | channels remain | NOT RUN |
 | D18 | Install All: 2+ games (one ISO, one ZSO) in one batch | each completes the acceptance chain; summary correct; abort mid-batch leaves aborted game UNVERIFIED and the rest skipped | NOT RUN |
+| D19 | Jackets prepared by the server (ART `_COV` and a downloaded cover) appear in the XMB | | NOT RUN |
+| D20 | OPL cfg copied to `<OPL partition>/CFG/<ID>.cfg`; its compatibility modes take effect when the channel boots; behaviour of a `$VMC_0=` entry whose VMC does not exist yet; an existing cfg is kept | | NOT RUN |
+| D21 | Channels use the server OPL-Launcher (Diagnostics: "OPL-Launcher KELF from server", journal `launcher_source=server`); a mismatching server copy falls back to the embedded one | | NOT RUN |
+| D22 | Fresh console (no `PP.UDPFS-INSTALLER`), `auto_install = yes`, one ISO + one ZSO on the server: start the bootstrap ELF, no further input | installer partition created, both games complete the acceptance chain, console returns to the XMB, both games boot | NOT RUN |
+| D23 | `LoadExecPS2("rom0:OSDSYS")` after auto-install lands in the DESR XMB | | NOT RUN |
 | D17 | Remove one of two games, reboot | other game and installer still work | NOT RUN |
 
 ### Acceptance chain for D4 / D5 (each must be observed)

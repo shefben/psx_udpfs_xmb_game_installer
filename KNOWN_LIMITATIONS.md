@@ -45,17 +45,30 @@ level unless stated otherwise.
 * **Patched HDD driver.** `ps2hdd-hdl.irx` is a reproducible source build
   with one change (remove `__.` partitions of type HDL). See
   `tools/driver/README.md`.
-* **Batch install** (udpfsd `-install-dir`, served as `udpfs:/INSTALL`)
-  uses each game's default title (no per-game title edit), scans one
-  subfolder level, and handles up to 64 images per batch. It needs the
-  patched udpfsd from `dist/udpfsd/`; a stock udpfsd has no
-  `/INSTALL`.
+* **Batch install** lists every game in the server's manifest (all
+  `udpfsd.cfg` game folders), up to 256 images; there is no per-game
+  title edit in a batch (the server's title is used). It needs the
+  patched udpfsd from `dist/udpfsd/`; with a stock udpfsd only
+  `udpfs:/INSTALL` would be checked, and a stock udpfsd has none.
+* **Server-prepared data** (titles, jackets, OPL configs, launcher)
+  is used only with the patched udpfsd. Titles come from your CFG
+  folder and game list (no title database is bundled). Downloaded
+  covers are third-party images (xlenore/ps2-covers). A failed cover
+  download disables downloads until the server restarts.
+* **OPL per-game config** is copied only when OPL has none for the game;
+  a `$VMC_*` entry naming a virtual memory card that does not exist yet
+  is copied unchanged (OPL behaviour untested, checklist D20).
+* **Auto-install** exits through `rom0:OSDSYS`; that this lands in the
+  DESR XMB is checklist D23. It waits at most one minute for the server
+  to finish its scan; on a very large first scan it falls back to the
+  menu (start the installer again later).
 * **Lists.** The browser shows up to 256 entries per folder; the manage
   screens handle up to 128 game pairs.
 * **Disc type** comes from the server folder (`CD/`, `DVD/`), else UDF
   presence or size.
-* **Jacket art** is copied as-is (no resizing); an invalid PNG falls back
-  to the built-in jacket.
+* **Jacket art** prepared by the patched udpfsd is scaled to 74x108 on
+  the server; other art (`udpfs:/ART/<ID>.png`, `<image>.png`) is copied
+  as-is. An invalid PNG falls back to the built-in jacket.
 * **No controller:** the installer only backs out of menus; it never
   starts an install or accepts a prompt without a pad.
 * **Transfer tuning** has not been done; the stream buffer is 1 MiB.

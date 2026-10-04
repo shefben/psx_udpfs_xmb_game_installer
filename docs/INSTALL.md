@@ -9,10 +9,12 @@ on the bottom line. Destructive actions need **R1 held + X**.
 * A way to run one unsigned ELF once (any homebrew launcher).
 * OPL on the HDD: `OPNPS2LD.ELF` in `+OPL`, or wherever
   `hdd0:__common/OPL/conf_hdd.cfg` points (`hdd_partition=...`).
-* A PC/NAS running `udpfsd` on the LAN with **only your games and
-  optional art** (`udpfsd-example/README.txt`). No payload files are
-  needed on the server: the signed OPL-Launcher and installer KELFs are
-  inside the release ELFs.
+* A PC/NAS running the `udpfsd` from `dist/udpfsd/` on the LAN, with
+  `udpfsd.cfg` pointing at your game folders and, optionally, your OPL
+  `CFG`/`ART` folders and a game list (`udpfsd-example/README.txt`).
+  The shipped `opl-launcher-EXECUTE.KELF` sits next to the server; the
+  release ELFs also contain their own copies, so installs never depend
+  on the server for it.
 * The release files from `dist/`: `desr-udpfs-installer-bootstrap.elf`.
 
 ## 0. Before the first wet run
@@ -81,24 +83,46 @@ channel** succeeds.
 
 ## 3b. Install several games at once
 
-1. Put the games in one folder on the PC and start the server with
-   `-install-dir`, e.g.
-   `udpfsd-windows-amd64.exe -fsroot D:\PS2 -install-dir D:\PS2\ToInstall -ro`.
-   The folder appears on the console as `udpfs:/INSTALL` (read-only).
-2. **Install All Games from udpfs:/INSTALL**. Every `.iso` / `.zso` in
-   the folder (and in subfolders one level down, such as `CD/`, `DVD/`)
-   is checked. The list shows type, file, startup ID, size and status:
-   `new` (selected), `already on HDD`, `duplicate`, `not a PS2 image`,
-   `too big for APA` (not selectable).
+1. Set the game folders in `udpfsd.cfg` next to the server (`dvd`, `cd`,
+   `games`, `install`; see `udpfsd-example/README.txt`) and start it.
+   The server reads every game once and publishes its list, titles,
+   jackets and OPL configs.
+2. **Install All Games from the server**. The list appears at once (no
+   per-game probing over the network) and shows type, file, startup ID,
+   size and status: `new` (selected), `already on HDD`, `duplicate`
+   (e.g. the same game as `.iso` and `.zso`), `not a PS2 image`,
+   `too big for APA` (not selectable). With a server that publishes no
+   list (an older udpfsd), the installer checks `udpfs:/INSTALL` itself.
 3. Square toggles a game; the status line shows the space needed against
    the free space. X starts.
 4. Games are installed one after another with exactly the single-game
    procedure (copy, full read-back CRC check, then the XMB channel), using
-   the default title of each game. Hold SELECT + O to abort the current
+   the server's title for each game. Hold SELECT + O to abort the current
    game; you are then asked whether to stop the rest.
 5. A summary lists each game as installed, data only (channel pending,
    when OPL is missing), FAILED (with error and stage) or skipped. Failed
    copies show as UNKNOWN/UNVERIFIED in Repair XMB Channels.
+
+## 3c. Fully automatic installs
+
+With `auto_install = yes` in `udpfsd.cfg`, starting the installer (the
+bootstrap ELF from wLaunchELF, or its XMB channel) needs no further input:
+
+1. A 10 second countdown starts as soon as the server is found (if the
+   server is still reading games, the installer waits up to a minute).
+   O or Triangle cancels into the normal menu.
+2. First run: `PP.UDPFS-INSTALLER` is created and verified (the installer
+   then also appears in the XMB).
+3. If OPL is not on the HDD nothing is installed; the reason is shown.
+4. Every game that is not on the HDD yet and fits the free space is
+   installed as in 3b. Each new channel gets the server's OPL-Launcher
+   (if its SHA-256 matches the server's list; otherwise the built-in
+   copy), title, jacket, and - if OPL has none yet - the game's OPL
+   config (`CFG/<ID>.cfg` on the OPL partition).
+5. The summary is shown for 15 seconds, then the console returns to the
+   XMB. If there was nothing new to install, the normal menu opens.
+
+Auto mode never deletes, repairs or overwrites anything.
 
 ## 4. Installed games, repair and delete
 

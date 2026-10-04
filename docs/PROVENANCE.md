@@ -22,9 +22,21 @@ is GPL-2.0.
 ## udpfsd
 
 `dist/udpfsd/` binaries are pcm720/udpfsd 58d7c8f (MIT, see
-reference/udpfsd/LICENSE) plus `patches/udpfsd/0001-install-dir.patch`
-(new `internal/fs/installdir.go` and tests; small hooks in
-`backend.go`, `utils.go`, `fileops.go`, `cmd/udpfsd/main.go`).
+reference/udpfsd/LICENSE) plus, applied in order:
+
+* `patches/udpfsd/0001-install-dir.patch` - `-install-dir` (served
+  read-only as `/INSTALL`); hooks in `backend.go`, `utils.go`,
+  `fileops.go`, `cmd/udpfsd/main.go`.
+* `patches/udpfsd/0002-game-prep.patch` - new packages
+  `internal/config` (udpfsd.cfg) and `internal/prep` (ISO/ZSO probe
+  ported from `src/iso9660.c`, titles, jackets, cover download,
+  manifest); `internal/fs/mounts.go` replaces `installdir.go` with a
+  general read-only mount table; `cmd/udpfsd/main.go` loads the config
+  and starts preparation. Go standard library only (image/png,
+  image/jpeg, image/gif, net/http).
+
+Covers downloaded at run time come from xlenore/ps2-covers on GitHub;
+none are shipped.
 
 ## Upstream code copied or adapted
 

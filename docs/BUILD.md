@@ -71,12 +71,25 @@ compile (`#error`), so a normal install never depends on the server.
 ## udpfsd server (`make udpfsd`)
 
 `tools/build-udpfsd.sh` copies the pinned `reference/udpfsd`, applies
-`patches/udpfsd/0001-install-dir.patch` (adds `-install-dir`, served
-read-only as `/INSTALL`), runs the Go tests of the touched packages and
-builds `build/udpfsd/udpfsd-windows-amd64.exe` and `udpfsd-linux-amd64`
-(CGO off, so ISO/CSO/ZSO like upstream's release binaries). It uses a
-local Go >= 1.25 or the digest-pinned `golang:1.25` Docker image.
-`make dist` includes both binaries; `make test-udpfsd` only tests.
+`patches/udpfsd/*.patch` in order (`0001`: `-install-dir`; `0002`:
+`udpfsd.cfg`, read-only mounts, game preparation and the manifest the
+installer reads), runs `go vet` and the Go tests of every package
+except `chd` (needs CGO) and builds `build/udpfsd/udpfsd-windows-amd64.exe`
+and `udpfsd-linux-amd64` (CGO off, so ISO/CSO/ZSO like upstream's
+release binaries). It uses a local Go >= 1.25 or the digest-pinned
+`golang:1.25` Docker image. `make dist` puts both binaries, the signed
+`opl-launcher-EXECUTE.KELF` and the `udpfsd.cfg` template in
+`dist/udpfsd/`; `make test-udpfsd` only tests.
+
+To change the server patches, work in a scratch tree:
+
+```sh
+tools/udpfsd-patch.sh init 2     # reference + patches numbered < 0002
+# edit build/udpfsd-dev/...
+tools/udpfsd-patch.sh fmt        # gofmt the touched packages
+tools/udpfsd-patch.sh test       # gofmt check, go vet, go test
+tools/udpfsd-patch.sh save 0002-game-prep.patch
+```
 
 ## Signing (`tools/kelf-sign.sh`)
 
