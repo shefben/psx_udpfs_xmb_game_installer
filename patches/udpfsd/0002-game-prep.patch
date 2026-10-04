@@ -1110,3 +1110,441 @@ index 7565f9e..803b401 100644
  	}
  	joined := filepath.Join(s.fsRoot, clientPath)
  	resolved, err := filepath.Abs(joined)
+diff --git a/internal/prep/iso.go b/internal/prep/iso.go
+new file mode 100644
+index 0000000..f359609
+--- /dev/null
++++ b/internal/prep/iso.go
+@@ -0,0 +1,224 @@
++// Package prep prepares game metadata, jackets and the manifest that the
++// PSX DESR installer reads from udpfs:/.udpfsd.
++package prep
++
++import (
++	"bytes"
++	"encoding/binary"
++	"errors"
++	"fmt"
++	"io"
++	"os"
++	"path/filepath"
++	"regexp"
++	"strings"
++	"sync"
++
++	"github.com/pcm720/udpfsd/internal/fs/compression"
++)
++
++const isoSector = 2048
++const cdMaxSectors = 445500 // 99-minute CD; larger without a hint = DVD
++
++// DiscInfo is what the installer needs to know about one disc image.
++type DiscInfo struct {
++	ID        string // "SLUS_203.12"
++	VolumeID  string
++	Bytes     int64
++	PVDBlocks uint32
++	Sectors   uint32
++	Layer1    uint32
++	DVD       bool
++}
++
++var idRe = regexp.MustCompile(`^[A-Z]{4}_[0-9]{3}\.[0-9]{2}$`)
++
++// ValidID reports whether id has the BOOT form XXXX_NNN.NN.
++func ValidID(id string) bool { return idRe.MatchString(id) }
++
++type readerAtCloser struct {
++	mu sync.Mutex
++	f  interface {
++		io.ReadSeeker
++		io.Closer
++	}
++}
++
++func (r *readerAtCloser) ReadAt(p []byte, off int64) (int, error) {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	if _, err := r.f.Seek(off, io.SeekStart); err != nil {
++		return 0, err
++	}
++	return io.ReadFull(r.f, p)
++}
++
++func (r *readerAtCloser) Close() error { return r.f.Close() }
++
++// OpenLogical opens an .iso as-is or a .zso through udpfsd's decompressor,
++// returning the logical ISO stream.
++func OpenLogical(path string) (io.ReaderAt, int64, io.Closer, error) {
++	if strings.EqualFold(filepath.Ext(path), ".zso") {
++		fo := compression.Open(path, 8)
++		if fo == nil {
++			return nil, 0, nil, fmt.Errorf("%s: not a valid ZSO", filepath.Base(path))
++		}
++		// The cached reader's Stat carries no size; read it from the header.
++		st := compression.GetStat(path)
++		if st == nil {
++			fo.Close()
++			return nil, 0, nil, fmt.Errorf("%s: not a valid ZSO", filepath.Base(path))
++		}
++		r := &readerAtCloser{f: fo}
++		return r, st.Size(), r, nil
++	}
++	f, err := os.Open(path)
++	if err != nil {
++		return nil, 0, nil, err
++	}
++	st, err := f.Stat()
++	if err != nil {
++		f.Close()
++		return nil, 0, nil, err
++	}
++	return f, st.Size(), f, nil
++}
++
++// HintFromPath returns "CD"/"DVD" from the nearest CD/DVD directory
++// component of a client path, else "" (same rule as the installer).
++func HintFromPath(p string) string {
++	hint := ""
++	parts := strings.Split(strings.ReplaceAll(p, "\\", "/"), "/")
++	for _, c := range parts[:len(parts)-1] {
++		switch strings.ToUpper(c) {
++		case "CD":
++			hint = "CD"
++		case "DVD":
++			hint = "DVD"
++		}
++	}
++	return hint
++}
++
++func readSector(r io.ReaderAt, lba uint32, buf []byte) error {
++	_, err := r.ReadAt(buf[:isoSector], int64(lba)*isoSector)
++	return err
++}
++
++func findInDir(r io.ReaderAt, lba, size uint32, target string) (uint32, uint32, error) {
++	buf := make([]byte, isoSector)
++	if size > 64*isoSector {
++		size = 64 * isoSector
++	}
++	for left := size; left > 0; lba++ {
++		if err := readSector(r, lba, buf); err != nil {
++			return 0, 0, err
++		}
++		chunk := min(left, isoSector)
++		for off := uint32(0); off+33 < chunk; {
++			rl := uint32(buf[off])
++			if rl < 34 || off+rl > isoSector {
++				break
++			}
++			nl := uint32(buf[off+32])
++			name := string(buf[off+33 : off+33+min(nl, rl-33)])
++			if name == target || strings.HasPrefix(name, target+";") {
++				return binary.LittleEndian.Uint32(buf[off+2:]), binary.LittleEndian.Uint32(buf[off+10:]), nil
++			}
++			off += rl
++		}
++		if left <= isoSector {
++			break
++		}
++		left -= isoSector
++	}
++	return 0, 0, errors.New("SYSTEM.CNF not found")
++}
++
++// bootID extracts the game ID from SYSTEM.CNF's BOOT2 (same rule as the
++// installer's boot_id_from_boot2: skip the device and directories, stop at
++// ';' or whitespace, upper-case).
++func bootID(cnf string) (string, error) {
++	for _, line := range strings.Split(strings.ReplaceAll(cnf, "\r", ""), "\n") {
++		k, v, ok := strings.Cut(line, "=")
++		if !ok || strings.TrimSpace(k) != "BOOT2" {
++			continue
++		}
++		v = strings.TrimSpace(v)
++		if i := strings.Index(v, ":"); i >= 0 {
++			v = v[i+1:]
++		}
++		if i := strings.LastIndexAny(v, "\\/"); i >= 0 {
++			v = v[i+1:]
++		}
++		if i := strings.IndexAny(v, "; \t"); i >= 0 {
++			v = v[:i]
++		}
++		v = strings.ToUpper(v)
++		if !ValidID(v) {
++			return "", fmt.Errorf("BOOT2 %q is not a game ID", v)
++		}
++		return v, nil
++	}
++	return "", errors.New("SYSTEM.CNF has no BOOT2")
++}
++
++// Probe validates a PS2 disc image and extracts DiscInfo (same rules as
++// the installer's src/iso9660.c).
++func Probe(r io.ReaderAt, size int64, hint string) (DiscInfo, error) {
++	var d DiscInfo
++	d.Bytes = size
++	pvd := make([]byte, isoSector)
++	if err := readSector(r, 16, pvd); err != nil {
++		return d, fmt.Errorf("read PVD: %w", err)
++	}
++	if pvd[0] != 1 || !bytes.Equal(pvd[1:6], []byte("CD001")) {
++		return d, errors.New("not an ISO9660 image")
++	}
++	d.VolumeID = strings.TrimRight(string(pvd[40:72]), " \x00")
++	d.PVDBlocks = binary.LittleEndian.Uint32(pvd[80:])
++	if binary.LittleEndian.Uint16(pvd[128:]) != isoSector || d.PVDBlocks <= 16 {
++		return d, errors.New("bad PVD block size/count")
++	}
++	if size%isoSector != 0 || size < int64(d.PVDBlocks)*isoSector || size/isoSector > 0xFFFFFFFF {
++		return d, errors.New("image size does not match PVD")
++	}
++	d.Sectors = uint32(size / isoSector)
++	lba, sz, err := findInDir(r, binary.LittleEndian.Uint32(pvd[158:]), binary.LittleEndian.Uint32(pvd[166:]), "SYSTEM.CNF")
++	if err != nil {
++		return d, err
++	}
++	sz = min(sz, isoSector)
++	cnf := make([]byte, isoSector)
++	if err := readSector(r, lba, cnf); err != nil {
++		return d, err
++	}
++	if d.ID, err = bootID(string(cnf[:sz])); err != nil {
++		return d, err
++	}
++	udf := false
++	buf := make([]byte, isoSector)
++	for l := uint32(17); l < 32; l++ {
++		if readSector(r, l, buf) != nil {
++			break
++		}
++		if s := string(buf[1:6]); s == "BEA01" || s == "NSR02" || s == "NSR03" {
++			udf = true
++			break
++		}
++	}
++	switch hint {
++	case "CD":
++		d.DVD = false
++	case "DVD":
++		d.DVD = true
++	default:
++		d.DVD = udf || d.Sectors > cdMaxSectors
++	}
++	if d.DVD && d.Sectors > d.PVDBlocks {
++		if readSector(r, d.PVDBlocks, buf) == nil && buf[0] == 1 && string(buf[1:6]) == "CD001" {
++			d.Layer1 = d.PVDBlocks - 16
++		}
++	}
++	return d, nil
++}
+diff --git a/internal/prep/iso_test.go b/internal/prep/iso_test.go
+new file mode 100644
+index 0000000..99c47c6
+--- /dev/null
++++ b/internal/prep/iso_test.go
+@@ -0,0 +1,106 @@
++package prep
++
++import (
++	"bytes"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func probeBytes(t *testing.T, img []byte, hint string) (DiscInfo, error) {
++	t.Helper()
++	return Probe(bytes.NewReader(img), int64(len(img)), hint)
++}
++
++func TestProbeCD(t *testing.T) {
++	d, err := probeBytes(t, buildISO("GT4", 1000, 1000, cnfOK, false), "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if d.ID != "SLUS_203.12" || d.VolumeID != "GT4" || d.Sectors != 1000 || d.DVD || d.Layer1 != 0 {
++		t.Fatalf("%+v", d)
++	}
++}
++
++func TestProbeLowercaseBoot2(t *testing.T) {
++	d, err := probeBytes(t, buildISO("X", 1000, 1000, "BOOT2 = cdrom0:\\slus_203.12;1\n", false), "")
++	if err != nil || d.ID != "SLUS_203.12" {
++		t.Fatalf("%+v %v", d, err)
++	}
++}
++
++func TestProbeHintsAndUDF(t *testing.T) {
++	d, _ := probeBytes(t, buildISO("X", 1000, 1000, cnfOK, true), "")
++	if !d.DVD {
++		t.Fatal("UDF not DVD")
++	}
++	d, _ = probeBytes(t, buildISO("X", 1000, 1000, cnfOK, true), "CD")
++	if d.DVD {
++		t.Fatal("CD hint ignored")
++	}
++	d, _ = probeBytes(t, buildISO("X", 1000, 1000, cnfOK, false), "DVD")
++	if !d.DVD {
++		t.Fatal("DVD hint ignored")
++	}
++}
++
++func TestProbeRejects(t *testing.T) {
++	if _, err := probeBytes(t, make([]byte, 64*sec), ""); err == nil {
++		t.Fatal("blank accepted")
++	}
++	if _, err := probeBytes(t, buildISO("X", 1000, 1000, "", false), ""); err == nil {
++		t.Fatal("no SYSTEM.CNF accepted")
++	}
++	if _, err := probeBytes(t, buildISO("X", 1000, 1000, "BOOT2 = cdrom0:\\MAIN.ELF;1\n", false), ""); err == nil {
++		t.Fatal("non-ID BOOT2 accepted")
++	}
++	img := buildISO("X", 1000, 1000, cnfOK, false)
++	if _, err := probeBytes(t, img[:999*sec], ""); err == nil {
++		t.Fatal("truncated accepted")
++	}
++}
++
++func TestProbeDVD9LayerBreak(t *testing.T) {
++	img := buildISO("DL", 1000, 1500, cnfOK, true)
++	copy(img[1000*sec:], img[16*sec:17*sec]) // layer-1 PVD at maxLBA
++	d, err := probeBytes(t, img, "")
++	if err != nil || d.Layer1 != 1000-16 || d.Sectors != 1500 {
++		t.Fatalf("%+v %v", d, err)
++	}
++}
++
++func TestHintFromPath(t *testing.T) {
++	cases := map[string]string{"/DVD/x.iso": "DVD", "/CD/a/x.iso": "CD", "/GAMES/x.iso": "",
++		"/GAMES/cd/x.iso": "CD", "/DVD/CD/x.iso": "CD", "/DVDs/x.iso": ""}
++	for p, want := range cases {
++		if got := HintFromPath(p); got != want {
++			t.Fatalf("%s: %q want %q", p, got, want)
++		}
++	}
++}
++
++func TestOpenLogicalISOAndZSO(t *testing.T) {
++	dir := t.TempDir()
++	img := buildISO("Z", 1000, 1000, cnfOK, false)
++	iso := filepath.Join(dir, "g.iso")
++	os.WriteFile(iso, img, 0644)
++	zso := filepath.Join(dir, "g.zso")
++	writeZSO(t, zso, img)
++	for _, p := range []string{iso, zso} {
++		r, size, c, err := OpenLogical(p)
++		if err != nil {
++			t.Fatalf("%s: %v", p, err)
++		}
++		d, err := Probe(r, size, "")
++		c.Close()
++		if err != nil || d.ID != "SLUS_203.12" || size != int64(len(img)) {
++			t.Fatalf("%s: %+v %v size %d", p, d, err, size)
++		}
++	}
++}
++
++func TestValidID(t *testing.T) {
++	if !ValidID("SCES_503.62") || ValidID("SCES-50362") || ValidID("sces_503.62") || ValidID("SCES_503.6") {
++		t.Fatal("ValidID")
++	}
++}
+diff --git a/internal/prep/testiso_test.go b/internal/prep/testiso_test.go
+new file mode 100644
+index 0000000..f57098f
+--- /dev/null
++++ b/internal/prep/testiso_test.go
+@@ -0,0 +1,90 @@
++package prep
++
++import (
++	"encoding/binary"
++	"os"
++	"testing"
++)
++
++const sec = 2048
++
++func put32both(b []byte, v uint32) {
++	binary.LittleEndian.PutUint32(b, v)
++	binary.BigEndian.PutUint32(b[4:], v)
++}
++
++func dirrec(b []byte, lba, size uint32, name string, dir bool) int {
++	n := 33 + len(name)
++	if n%2 == 1 {
++		n++
++	}
++	b[0] = byte(n)
++	put32both(b[2:], lba)
++	put32both(b[10:], size)
++	if dir {
++		b[25] = 2
++	}
++	b[32] = byte(len(name))
++	copy(b[33:], name)
++	return n
++}
++
++// buildISO returns a PS2 disc image of totalSectors sectors whose PVD
++// says pvdBlocks. cnf == "" means no SYSTEM.CNF; udf adds BEA01/NSR02.
++func buildISO(volid string, pvdBlocks, totalSectors uint32, cnf string, udf bool) []byte {
++	img := make([]byte, int(totalSectors)*sec)
++	pvd := img[16*sec:]
++	pvd[0] = 1
++	copy(pvd[1:], "CD001")
++	pvd[6] = 1
++	for i := 0; i < 32; i++ {
++		pvd[40+i] = ' '
++	}
++	copy(pvd[40:], volid)
++	put32both(pvd[80:], pvdBlocks)
++	binary.LittleEndian.PutUint16(pvd[128:], sec)
++	dirrec(pvd[156:], 24, sec, "\x00", true)
++	term := img[17*sec:]
++	term[0] = 255
++	copy(term[1:], "CD001")
++	if udf {
++		copy(img[18*sec+1:], "BEA01")
++		copy(img[19*sec+1:], "NSR02")
++	}
++	root := img[24*sec:]
++	off := dirrec(root, 24, sec, "\x00", true)
++	off += dirrec(root[off:], 24, sec, "\x01", true)
++	if cnf != "" {
++		dirrec(root[off:], 26, uint32(len(cnf)), "SYSTEM.CNF;1", false)
++		copy(img[26*sec:], cnf)
++	}
++	return img
++}
++
++// writeZSO stores data as a ZISO (maxcso .zso) with every block flagged
++// uncompressed: n+1 index entries, bit 31 = stored, alignment 0.
++func writeZSO(t *testing.T, path string, data []byte) {
++	t.Helper()
++	const bs = 2048
++	n := (len(data) + bs - 1) / bs
++	hdr := make([]byte, 24)
++	copy(hdr, "ZISO")
++	binary.LittleEndian.PutUint32(hdr[4:], 24)
++	binary.LittleEndian.PutUint64(hdr[8:], uint64(len(data)))
++	binary.LittleEndian.PutUint32(hdr[16:], bs)
++	hdr[20] = 1 // version
++	offs := make([]byte, 4*(n+1))
++	pos := uint32(24 + 4*(n+1))
++	for i := 0; i <= n; i++ {
++		binary.LittleEndian.PutUint32(offs[4*i:], pos|0x80000000)
++		pos += bs
++	}
++	out := append(hdr, offs...)
++	pad := make([]byte, n*bs-len(data))
++	out = append(append(out, data...), pad...)
++	if err := os.WriteFile(path, out, 0644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++const cnfOK = "BOOT2 = cdrom0:\\SLUS_203.12;1\r\nVER = 1.00\r\nVMODE = NTSC\r\n"
