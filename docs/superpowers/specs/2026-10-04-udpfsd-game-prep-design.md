@@ -120,7 +120,9 @@ licensing of downloaded covers.
 
 ## 4. Delivery: `udpfs:/.udpfsd/`
 
-* `manifest.txt` — first line `udpfsd-manifest 1`, then one line per
+* `manifest.txt` — first line `udpfsd-manifest 1` (plus `scanning=1`
+  while a scan runs: written before the server answers discovery, so the
+  console never sees the previous run's list), then one line per
   image, tab-separated:
   `path  status  id  title  bytes  disc  layer1  jacket  cfg`
   * `path`: client path, e.g. `/DVD/HALF LIFE.zso.iso` (the virtual

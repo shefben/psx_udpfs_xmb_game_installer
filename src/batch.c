@@ -26,12 +26,13 @@ void batch_classify(batch_entry_t *e, int n) {
       e[i].status = BATCH_TOO_BIG;
     } else if (e[i].probe_err != ERR_OK) {
       e[i].status = BATCH_INVALID;
-    } else if (e[i].pair != PAIR_NONE) {
+    } else if (e[i].pair != PAIR_NONE || e[i].id_on_hdd) {
       e[i].status = BATCH_EXISTS;
     } else {
       e[i].status = BATCH_ELIGIBLE;
+      /* Same game ID = same game, whatever its title or file name. */
       for (int k = 0; k < i; k++) {
-        if (e[k].status == BATCH_ELIGIBLE && !strcmp(e[k].hidden, e[i].hidden)) {
+        if (e[k].status == BATCH_ELIGIBLE && !strcmp(e[k].boot_id, e[i].boot_id)) {
           e[i].status = BATCH_DUPLICATE;
           e[i].duplicate_of = k;
           break;
@@ -40,6 +41,31 @@ void batch_classify(batch_entry_t *e, int n) {
     }
     e[i].selected = e[i].status == BATCH_ELIGIBLE;
   }
+}
+
+void batch_mark_on_hdd(batch_entry_t *e, int n, const char *const *names, int nnames) {
+  for (int i = 0; i < n; i++) {
+    char pid[PART_ID_LEN + 1];
+    e[i].id_on_hdd = 0;
+    if (!e[i].boot_id[0] || boot_id_to_part_id(e[i].boot_id, pid))
+      continue;
+    for (int k = 0; k < nnames && !e[i].id_on_hdd; k++) {
+      const char *p = names[k];
+      e[i].id_on_hdd = (!strncmp(p, "__.", 3) || !strncmp(p, "PP.", 3)) &&
+                       !strncmp(p + 3, pid, PART_ID_LEN) &&
+                       !strncmp(p + 3 + PART_ID_LEN, "..", 2);
+    }
+  }
+}
+
+int auto_should_wait(int loaded, const manifest_t *m) {
+  return !loaded || !m || m->scanning;
+}
+
+auto_step_t auto_installer_step(int exists, int mounted) {
+  if (!exists)
+    return AUTO_CREATE_INSTALLER;
+  return mounted ? AUTO_INSTALLER_OK : AUTO_STOP;
 }
 
 int batch_toggle(batch_entry_t *e) {

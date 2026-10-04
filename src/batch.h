@@ -54,7 +54,23 @@ typedef struct {
   inst_err_t err;
   const char *stage;
   const char *opl_cfg;    /* install_report_t.opl_cfg */
+  int id_on_hdd;          /* a partition with this game ID exists (any title) */
 } batch_entry_t;
+
+/* Set id_on_hdd for every entry whose game ID appears in one of the
+ * partition names ("__.<PART_ID>..*" or "PP.<PART_ID>..*"), whatever the
+ * title part - a game installed under another title is still installed. */
+void batch_mark_on_hdd(batch_entry_t *e, int n, const char *const *names, int nnames);
+
+/* Auto mode: wait while there is no manifest yet or the server is still
+ * scanning (its manifest says scanning=1). */
+int auto_should_wait(int loaded, const manifest_t *m);
+
+typedef enum { AUTO_INSTALLER_OK = 0, AUTO_CREATE_INSTALLER, AUTO_STOP } auto_step_t;
+
+/* Auto mode only creates a missing installer partition; one that exists
+ * but did not mount may be damaged and is never rewritten. */
+auto_step_t auto_installer_step(int exists, int mounted);
 
 /* Classify entries (probe results and pair states already filled):
  * invalid -> EXISTS (pair present) -> DUPLICATE (same hidden name as an

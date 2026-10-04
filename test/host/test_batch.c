@@ -15,7 +15,10 @@ static batch_entry_t ent(const char *name, inst_err_t probe, const char *hidden,
   snprintf(e.hidden, sizeof(e.hidden), "%s", hidden);
   if (strlen(hidden) > 2)
     snprintf(e.visible, sizeof(e.visible), "PP%s", hidden + 2);
-  snprintf(e.boot_id, sizeof(e.boot_id), "SLUS_203.12");
+  /* boot ID from the hidden name: "__.SLUS-20312..A" -> "SLUS_203.12" */
+  if (strlen(hidden) >= 13)
+    snprintf(e.boot_id, sizeof(e.boot_id), "%.4s_%.3s.%.2s", hidden + 3, hidden + 8,
+             hidden + 11);
   snprintf(e.title, sizeof(e.title), "%s", name);
   e.bytes = (uint64_t)alloc_mb * MB / 2;
   e.alloc_mb = alloc_mb;
@@ -163,4 +166,56 @@ TEST(batch_auto_select_fits_free_space_in_order) {
   CHECK_EQ_INT(e[3].status, BATCH_EXISTS);
   CHECK(strcmp(batch_status_label(BATCH_NO_SPACE), "no space") == 0);
   CHECK_EQ_INT(batch_auto_select(e, 4, 0), 0);
+}
+
+TEST(batch_game_on_hdd_under_other_title_is_exists) {
+  /* Installed by an earlier release under the volume-ID title; the server
+   * now offers a CFG title, so the pair names differ. Same game ID. */
+  batch_entry_t e[2];
+  e[0] = ent("GT4.iso", ERR_OK, "__.SLUS-20312..GRAN_TURISMO_4", PAIR_NONE, 4096);
+  e[1] = ent("Other.iso", ERR_OK, "__.SLUS-20313..OTHER", PAIR_NONE, 512);
+  const char *on_hdd[] = {"__common", "__.SLUS-20312..GT4", "PP.SLUS-20312..GT4",
+                          "PP.UDPFS-INSTALLER", "__.SLUS-2031..BAD"};
+  batch_mark_on_hdd(e, 2, on_hdd, 5);
+  CHECK(e[0].id_on_hdd);
+  CHECK(!e[1].id_on_hdd);
+  batch_classify(e, 2);
+  CHECK_EQ_INT(e[0].status, BATCH_EXISTS);
+  CHECK_EQ_INT(e[1].status, BATCH_ELIGIBLE);
+  CHECK_EQ_INT(batch_auto_select(e, 2, 100000), 1);
+  CHECK(!e[0].selected);
+}
+
+TEST(batch_same_id_different_titles_is_duplicate) {
+  /* "GTA SA.iso" and "Grand Theft Auto SA.zso", no CFG/gamelist entry:
+   * file-name titles differ, the game is the same. */
+  batch_entry_t e[2];
+  e[0] = ent("GTA SA.iso", ERR_OK, "__.SLUS-20946..GTA_SA", PAIR_NONE, 4096);
+  e[1] = ent("Grand Theft Auto SA.zso.iso", ERR_OK, "__.SLUS-20946..GRAND_THEFT_AUTO_SA",
+             PAIR_NONE, 4096);
+  batch_classify(e, 2);
+  CHECK_EQ_INT(e[0].status, BATCH_ELIGIBLE);
+  CHECK_EQ_INT(e[1].status, BATCH_DUPLICATE);
+  CHECK_EQ_INT(e[1].duplicate_of, 0);
+  CHECK_EQ_INT(batch_count_selected(e, 2), 1);
+}
+
+TEST(auto_waits_while_server_scans) {
+  static manifest_t m;
+  const char *scanning = "udpfsd-manifest 1 auto=1 scanning=1\n";
+  const char *ready = "udpfsd-manifest 1 auto=1\n";
+  CHECK(auto_should_wait(0, NULL));
+  CHECK_EQ_INT(manifest_parse(scanning, strlen(scanning), &m), 0);
+  CHECK(m.scanning && m.auto_install);
+  CHECK(auto_should_wait(1, &m));
+  CHECK_EQ_INT(manifest_parse(ready, strlen(ready), &m), 0);
+  CHECK(!m.scanning);
+  CHECK(!auto_should_wait(1, &m));
+}
+
+TEST(auto_installer_partition_never_repaired) {
+  CHECK_EQ_INT(auto_installer_step(0, 0), AUTO_CREATE_INSTALLER);
+  CHECK_EQ_INT(auto_installer_step(1, 1), AUTO_INSTALLER_OK);
+  /* exists but did not mount: may be damaged - stop, never rewrite it */
+  CHECK_EQ_INT(auto_installer_step(1, 0), AUTO_STOP);
 }

@@ -45,6 +45,8 @@ static int parse_header(const char *line, manifest_t *m) {
       }
     } else if (n == 6 && !strncmp(p, "auto=", 5)) {
       m->auto_install = p[5] == '1';
+    } else if (n == 10 && !strncmp(p, "scanning=", 9)) {
+      m->scanning = p[9] == '1';
     }
     p += n;
   }

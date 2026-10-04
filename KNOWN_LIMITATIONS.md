@@ -59,7 +59,7 @@ level unless stated otherwise.
   a `$VMC_*` entry naming a virtual memory card that does not exist yet
   is copied unchanged (OPL behaviour untested, checklist D20).
 * **Auto-install** exits through `rom0:OSDSYS`; that this lands in the
-  DESR XMB is checklist D23. It waits at most one minute for the server
+  DESR XMB is checklist D23. It waits at most three minutes for the server
   to finish its scan; on a very large first scan it falls back to the
   menu (start the installer again later).
 * **Lists.** The browser shows up to 256 entries per folder; the manage

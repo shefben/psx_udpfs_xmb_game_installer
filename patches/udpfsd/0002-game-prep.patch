@@ -1,5 +1,5 @@
 diff --git a/cmd/udpfsd/main.go b/cmd/udpfsd/main.go
-index c6bda9c..e7983f2 100644
+index c6bda9c..5f07bf4 100644
 --- a/cmd/udpfsd/main.go
 +++ b/cmd/udpfsd/main.go
 @@ -5,6 +5,7 @@ import (
@@ -99,7 +99,7 @@ index c6bda9c..e7983f2 100644
  
  	var metricsPeriod time.Duration
  	if *logMetricsPeriod != "" {
-@@ -172,6 +212,104 @@ func loadEnvironment() {
+@@ -172,6 +212,109 @@ func loadEnvironment() {
  	if value := envVarLookup("peer-timeout", ""); value != "" {
  		*peerTimeout = value
  	}
@@ -192,6 +192,11 @@ index c6bda9c..e7983f2 100644
 +		Gamelist: cfg.Gamelist, CacheDir: cfg.Cache, Launcher: launcher, Auto: cfg.AutoInstall,
 +		Download:   cfg.DownloadCovers && !*noDownload,
 +		Downloader: &prep.Downloader{BaseURL: prep.CoverURL, CacheDir: cfg.Cache}}
++	// Before the server answers discovery: never serve the previous run's
++	// list while this scan runs.
++	if err := prep.Begin(o); err != nil {
++		log.Fatalf("prep: %v", err)
++	}
 +	go func() {
 +		log.Printf("prep: scanning %d game folder(s)", len(o.Folders))
 +		res, err := prep.Run(o)
@@ -940,10 +945,10 @@ index 165b8aa..0000000
 -}
 diff --git a/internal/fs/mounts.go b/internal/fs/mounts.go
 new file mode 100644
-index 0000000..c8ef490
+index 0000000..bd77668
 --- /dev/null
 +++ b/internal/fs/mounts.go
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,184 @@
 +package fs
 +
 +import (
@@ -952,6 +957,7 @@ index 0000000..c8ef490
 +	"log"
 +	"os"
 +	"path/filepath"
++	"runtime"
 +	"sort"
 +	"strings"
 +)
@@ -969,8 +975,37 @@ index 0000000..c8ef490
 +const virtualRoot = "\x00udpfsd-virtual-root"
 +
 +type mount struct {
-+	name string // client-visible top-level name
-+	dir  string // absolute host directory
++	name  string // client-visible top-level name
++	dir   string // absolute host directory
++	canon string // canonical(dir), for the read-only check
++}
++
++// foldCase: host paths differ only in letter case on Windows.
++var foldCase = runtime.GOOS == "windows"
++
++// canonical resolves symlinks in the longest existing prefix of p and,
++// on Windows, folds case, so every host spelling of a folder compares
++// equal. Used to keep mounts read-only even when fsroot reaches them
++// through another path (a symlink, or different letter case).
++func canonical(p string) string {
++	p = filepath.Clean(p)
++	rest := ""
++	for cur := p; ; {
++		if r, err := filepath.EvalSymlinks(cur); err == nil {
++			p = filepath.Join(r, rest)
++			break
++		}
++		parent := filepath.Dir(cur)
++		if parent == cur {
++			break
++		}
++		rest = filepath.Join(filepath.Base(cur), rest)
++		cur = parent
++	}
++	if foldCase {
++		p = strings.ToLower(p)
++	}
++	return p
 +}
 +
 +// WithMount serves hostPath read-only as /<name>.
@@ -995,6 +1030,7 @@ index 0000000..c8ef490
 +			return fmt.Errorf("mount /%s: %s is not a directory", s.mounts[i].name, s.mounts[i].dir)
 +		}
 +		s.mounts[i].dir = abs
++		s.mounts[i].canon = canonical(abs)
 +		if s.fsRoot != "" {
 +			if st, err := os.Stat(filepath.Join(s.fsRoot, s.mounts[i].name)); err == nil && st.IsDir() {
 +				log.Printf("fs: warning: %s/%s is hidden by a mount", s.fsRoot, s.mounts[i].name)
@@ -1033,13 +1069,19 @@ index 0000000..c8ef490
 +	return resolved, true
 +}
 +
-+// inMount reports whether a resolved host path lies in any mount.
++// inMount reports whether a resolved host path lies in any mount, by any
++// host spelling of the mount folder.
 +func (s *Backend) inMount(resolved string) bool {
 +	if resolved == "" || resolved == virtualRoot {
 +		return false
 +	}
++	c := canonical(resolved)
 +	for _, m := range s.mounts {
-+		if resolved == m.dir || strings.HasPrefix(resolved, m.dir+string(os.PathSeparator)) {
++		mc := m.canon
++		if mc == "" { // mount added without initMounts (not via NewBackend)
++			mc = canonical(m.dir)
++		}
++		if c == mc || strings.HasPrefix(c, strings.TrimSuffix(mc, string(os.PathSeparator))+string(os.PathSeparator)) {
 +			return true
 +		}
 +	}
@@ -1093,16 +1135,17 @@ index 0000000..c8ef490
 +}
 diff --git a/internal/fs/mounts_test.go b/internal/fs/mounts_test.go
 new file mode 100644
-index 0000000..4cc6ab1
+index 0000000..84205cd
 --- /dev/null
 +++ b/internal/fs/mounts_test.go
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,238 @@
 +package fs
 +
 +import (
 +	"os"
 +	"path/filepath"
 +	"sort"
++	"strings"
 +	"testing"
 +)
 +
@@ -1297,6 +1340,41 @@ index 0000000..4cc6ab1
 +func TestMountMustExist(t *testing.T) {
 +	if _, err := NewBackend(WithMount("DVD", filepath.Join(t.TempDir(), "missing"))); err == nil {
 +		t.Fatal("missing mount dir accepted")
++	}
++}
++
++func TestMountReadOnlyThroughSymlinkInFSRoot(t *testing.T) {
++	// fsroot contains another path to a mount folder: still read-only.
++	f := newFixture(t)
++	if err := os.Symlink(f.dvd, filepath.Join(f.root, "games-link")); err != nil {
++		t.Skip("symlinks unavailable:", err)
++	}
++	b := f.backend(t, true, false)
++	if _, _, err := b.Open("/games-link/new.iso", os.O_RDWR|os.O_CREATE, false); err == nil {
++		t.Fatal("created a file in a mount through an fsroot symlink")
++	}
++	if err := b.Remove("/games-link/A.iso"); err == nil {
++		t.Fatal("removed a mount file through an fsroot symlink")
++	}
++	if err := b.Mkdir("/games-link/x"); err == nil {
++		t.Fatal("mkdir in a mount through an fsroot symlink")
++	}
++	if _, err := os.Stat(filepath.Join(f.dvd, "A.iso")); err != nil {
++		t.Fatal("mount file gone")
++	}
++}
++
++func TestMountReadOnlyCaseVariant(t *testing.T) {
++	// Windows paths are case-insensitive: "DVD" and "dvd" are one folder.
++	foldCase = true // as on Windows, before the backend canonicalizes mounts
++	defer func() { foldCase = false }()
++	f := newFixture(t)
++	b := f.backend(t, true, false)
++	if !b.inMount(strings.ToUpper(f.dvd) + string(os.PathSeparator) + "new.iso") {
++		t.Fatal("case variant of a mount path not recognized")
++	}
++	if b.inMount(f.root + string(os.PathSeparator) + "other.txt") {
++		t.Fatal("fsroot file treated as mounted")
 +	}
 +}
 diff --git a/internal/fs/utils.go b/internal/fs/utils.go
@@ -2060,10 +2138,10 @@ index 0000000..99c47c6
 +}
 diff --git a/internal/prep/scan.go b/internal/prep/scan.go
 new file mode 100644
-index 0000000..946eac1
+index 0000000..d8a7b8b
 --- /dev/null
 +++ b/internal/prep/scan.go
-@@ -0,0 +1,274 @@
+@@ -0,0 +1,301 @@
 +package prep
 +
 +import (
@@ -2078,6 +2156,7 @@ index 0000000..946eac1
 +	"sort"
 +	"strings"
 +	"sync"
++	"time"
 +)
 +
 +// Folder is a game folder served as /<Mount>.
@@ -2120,7 +2199,30 @@ index 0000000..946eac1
 +		os.Remove(tmp)
 +		return err
 +	}
-+	return os.Rename(tmp, path)
++	// Windows refuses to replace a file that a reader (the console) has
++	// open; reads are short, so retry for up to 2 s.
++	var err error
++	for i := 0; i < 20; i++ {
++		if err = renameFile(tmp, path); err == nil {
++			return nil
++		}
++		time.Sleep(100 * time.Millisecond)
++	}
++	os.Remove(tmp)
++	return err
++}
++
++var renameFile = os.Rename // test hook
++
++// Begin replaces the manifest with an empty "scanning=1" one, so the
++// console never acts on a previous run's list while a scan runs.
++func Begin(o Options) error {
++	auto := 0
++	if o.Auto {
++		auto = 1
++	}
++	return writeAtomic(filepath.Join(ServedDir(o.CacheDir), "manifest.txt"),
++		[]byte(fmt.Sprintf("udpfsd-manifest 1 auto=%d scanning=1\n", auto)))
 +}
 +
 +func clientPath(mount, rel string) string {
@@ -2235,6 +2337,9 @@ index 0000000..946eac1
 +	if err := os.MkdirAll(filepath.Join(served, "jkt"), 0755); err != nil {
 +		return Result{}, err
 +	}
++	if err := Begin(o); err != nil {
++		return Result{}, err
++	}
 +	var list map[string]string
 +	if o.Gamelist != "" {
 +		var err error
@@ -2340,10 +2445,10 @@ index 0000000..946eac1
 +}
 diff --git a/internal/prep/scan_test.go b/internal/prep/scan_test.go
 new file mode 100644
-index 0000000..de5e727
+index 0000000..0683556
 --- /dev/null
 +++ b/internal/prep/scan_test.go
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,227 @@
 +package prep
 +
 +import (
@@ -2507,6 +2612,68 @@ index 0000000..de5e727
 +		if strings.HasSuffix(e.Name(), ".tmp") {
 +			t.Fatal("temp file left behind")
 +		}
++	}
++}
++
++func TestPlaceholderWhileScanning(t *testing.T) {
++	base := t.TempDir()
++	dir := filepath.Join(base, "G")
++	os.MkdirAll(dir, 0755)
++	os.WriteFile(filepath.Join(dir, "a.iso"), buildISO("X", 1000, 1000, cnfOK, false), 0644)
++	cache := filepath.Join(base, "c")
++	o := Options{Folders: []Folder{{"GAMES", dir}}, CacheDir: cache, Auto: true}
++	// A previous run's manifest must not be served while the new scan runs.
++	if _, err := Run(o); err != nil {
++		t.Fatal(err)
++	}
++	var during string
++	probeHook = func(string) {
++		b, _ := os.ReadFile(filepath.Join(ServedDir(cache), "manifest.txt"))
++		during = string(b)
++	}
++	defer func() { probeHook = nil }()
++	os.WriteFile(filepath.Join(dir, "b.iso"), buildISO("Y", 1000, 1000, cnfOK, false), 0644)
++	if _, err := Run(o); err != nil {
++		t.Fatal(err)
++	}
++	if during != "udpfsd-manifest 1 auto=1 scanning=1\n" {
++		t.Fatalf("manifest during scan = %q", during)
++	}
++	head, lines := readManifest(t, cache)
++	if head != "udpfsd-manifest 1 auto=1" || len(lines) != 2 {
++		t.Fatalf("after scan: %q %q", head, lines)
++	}
++}
++
++func TestBeginWritesPlaceholder(t *testing.T) {
++	cache := t.TempDir()
++	if err := Begin(Options{CacheDir: cache}); err != nil {
++		t.Fatal(err)
++	}
++	head, lines := readManifest(t, cache)
++	if head != "udpfsd-manifest 1 auto=0 scanning=1" || len(lines) != 0 {
++		t.Fatalf("%q %q", head, lines)
++	}
++}
++
++func TestWriteAtomicRetriesRename(t *testing.T) {
++	// Windows refuses to replace a file another reader holds open.
++	dir := t.TempDir()
++	fails := 2
++	renameFile = func(a, b string) error {
++		if fails > 0 {
++			fails--
++			return os.ErrPermission
++		}
++		return os.Rename(a, b)
++	}
++	defer func() { renameFile = os.Rename }()
++	p := filepath.Join(dir, "manifest.txt")
++	if err := writeAtomic(p, []byte("x")); err != nil {
++		t.Fatal(err)
++	}
++	if b, _ := os.ReadFile(p); string(b) != "x" || fails != 0 {
++		t.Fatalf("%q fails=%d", b, fails)
 +	}
 +}
 diff --git a/internal/prep/testiso_test.go b/internal/prep/testiso_test.go

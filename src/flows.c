@@ -244,6 +244,18 @@ static void batch_fill_from_plan(int i) {
   }
 }
 
+/* Classify after marking games whose ID is already on the HDD under any
+ * title (an older release or another tool may have used another title). */
+static void batch_classify_against_hdd(int n) {
+  static hdd_part_t hp[256];
+  static const char *names[256];
+  int np = hdd_list(hp, 256);
+  for (int i = 0; i < np; i++)
+    names[i] = hp[i].name;
+  batch_mark_on_hdd(batch, n, names, np > 0 ? np : 0);
+  batch_classify(batch, n);
+}
+
 static void batch_probe(int n) {
   for (int i = 0; i < n; i++) {
     ui_at(4, " Checking %d/%d: %.60s", i + 1, n, batch[i].name);
@@ -251,7 +263,7 @@ static void batch_probe(int n) {
     batch[i].probe_err = game_plan_build(batch[i].path, &batch_plans[i], &rc);
     batch_fill_from_plan(i);
   }
-  batch_classify(batch, n);
+  batch_classify_against_hdd(n);
 }
 
 /* Fill batch[] from udpfsd's manifest (every configured game folder, no
@@ -276,7 +288,7 @@ static int batch_load_entries(const char *title) {
     if (batch[n].probe_err == ERR_OK)
       batch_fill_from_plan(n);
   }
-  batch_classify(batch, n);
+  batch_classify_against_hdd(n);
   return n;
 }
 
@@ -318,6 +330,12 @@ void flow_batch_install(void) {
     return;
   }
   int n = batch_load_entries("Install All Games");
+  if (g_manifest_loaded && g_manifest.scanning) {
+    ui_message("Install All Games",
+               "The server is still reading its game folders.\n"
+               "Try again in a moment (its window shows 'games ready').");
+    return;
+  }
   if (n == 0) {
     ui_message("Install All Games",
                "No .iso/.zso games found on the server.\n\n"
@@ -412,14 +430,24 @@ static void exit_to_system_menu(void) {
 }
 
 void flow_auto_install(void) {
-  /* 1. The server's scan may still be running: wait (bounded) for it. */
-  for (int t = 0; !g_manifest_loaded && t < 12; t++) {
+  /* 1. The server publishes "scanning=1" until its game list is ready
+   * (it never serves the previous run's list meanwhile): wait, bounded. */
+  for (int t = 0; auto_should_wait(g_manifest_loaded, &g_manifest) && t < 36; t++) {
     ui_header("Auto-install", "Waiting for the server's game list ... [O] cancel");
+    ui_at(4, " The server is still reading its game folders (%d s).", t * 5);
     if (ui_wait_button_timeout(5000) & (UI_CIRCLE | UI_TRIANGLE))
       return;
     manifest_load();
   }
-  if (!g_manifest_loaded || !g_manifest.auto_install)
+  if (auto_should_wait(g_manifest_loaded, &g_manifest)) {
+    auto_show("Auto-install",
+              "The server's game list is not ready after 3 minutes.\n"
+              "Nothing was installed. Start the installer again when the\n"
+              "server window shows 'games ready'.",
+              15000);
+    return;
+  }
+  if (!g_manifest.auto_install)
     return;
 
   /* 2. Countdown: nothing has to be pressed, O/Triangle cancels. */
@@ -435,8 +463,20 @@ void flow_auto_install(void) {
       return;
   }
 
-  /* 3. First run: the installer partition holds the install journals. */
-  if (!g_app.app_mounted) {
+  /* 3. First run: the installer partition holds the install journals.
+   * Only a missing one is created; an existing one that did not mount
+   * may be damaged and is left for the manual menus. */
+  switch (auto_installer_step(g_app.app_exists, g_app.app_mounted)) {
+  case AUTO_INSTALLER_OK:
+    break;
+  case AUTO_STOP:
+    auto_show("Auto-install",
+              INSTALLER_PARTITION " exists but could not be mounted.\n\n"
+              "Auto-install stopped; nothing was changed. Use\n"
+              "'Install/Repair Installer XMB App' or Diagnostics.",
+              15000);
+    return;
+  case AUTO_CREATE_INSTALLER: {
     ui_header("Auto-install", "Creating " INSTALLER_PARTITION " ...");
     selfinstall_report_t sr;
     installer_app_install(&sr);
@@ -450,6 +490,8 @@ void flow_auto_install(void) {
       auto_show("Auto-install", msg, 15000);
       return;
     }
+    break;
+  }
   }
 
   /* 4. Never create channel-less games here: OPL must be present. */

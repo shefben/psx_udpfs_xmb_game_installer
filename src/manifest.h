@@ -7,7 +7,7 @@
 #include "source.h"
 
 /* udpfsd's prepared game list, udpfs:/.udpfsd/manifest.txt:
- *   udpfsd-manifest 1 [launcher=<sha256 hex>:<bytes>] [auto=0|1]
+ *   udpfsd-manifest 1 [launcher=<sha256 hex>:<bytes>] [auto=0|1] [scanning=1]
  *   path \t status \t id \t title \t bytes \t disc \t layer1 \t jacket \t cfg
  * status is "ok" or "invalid:<reason>"; "-" marks an empty field. */
 
@@ -33,6 +33,7 @@ typedef struct {
   char launcher_sha[65];
   uint32_t launcher_size;
   int auto_install;
+  int scanning; /* server still preparing: no entries yet */
   int n, n_bad;
   manifest_entry_t e[MANIFEST_MAX];
 } manifest_t;
