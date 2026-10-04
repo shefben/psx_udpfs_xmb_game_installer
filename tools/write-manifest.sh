@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Write dist/SHA256SUMS and dist/BUILD-MANIFEST.txt.
-#   write-manifest.sh <dist> <driver.irx> <neutrino irx dir> <OPL-Launcher.elf>
+#   write-manifest.sh <dist> <driver.irx> <neutrino irx dir> <OPL-Launcher.elf> <kelf-mode stamp>
 set -euo pipefail
 DIST=$1
 DRIVER=$2
 IRX=$3
 OPL_ELF=$4
+MODE_STAMP=$5
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/driver/driver.env"
 cd "$DIST"
@@ -14,7 +15,7 @@ sha256sum desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
 {
   echo "build: $(git -C "$ROOT" describe --always --dirty --abbrev=12)"
   echo "commit date: $(git -C "$ROOT" log -1 --format=%cI)"
-  echo "KELF_MODE: ${KELF_MODE:-mbr}"
+  echo "KELF_MODE (used to sign the KELFs below): $(cat "$MODE_STAMP")"
   echo
   echo "== dist artifacts"
   cat SHA256SUMS

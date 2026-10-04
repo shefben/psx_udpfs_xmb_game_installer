@@ -38,6 +38,14 @@ typedef struct {
   int has_installed_crc;
   uint32_t installed_crc32; /* CRC-32 of the full read-back */
   int deleting;             /* a delete of this pair was started */
+  /* Identity of the hidden partition this journal describes, recorded
+   * right after create+format: APA start sector, size in sectors and
+   * CRC-32 of the 1 KiB HDL header. A same-named partition recreated by
+   * another tool does not match, so a stale journal cannot vouch for it. */
+  int has_hdl_identity;
+  uint32_t hdl_start;
+  uint32_t hdl_size;
+  uint32_t hdl_header_crc32;
   tx_state_t state;
   tx_state_t failed_from; /* stage that failed, when state == TX_FAILED */
   char last_error[64];
@@ -67,6 +75,13 @@ int tx_channel_creation_allowed(const tx_journal_t *j);
  * expected bytes were written and read back, both CRCs are recorded
  * and equal, and no delete was started. */
 int tx_hidden_data_verified(const tx_journal_t *j);
+
+/* Field-by-field equality (what tx_save's read-back compares). */
+int tx_journal_equal(const tx_journal_t *a, const tx_journal_t *b);
+
+/* The journal's recorded partition identity equals the given one. */
+int tx_identity_matches(const tx_journal_t *j, uint32_t start, uint32_t size,
+                        uint32_t header_crc32);
 
 /* Journal file for one PP./__. pair: "install-<name without prefix>.ini",
  * e.g. "install-SLUS-20312..GRAN_TURISMO_4.ini". Same result for either

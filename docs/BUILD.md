@@ -21,8 +21,11 @@ PS2KEYS=/absolute/path/to/PS2KEYS.dat make dist
 On Windows, `tools/wsl-run.ps1 <command>` runs a command in the WSL
 project directory with the environment sourced.
 
-`reference/REVISIONS.txt` records the upstream commits; they match the
-revisions pinned in the implementation plan:
+`reference/REVISIONS.txt` (committed) pins the upstream commits;
+`make references` checks out exactly those, and every build verifies
+the checkouts (`tools/fetch-references.sh --check`) and stops on drift.
+`hdlfs.irx` and the HDD driver are additionally hash-checked against
+`tools/driver/driver.env`. The pins match the implementation plan:
 
 | Project | Commit |
 |---|---|
@@ -77,6 +80,9 @@ PS2KEYS=/absolute/path/to/PS2KEYS.dat make kelfs     # or make dist
   the form OPL-Launcher documents.
 * `KELF_MODE=none` (experimental fallback, only if a DESR rejects the
   canonical KELF): `kelftool encrypt <in> <out>`. Any other value fails.
+  The mode is a build input (`build/.kelf-mode`): switching it re-signs
+  both KELFs and rebuilds the bootstrap; `BUILD-MANIFEST.txt` records
+  the mode the shipped KELFs were actually signed with.
 * Transactional: the old output is deleted first, the KELF is written to
   `<out>.tmp`, verified, then renamed. Verification: non-empty, >= 1 KiB,
   not an ELF, and `kelftool decrypt` (signature check) returns exactly

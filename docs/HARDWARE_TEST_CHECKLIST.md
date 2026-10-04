@@ -43,6 +43,7 @@ Run in this order. Nothing here creates or deletes a game partition.
 | N5 | Select a valid ISO and a ZSO, back out at the install screen | ID/title/partitions/allocation shown, no HDD change | NOT RUN |
 | N6 | Unplug network, select a game | source error, no HDD change | NOT RUN |
 | N7 | Diagnostics > HDD self-test (`PP.UDPFS-TEST`) | all 10 steps PASS; partition count unchanged | NOT RUN |
+| N8 | Installed Games on a disk with existing hdl-dump games | visible hdl-dump games (PP., type HDL) not listed; `-hide` games listed as UNKNOWN/UNVERIFIED | NOT RUN |
 
 ## Level 3 - DESR DESTRUCTIVE/BOOT VERIFIED
 

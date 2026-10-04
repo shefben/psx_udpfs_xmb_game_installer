@@ -6,6 +6,7 @@ SIGN=$ROOT/tools/kelf-sign.sh
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 chmod +x "$ROOT/test/host/fake-kelftool"
+unset KELF_MODE PS2KEYS   # the cases below set them explicitly
 export KELFTOOL=$ROOT/test/host/fake-kelftool
 export FAKE_KELF_LOG=$W/log
 printf 'not real keys' > "$W/PS2KEYS.dat"

@@ -32,7 +32,31 @@ DEV_ELF := $(BUILD)/dev/desr-udpfs-installer-dev.elf
 DRIVER := vendor/irx/ps2hdd-hdl.irx
 
 NEUTRINO_IRX := $(BUILD)/irx/smap.irx $(BUILD)/irx/ministack.irx $(BUILD)/irx/udpfs_ioman.irx
-EE_DEPS := $(NEUTRINO_IRX) $(BUILD)/.driver-ok
+EE_DEPS := $(NEUTRINO_IRX) $(BUILD)/.driver-ok $(BUILD)/.refs-ok $(BUILD)/.gitid
+
+# KELF_MODE is part of every KELF's identity: switching it re-signs and
+# re-embeds. Only mbr (default) and none are accepted by kelf-sign.sh.
+KELF_MODE ?= mbr
+export KELF_MODE
+
+# Stamps that change content (and so trigger rebuilds) only when their
+# input changes. FORCE makes make re-evaluate them every run.
+define UPDATE_STAMP
+	@mkdir -p $(dir $(1)); printf '%s\n' "$(2)" > $(1).new; \
+	 if cmp -s $(1).new $(1); then rm -f $(1).new; else mv -f $(1).new $(1); fi
+endef
+
+$(BUILD)/.kelf-mode: FORCE
+	$(call UPDATE_STAMP,$@,$(KELF_MODE))
+
+# Build id shown by the console diagnostics page.
+$(BUILD)/.gitid: FORCE
+	$(call UPDATE_STAMP,$@,$(shell git describe --always --dirty --abbrev=12 2>/dev/null))
+
+# Upstream inputs must be exactly the pinned revisions.
+$(BUILD)/.refs-ok: reference/REVISIONS.txt FORCE
+	@bash tools/fetch-references.sh --check
+	$(call UPDATE_STAMP,$@,$(shell cat reference/REVISIONS.txt))
 
 .PHONY: all dev kelfs dist test test-graph references irx driver driver-check clean distclean FORCE
 
@@ -59,11 +83,14 @@ driver:
 	bash tools/driver/make-driver.sh
 
 driver-check: $(BUILD)/.driver-ok
-$(BUILD)/.driver-ok: $(DRIVER) tools/driver/driver.env
+$(BUILD)/.driver-ok: $(DRIVER) reference/HDLGameInstaller/irx/hdlfs.irx tools/driver/driver.env
 	@. tools/driver/driver.env; \
 	 h=$$(sha256sum $(DRIVER) | cut -d' ' -f1); \
 	 if [ "$$h" != "$$DRIVER_PATCHED_SHA256" ]; then \
-	   echo "ERROR: $(DRIVER) sha256 $$h != $$DRIVER_PATCHED_SHA256 (tools/driver/driver.env)"; exit 1; fi
+	   echo "ERROR: $(DRIVER) sha256 $$h != $$DRIVER_PATCHED_SHA256 (tools/driver/driver.env)"; exit 1; fi; \
+	 h=$$(sha256sum reference/HDLGameInstaller/irx/hdlfs.irx | cut -d' ' -f1); \
+	 if [ "$$h" != "$$HDLFS_SHA256" ]; then \
+	   echo "ERROR: hdlfs.irx sha256 $$h != $$HDLFS_SHA256 (tools/driver/driver.env)"; exit 1; fi
 	@mkdir -p $(@D) && touch $@
 
 # ---- Neutrino IOP modules (smap, ministack, udpfs_ioman) -------------
@@ -71,7 +98,7 @@ $(BUILD)/.driver-ok: $(DRIVER) tools/driver/driver.env
 # patches/neutrino/*.patch applied; reference/ is never modified.
 irx: $(NEUTRINO_IRX)
 
-$(BUILD)/neutrino/.patched: $(wildcard patches/neutrino/*.patch)
+$(BUILD)/neutrino/.patched: $(wildcard patches/neutrino/*.patch) $(BUILD)/.refs-ok
 	@test -d $(REF)/neutrino || { echo "reference/neutrino missing: run 'make references'"; exit 1; }
 	rm -rf $(BUILD)/neutrino
 	mkdir -p $(BUILD)/neutrino
@@ -100,7 +127,7 @@ $(BUILD)/irx/udpfs_ioman.irx: $(BUILD)/neutrino/.patched
 # small-data optimisation; code semantics are unchanged.
 OPL_LAUNCHER_CFLAGS := -D_EE -G0 -O2 -Wno-stringop-truncation
 
-$(OPL_ELF):
+$(OPL_ELF): $(BUILD)/.refs-ok tools/bin2s
 	@test -d $(REF)/OPL-Launcher || { echo "reference/OPL-Launcher missing: run 'make references'"; exit 1; }
 	rm -rf $(BUILD)/opl-launcher
 	mkdir -p $(BUILD)/opl-launcher
@@ -111,7 +138,7 @@ $(OPL_ELF):
 	  EE_CFLAGS="$(OPL_LAUNCHER_CFLAGS)"
 
 # ---- 2. signed OPL-Launcher -------------------------------------------
-$(OPL_KELF): $(OPL_ELF) tools/kelf-sign.sh
+$(OPL_KELF): $(OPL_ELF) tools/kelf-sign.sh $(BUILD)/.kelf-mode
 	bash tools/kelf-sign.sh $(OPL_ELF) $@
 
 # ---- 3. app ELF (embeds 2) ---------------------------------------------
@@ -126,17 +153,19 @@ endef
 
 $(APP_ELF): $(OPL_KELF) $(EE_DEPS) FORCE
 	$(MAKE) -f Makefile.ee VARIANT=app BUILD=$(BUILD)/app EE_BIN=$(BUILD)/app/app-debug.elf \
-	  IRX_DIR=$(BUILD)/irx EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF)"
+	  IRX_DIR=$(BUILD)/irx GITID_STAMP=$(BUILD)/.gitid \
+	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF)"
 	$(call STRIP_IF_CHANGED,$@,$(BUILD)/app/app-debug.elf)
 
 # ---- 4. signed app -----------------------------------------------------
-$(APP_KELF): $(APP_ELF) tools/kelf-sign.sh
+$(APP_KELF): $(APP_ELF) tools/kelf-sign.sh $(BUILD)/.kelf-mode
 	bash tools/kelf-sign.sh $(APP_ELF) $@
 
 # ---- 5. bootstrap ELF (embeds 2 and 4) --------------------------------
 $(BOOT_ELF): $(OPL_KELF) $(APP_KELF) $(EE_DEPS) FORCE
 	$(MAKE) -f Makefile.ee VARIANT=bootstrap BUILD=$(BUILD)/bootstrap \
 	  EE_BIN=$(BUILD)/bootstrap/bootstrap-debug.elf IRX_DIR=$(BUILD)/irx \
+	  GITID_STAMP=$(BUILD)/.gitid \
 	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) installer_kelf=$(APP_KELF)"
 	$(call STRIP_IF_CHANGED,$@,$(BUILD)/bootstrap/bootstrap-debug.elf)
 
@@ -145,7 +174,7 @@ kelfs: $(OPL_KELF) $(APP_KELF)
 # ---- dev (unsigned, nothing embedded) --------------------------------
 dev: $(EE_DEPS) FORCE
 	$(MAKE) -f Makefile.ee VARIANT=dev BUILD=$(BUILD)/dev EE_BIN=$(DEV_ELF) \
-	  IRX_DIR=$(BUILD)/irx
+	  IRX_DIR=$(BUILD)/irx GITID_STAMP=$(BUILD)/.gitid
 
 # ---- 6. dist -----------------------------------------------------------
 DIST_FILES := desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
@@ -158,7 +187,7 @@ dist: test $(BOOT_ELF)
 	cp docs/udpfsd-example/* $(DIST)/udpfsd-example/
 	cp docs/INSTALL.md docs/HARDWARE_TEST_CHECKLIST.md $(DIST)/docs/
 	cp KNOWN_LIMITATIONS.md $(DIST)/
-	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF)
+	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF) $(BUILD)/.kelf-mode
 
 clean:
 	rm -rf $(BUILD)

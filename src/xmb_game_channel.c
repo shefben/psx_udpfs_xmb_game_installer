@@ -92,8 +92,18 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
   if (load_pair_journal(hidden, &j)) {
     f->has_journal = 1;
     f->journal_verified = tx_hidden_data_verified(&j);
+    uint32_t start, size, hcrc;
+    f->journal_matches_partition =
+        f->hidden_exists && hdl_partition_identity(hidden, &start, &size, &hcrc) == 0 &&
+        tx_identity_matches(&j, start, size, hcrc);
   }
-  f->visible_exists = hdd_exists(visible) > 0;
+  /* Only a PFS partition is an XMB channel; a same-named HDL partition
+   * (hdl-dump visible install) still blocks a new install via
+   * hdd_exists() in game_install step 6. */
+  uint16_t vtype = 0;
+  f->visible_exists = hdd_exists(visible) > 0 &&
+                      hdd_stat(visible, &vtype, NULL, NULL) == 0 &&
+                      partition_is_xmb_channel(visible, vtype);
   if (f->visible_exists)
     f->visible_valid = channel_quick_check(visible) == ERR_OK;
 }
@@ -195,10 +205,18 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
 
   if (cr.err) {
     /* Never leave a visible channel that did not verify. The hidden
-     * game stays so the channel can be repaired without recopying. */
-    if (cr.err != ERR_PARTITION_EXISTS)
-      hdd_remove_exact(j->visible_partition, NULL);
+     * game stays so the channel can be repaired without recopying. A
+     * failed step may have left the work mount open, which makes the
+     * APA driver refuse removal (-EBUSY), so release it first. */
     fail(j, rep, cr.err, cr.rc, cr.step);
+    if (cr.err != ERR_PARTITION_EXISTS) {
+      pfs_umount(PFS_WORK);
+      int rrc = 0;
+      if (hdd_remove_exact(j->visible_partition, &rrc) != ERR_OK) {
+        rep->detail = "unverified channel could NOT be removed: use Repair";
+        rep->rc = rrc;
+      }
+    }
   } else {
     rep->err = ERR_OK;
   }
@@ -297,6 +315,14 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     fail(&j, rep, hr.err, hr.rc, NULL);
     goto out_src;
   }
+  /* Bind the journal to this physical partition (start sector, size,
+   * header CRC) before any data is written. */
+  if (hdl_partition_identity(p->hidden, &j.hdl_start, &j.hdl_size,
+                             &j.hdl_header_crc32) < 0) {
+    fail(&j, rep, ERR_HDL_VERIFY, 0, "cannot read new partition identity");
+    goto out_src;
+  }
+  j.has_hdl_identity = 1;
   if ((rep->err = advance(&j, TX_HDL_CREATED)) ||
       (rep->err = advance(&j, TX_STREAMING))) {
     fail(&j, rep, ERR_JOURNAL, 0, NULL);

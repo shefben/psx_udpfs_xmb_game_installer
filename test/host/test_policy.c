@@ -90,6 +90,14 @@ TEST(sub_partition_dirents_are_not_main) {
   CHECK(hdd_dirent_is_main(T_PFS, 0x0000));
 }
 
+/* Review finding 9: hdl-dump's default (non -hide) installs are visible
+ * "PP." partitions of type HDL -- games, not XMB channels. */
+TEST(visible_hdl_games_are_not_channels) {
+  CHECK(partition_is_xmb_channel("PP.SLUS-20312..GT4", T_PFS));
+  CHECK(!partition_is_xmb_channel("PP.SLUS-20312..GT4", T_HDL));
+  CHECK(!partition_is_xmb_channel("__.SLUS-20312..GT4", T_PFS));
+}
+
 TEST(comma_names_are_not_games) {
   CHECK(!partition_is_hidden_game("__.SLUS-20312..A,B"));
   CHECK(!partition_is_game_channel("PP.SLUS-20312..A,B"));

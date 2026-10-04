@@ -170,6 +170,10 @@ int partition_remove_allowed(const char *name, unsigned apa_type) {
   return 0;
 }
 
+int partition_is_xmb_channel(const char *name, unsigned apa_type) {
+  return partition_is_game_channel(name) && apa_type == APA_TYPE_PFS_ID;
+}
+
 int hdd_dirent_is_main(unsigned mode, unsigned attr) {
   return mode != 0 && !(attr & 0x0001 /* APA_FLAG_SUB */);
 }

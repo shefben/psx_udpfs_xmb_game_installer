@@ -2,7 +2,7 @@
 
 int pair_hidden_trusted(const pair_facts_t *f) {
   return f->hidden_exists && f->hidden_header_valid && f->has_journal &&
-         f->journal_verified;
+         f->journal_verified && f->journal_matches_partition;
 }
 
 pair_state_t pair_classify(const pair_facts_t *f) {

@@ -25,10 +25,15 @@ level unless stated otherwise.
 * **Formats.** Plain `.iso` and udpfsd's virtual `.zso.iso` only. CSO/CHD
   virtual images are hidden; split `.iso.001` sets are not offered.
 * **Trust is per installer partition.** Data is trusted only through a
-  completed, CRC-verified journal in `PP.UDPFS-INSTALLER:/state/`. If
-  that partition is recreated, or for games installed by other tools,
-  the data shows as UNKNOWN/UNVERIFIED (delete or reinstall; no channel
-  is ever created on it).
+  completed, CRC-verified journal in `PP.UDPFS-INSTALLER:/state/` that
+  also matches the live partition's start sector, size and HDL-header
+  CRC. If that partition is recreated, for games installed by other
+  tools, or for a same-named partition recreated by another tool, the
+  data shows as UNKNOWN/UNVERIFIED (delete or reinstall; no channel is
+  ever created on it).
+* **hdl-dump visible installs** (`PP.` partitions of type HDL) are not
+  managed: they are neither listed nor removable by this installer, and
+  a same-named one blocks a new install (partition already exists).
 * **Game IDs and titles.** A game without a `XXXX_NNN.NN` BOOT2 entry is
   rejected. Titles that sanitize to the same partition name are a
   conflict (shown as an existing installation), never silently renamed.

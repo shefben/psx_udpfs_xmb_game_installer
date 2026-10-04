@@ -50,6 +50,11 @@ hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
 /* Header-only read for repair/manage scans. 0 or <0. */
 int hdl_read_header(const char *hidden, hdl_header_info_t *out);
 
+/* Physical identity of a hidden partition for the journal: APA start
+ * sector, size in sectors, CRC-32 of the raw 1 KiB HDL header. 0 or <0. */
+int hdl_partition_identity(const char *hidden, uint32_t *start, uint32_t *size,
+                           uint32_t *header_crc32);
+
 /* Header sanity for scans: HDL type, header parses, valid startup id,
  * non-empty title. Says nothing about whether the data is complete. */
 int hdl_partition_looks_valid(const char *hidden, hdl_header_info_t *out);

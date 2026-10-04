@@ -125,6 +125,7 @@ static void check_network(void) {
 
 static void check_opl(void) {
   opl_runtime_t opl;
+  memset(&opl, 0, sizeof(opl));
   int rc = 0;
   inst_err_t e = g_app.iop.hdd_ok ? opl_check_runtime(&opl, &rc) : ERR_HDD_MISSING;
   line(opl.partition[0] ? "PASS" : "FAIL", "OPL partition resolved: hdd0:%s (%s)",
@@ -215,6 +216,7 @@ static void run_selftest(void) {
   if (pre != 0) {
     line("FAIL", "1 %s already exists (or table unreadable: %d); not touching it",
          TEST_PARTITION_NAME, pre);
+    line(NULL, "     use 'Remove leftover PP.UDPFS-TEST' first");
     goto show;
   }
   line("PASS", "1 %s absent, %d partitions", TEST_PARTITION_NAME, before);
@@ -249,8 +251,9 @@ static void run_selftest(void) {
     line(got == TEST_SIZE && !memcmp(buf, back, TEST_SIZE) ? "PASS" : "FAIL",
          "6 remount + read back %d bytes, compare", got);
   }
-  pfs_umount(PFS_WORK);
-  line("PASS", "7 unmount");
+  r = fileXioSync(PFS_WORK, 0);
+  int u = fileXioUmount(PFS_WORK);
+  line(u < 0 ? "FAIL" : "PASS", "7 unmount (sync %d, umount %d)", r, u);
   free(buf);
   free(back);
 
@@ -267,18 +270,43 @@ show:
   ui_text_view("HDD self-test", report);
 }
 
+/* Recovery for a PP.UDPFS-TEST left behind by an interrupted self-test.
+ * Removal goes through the same typed whitelist (PFS only). */
+static void remove_leftover_test(void) {
+  int ex = g_app.iop.hdd_ok ? hdd_exists(TEST_PARTITION_NAME) : -1;
+  if (ex <= 0) {
+    ui_message("HDD self-test", ex == 0 ? "No " TEST_PARTITION_NAME " partition exists."
+                                        : "HDD not available.");
+    return;
+  }
+  if (!ui_confirm_destructive("Remove leftover test partition",
+                              "Remove the leftover self-test partition\n\n  " TEST_PARTITION_NAME
+                              "\n\nNo other partition is touched."))
+    return;
+  fileXioUmount(PFS_WORK);
+  int rc = 0;
+  inst_err_t e = hdd_remove_exact(TEST_PARTITION_NAME, &rc);
+  char msg[160];
+  snprintf(msg, sizeof(msg), "%s (%s, code %d)", e ? "Removal FAILED" : "Removed",
+           err_name(e), rc);
+  ui_message("HDD self-test", msg);
+}
+
 void flow_diagnostics(void) {
-  static char rows[2][UI_ROW_LEN] = {
+  static char rows[3][UI_ROW_LEN] = {
       "Pre-hardware checks (read-only)",
       "HDD self-test: create/delete PP.UDPFS-TEST",
+      "Remove leftover PP.UDPFS-TEST",
   };
   for (;;) {
-    int c = ui_select("Diagnostics", network_status_line(), rows, 2, 0, NULL, NULL);
+    int c = ui_select("Diagnostics", network_status_line(), rows, 3, 0, NULL, NULL);
     if (c < 0)
       return;
     if (c == 0)
       run_checks();
-    else
+    else if (c == 1)
       run_selftest();
+    else
+      remove_leftover_test();
   }
 }

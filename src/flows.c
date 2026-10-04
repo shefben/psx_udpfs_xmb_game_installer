@@ -350,12 +350,14 @@ static int collect_pairs(void) {
   for (int i = 0; i < np && n < MAX_PAIRS; i++) {
     const char *name = parts[i].name;
     char partner[APA_NAME_MAX + 1];
-    if (partition_is_hidden_game(name)) {
+    /* Hidden games must be HDL; channels must be PFS. hdl-dump's
+     * visible installs ("PP." of type HDL) are left alone. */
+    if (partition_is_hidden_game(name) && parts[i].type == APA_TYPE_HDL_ID) {
       partition_partner(name, partner);
       str_copy(pairs[n].hidden, name, sizeof(pairs[n].hidden));
       str_copy(pairs[n].visible, partner, sizeof(pairs[n].visible));
       n++;
-    } else if (partition_is_game_channel(name)) {
+    } else if (partition_is_xmb_channel(name, parts[i].type)) {
       partition_partner(name, partner);
       int have = 0;
       for (int k = 0; k < np; k++)

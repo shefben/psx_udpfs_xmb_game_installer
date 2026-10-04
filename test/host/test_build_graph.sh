@@ -52,6 +52,27 @@ done; check dist_contents $?
 make -C "$ROOT" dist BUILD="$B" DIST="$D" > "$W/make2.log" 2>&1; rc=$?
 [ $rc -eq 0 ] && ! grep -q "^encrypt" "$W/kelf.log"; check incremental_no_resign $?
 
+# Switching KELF_MODE re-signs both KELFs, re-embeds, and the manifest
+# reports the mode actually used.
+: > "$W/kelf.log"
+make -C "$ROOT" dist BUILD="$B" DIST="$D" KELF_MODE=none > "$W/make3.log" 2>&1; rc=$?
+n_enc=$(grep -c "^encrypt $B" "$W/kelf.log")
+n_mbr=$(grep -c "^encrypt mbr $B" "$W/kelf.log")
+[ $rc -eq 0 ] && [ "$n_enc" -eq 2 ] && [ "$n_mbr" -eq 0 ] && \
+  grep -q "KELF_MODE (used to sign the KELFs below): none" "$D/BUILD-MANIFEST.txt"
+r=$?; [ $r -eq 0 ] || { echo "  rc=$rc encrypt=$n_enc mbr=$n_mbr"; tail -5 "$W/make3.log"; }
+check kelf_mode_switch_resigns $r
+contains "$B/bootstrap/desr-udpfs-installer-bootstrap.elf" "$B/kelf/installer-EXECUTE.KELF"; check bootstrap_reembeds_after_mode_switch $?
+
+# A reference checkout that drifts from its pin stops the build.
+cp "$ROOT/reference/REVISIONS.txt" "$W/REVISIONS.good"
+sed 's/^OPL-Launcher \+[0-9a-f]\{40\}/OPL-Launcher         0000000000000000000000000000000000000000/' \
+  "$W/REVISIONS.good" > "$ROOT/reference/REVISIONS.txt"
+make -C "$ROOT" dist BUILD="$B" DIST="$D" > "$W/make4.log" 2>&1; rc=$?
+cp "$W/REVISIONS.good" "$ROOT/reference/REVISIONS.txt"
+[ $rc -ne 0 ] && grep -q "pinned 0000000000000000000000000000000000000000" "$W/make4.log"
+check drifted_reference_stops_build $?
+
 echo
 echo "build graph: $pass passed, $fail failed"
 [ $fail -eq 0 ]

@@ -27,6 +27,8 @@ pfsshell). Then:
 3. **Diagnostics > HDD self-test** creates, formats, mounts, writes,
    reads, unmounts and deletes a 128 MiB `PP.UDPFS-TEST` partition, then
    re-reads the partition table. It must end with `self-test passed`.
+   If an interrupted run left `PP.UDPFS-TEST` behind, use
+   **Diagnostics > Remove leftover PP.UDPFS-TEST**.
 
 Do not install a game until both pass.
 

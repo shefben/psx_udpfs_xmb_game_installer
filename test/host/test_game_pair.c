@@ -8,6 +8,7 @@ static pair_facts_t facts(int he, int hv, int has_j, int j_verified, int ve, int
   f.hidden_header_valid = hv;
   f.has_journal = has_j;
   f.journal_verified = j_verified;
+  f.journal_matches_partition = has_j;
   f.visible_exists = ve;
   f.visible_valid = vv;
   return f;
@@ -28,6 +29,15 @@ TEST(pair_trust_requires_verified_journal) {
   CHECK(!pair_hidden_trusted(&f));
   f = facts(0, 0, 1, 1, 0, 0);
   CHECK(!pair_hidden_trusted(&f));
+}
+
+/* Review finding 2: a stale journal for a same-named partition that was
+ * recreated by another tool must not make the new data trusted. */
+TEST(pair_trust_requires_journal_bound_to_partition) {
+  pair_facts_t f = facts(1, 1, 1, 1, 0, 0);
+  f.journal_matches_partition = 0;
+  CHECK(!pair_hidden_trusted(&f));
+  CHECK_EQ_INT(pair_classify(&f), PAIR_HIDDEN_UNVERIFIED);
 }
 
 TEST(pair_classify_all_states) {

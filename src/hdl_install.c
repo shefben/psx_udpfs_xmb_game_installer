@@ -135,8 +135,9 @@ done:
   return out;
 }
 
-int hdl_read_header(const char *hidden, hdl_header_info_t *out) {
-  static uint8_t hdr[HDL_HEADER_SIZE] __attribute__((aligned(64)));
+static uint8_t hdr[HDL_HEADER_SIZE] __attribute__((aligned(64)));
+
+static int read_raw_header(const char *hidden) {
   char dev[48];
   snprintf(dev, sizeof(dev), "hdd0:%s", hidden);
   int fd = fileXioOpen(dev, FIO_O_RDONLY);
@@ -145,8 +146,27 @@ int hdl_read_header(const char *hidden, hdl_header_info_t *out) {
   int s = fileXioLseek(fd, HDL_GAME_DATA_OFFSET, FIO_SEEK_SET);
   int r = s == HDL_GAME_DATA_OFFSET ? fileXioRead(fd, hdr, HDL_HEADER_SIZE) : -5;
   fileXioClose(fd);
-  if (r != HDL_HEADER_SIZE)
-    return r < 0 ? r : -5;
+  return r == HDL_HEADER_SIZE ? 0 : (r < 0 ? r : -5);
+}
+
+int hdl_partition_identity(const char *hidden, uint32_t *start, uint32_t *size,
+                           uint32_t *header_crc32) {
+  uint16_t type = 0;
+  int r = hdd_stat(hidden, &type, size, start);
+  if (r < 0)
+    return r;
+  if (type != APA_TYPE_HDL_ID)
+    return -22;
+  if ((r = read_raw_header(hidden)) < 0)
+    return r;
+  *header_crc32 = crc32_update(0, hdr, HDL_HEADER_SIZE);
+  return 0;
+}
+
+int hdl_read_header(const char *hidden, hdl_header_info_t *out) {
+  int r = read_raw_header(hidden);
+  if (r < 0)
+    return r;
   return hdl_header_parse(hdr, out) == 0 ? 0 : -22;
 }
 
@@ -217,6 +237,7 @@ hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
      * A ZSO container (no PVD there) can never pass this. */
     if (done_bytes == 0 && want >= 17 * ISO_SECTOR &&
         (memcmp(stream_buf + 16 * ISO_SECTOR, "\x01" "CD001", 6) != 0 ||
+         get_u32le(stream_buf + 16 * ISO_SECTOR + 80) != iso->pvd_blocks ||
          memcmp(stream_buf + 16 * ISO_SECTOR + 40, iso->volume_id,
                 strlen(iso->volume_id)) != 0)) {
       out = res(ERR_HDL_VERIFY, 0);

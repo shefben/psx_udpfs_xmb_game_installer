@@ -178,6 +178,54 @@ TEST(tx_parse_rejects_garbage) {
                         "hidden_partition=__.SLUS-20312..A\r\nstate=TX_PLANNED\r\n", &k), 0);
 }
 
+/* Review finding 1: a journal that failed (last_error set) and is then
+ * advanced must serialize/parse back to exactly the in-memory struct,
+ * or tx_save's read-back check rejects it forever. */
+TEST(tx_advance_after_fail_roundtrips_exactly) {
+  tx_journal_t j, k;
+  verified_journal(&j);
+  tx_fail(&j, ERR_PFS_CREATE);
+  CHECK_EQ_INT(tx_advance(&j, TX_HDL_VERIFIED), ERR_OK);
+  char buf[1024];
+  CHECK(tx_serialize(&j, buf, sizeof(buf)) > 0);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK(tx_journal_equal(&j, &k));
+  CHECK(memcmp(&j, &k, sizeof(j)) == 0);
+}
+
+/* Review finding 10: values keep trailing spaces (only CR/LF stripped). */
+TEST(tx_source_path_trailing_space_roundtrips) {
+  tx_journal_t j, k;
+  verified_journal(&j);
+  strcpy(j.source_path, "udpfs:/DVD/Game .iso ");
+  char buf[1024];
+  tx_serialize(&j, buf, sizeof(buf));
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK_STR(k.source_path, "udpfs:/DVD/Game .iso ");
+  CHECK(tx_journal_equal(&j, &k));
+}
+
+/* Review finding 2: the journal is bound to the physical partition. */
+TEST(tx_partition_identity_roundtrip_and_match) {
+  tx_journal_t j, k;
+  verified_journal(&j);
+  j.hdl_start = 0x12345678u;
+  j.hdl_size = 0x00800000u;
+  j.hdl_header_crc32 = 0xCAFEF00Du;
+  j.has_hdl_identity = 1;
+  char buf[1024];
+  tx_serialize(&j, buf, sizeof(buf));
+  CHECK(strstr(buf, "hdl_start=305419896\n") != NULL);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK(tx_journal_equal(&j, &k));
+  CHECK(tx_identity_matches(&k, 0x12345678u, 0x00800000u, 0xCAFEF00Du));
+  CHECK(!tx_identity_matches(&k, 0x12345679u, 0x00800000u, 0xCAFEF00Du));
+  CHECK(!tx_identity_matches(&k, 0x12345678u, 0x00800001u, 0xCAFEF00Du));
+  CHECK(!tx_identity_matches(&k, 0x12345678u, 0x00800000u, 0xCAFEF00Eu));
+  k.has_hdl_identity = 0;
+  CHECK(!tx_identity_matches(&k, 0x12345678u, 0x00800000u, 0xCAFEF00Du));
+}
+
 TEST(tx_journal_keyed_by_pair) {
   char a[96], b[96];
   CHECK_EQ_INT(tx_journal_filename_for("__.SLUS-20312..GRAN_TURISMO_4", a), 0);

@@ -29,6 +29,7 @@ typedef struct {
   int hidden_header_valid; /* HDL type + parsable header + id + title */
   int has_journal;         /* a journal for exactly this pair exists */
   int journal_verified;    /* tx_hidden_data_verified() on that journal */
+  int journal_matches_partition; /* tx_identity_matches() on the live partition */
   int visible_exists;
   int visible_valid; /* files + PPAA header verified */
 } pair_facts_t;

@@ -50,8 +50,10 @@ inst_err_t tx_advance(tx_journal_t *j, tx_state_t to) {
   if (!tx_transition_allowed(j->state, to))
     return ERR_INTERNAL;
   j->state = to;
-  if (to != TX_FAILED)
-    j->last_error[0] = 0;
+  if (to != TX_FAILED) {
+    memset(j->last_error, 0, sizeof(j->last_error));
+    j->failed_from = TX_NONE;
+  }
   return ERR_OK;
 }
 
@@ -73,6 +75,28 @@ int tx_hidden_data_verified(const tx_journal_t *j) {
          j->bytes_expected > 0 && j->bytes_written == j->bytes_expected &&
          j->bytes_verified == j->bytes_expected && j->has_source_crc &&
          j->has_installed_crc && j->source_crc32 == j->installed_crc32;
+}
+
+int tx_journal_equal(const tx_journal_t *a, const tx_journal_t *b) {
+  return !strcmp(a->source_path, b->source_path) && a->source_size == b->source_size &&
+         !strcmp(a->startup_id, b->startup_id) &&
+         !strcmp(a->visible_partition, b->visible_partition) &&
+         !strcmp(a->hidden_partition, b->hidden_partition) &&
+         a->bytes_expected == b->bytes_expected && a->bytes_written == b->bytes_written &&
+         a->bytes_verified == b->bytes_verified && a->has_source_crc == b->has_source_crc &&
+         a->source_crc32 == b->source_crc32 &&
+         a->has_installed_crc == b->has_installed_crc &&
+         a->installed_crc32 == b->installed_crc32 && a->deleting == b->deleting &&
+         a->has_hdl_identity == b->has_hdl_identity && a->hdl_start == b->hdl_start &&
+         a->hdl_size == b->hdl_size && a->hdl_header_crc32 == b->hdl_header_crc32 &&
+         a->state == b->state && a->failed_from == b->failed_from &&
+         !strcmp(a->last_error, b->last_error);
+}
+
+int tx_identity_matches(const tx_journal_t *j, uint32_t start, uint32_t size,
+                        uint32_t header_crc32) {
+  return j->has_hdl_identity && j->hdl_start == start && j->hdl_size == size &&
+         j->hdl_header_crc32 == header_crc32;
 }
 
 static int parse_crc(const char *v, int *has, uint32_t *out) {
@@ -111,6 +135,12 @@ size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz) {
     snprintf(scrc, sizeof(scrc), "%08lx", (unsigned long)j->source_crc32);
   if (j->has_installed_crc)
     snprintf(icrc, sizeof(icrc), "%08lx", (unsigned long)j->installed_crc32);
+  char id_start[12] = "", id_size[12] = "", id_crc[9] = "";
+  if (j->has_hdl_identity) {
+    snprintf(id_start, sizeof(id_start), "%lu", (unsigned long)j->hdl_start);
+    snprintf(id_size, sizeof(id_size), "%lu", (unsigned long)j->hdl_size);
+    snprintf(id_crc, sizeof(id_crc), "%08lx", (unsigned long)j->hdl_header_crc32);
+  }
   int n = snprintf(out, outsz,
                    "source_path=%s\n"
                    "source_size=%llu\n"
@@ -123,6 +153,9 @@ size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz) {
                    "source_crc32=%s\n"
                    "installed_crc32=%s\n"
                    "deleting=%d\n"
+                   "hdl_start=%s\n"
+                   "hdl_size=%s\n"
+                   "hdl_header_crc32=%s\n"
                    "state=%s\n"
                    "failed_from=%s\n"
                    "last_error=%s\n",
@@ -131,7 +164,7 @@ size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz) {
                    (unsigned long long)j->bytes_expected,
                    (unsigned long long)j->bytes_written,
                    (unsigned long long)j->bytes_verified, scrc, icrc,
-                   j->deleting ? 1 : 0, tx_state_name(j->state),
+                   j->deleting ? 1 : 0, id_start, id_size, id_crc, tx_state_name(j->state),
                    tx_state_name(j->failed_from), j->last_error);
   if (n < 0 || (size_t)n >= outsz)
     return 0;
@@ -150,7 +183,9 @@ int tx_parse(const char *text, tx_journal_t *out) {
       return -1;
     memcpy(line, p, len);
     line[len] = 0;
-    str_rtrim(line);
+    /* Strip only the line ending; values may end in spaces. */
+    while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == '\n'))
+      line[--len] = 0;
     p = eol ? eol + 1 : p + len;
     if (!line[0])
       continue;
@@ -189,6 +224,20 @@ int tx_parse(const char *text, tx_journal_t *out) {
     } else if (!strcmp(k, "installed_crc32")) {
       if (parse_crc(v, &out->has_installed_crc, &out->installed_crc32) < 0)
         return -1;
+    } else if (!strcmp(k, "hdl_start") || !strcmp(k, "hdl_size")) {
+      uint64_t x = 0;
+      if (v[0]) {
+        if (parse_u64(v, &x) < 0 || x > 0xFFFFFFFFull)
+          return -1;
+        *(!strcmp(k, "hdl_start") ? &out->hdl_start : &out->hdl_size) = (uint32_t)x;
+        out->has_hdl_identity = 1;
+      }
+    } else if (!strcmp(k, "hdl_header_crc32")) {
+      int has = 0;
+      if (parse_crc(v, &has, &out->hdl_header_crc32) < 0)
+        return -1;
+      if (has)
+        out->has_hdl_identity = 1;
     } else if (!strcmp(k, "deleting")) {
       if (strcmp(v, "0") && strcmp(v, "1"))
         return -1;
@@ -259,7 +308,7 @@ inst_err_t tx_save(const char *dir, const tx_journal_t *j) {
   if (n == 0 || write_file(tmp, io_buf, n) != ERR_OK)
     return ERR_JOURNAL;
   tx_journal_t back;
-  if (load_path(tmp, &back) != ERR_OK || memcmp(&back, j, sizeof(back)) != 0)
+  if (load_path(tmp, &back) != ERR_OK || !tx_journal_equal(&back, j))
     return ERR_JOURNAL;
   fileXioRemove(path);
   if (fileXioRename(tmp, path) < 0)

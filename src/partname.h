@@ -79,6 +79,11 @@ int part_id_from_partition(const char *name, char out[16]);
  * would parse the rest as a password and act on another partition). */
 int partition_remove_allowed(const char *name, unsigned apa_type);
 
+/* A visible XMB channel managed by this installer: game-channel name
+ * AND APA type PFS. hdl-dump's default visible installs ("PP." names of
+ * type HDL) are games, not channels. */
+int partition_is_xmb_channel(const char *name, unsigned apa_type);
+
 /* An hdd0: dirent is a main partition (not free space, not a
  * sub-partition entry, which carry APA_FLAG_SUB in attr). */
 int hdd_dirent_is_main(unsigned mode, unsigned attr);

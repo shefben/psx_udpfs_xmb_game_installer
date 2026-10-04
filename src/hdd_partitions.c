@@ -25,8 +25,15 @@ inst_err_t hdd_status(void) {
 }
 
 int hdd_space_mb(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb) {
-  uint32_t total =
-      (uint32_t)fileXioDevctl("hdd0:", HDIOC_TOTALSECTOR, NULL, 0, NULL, 0) / 2048;
+  /* Driver errors are negative; never let one turn into a huge size
+   * (the planner would then assume the 4 GiB maximum). */
+  int ts = fileXioDevctl("hdd0:", HDIOC_TOTALSECTOR, NULL, 0, NULL, 0);
+  int ms = fileXioDevctl("hdd0:", HDIOC_MAXSECTOR, NULL, 0, NULL, 0);
+  if (ts <= 0)
+    return ts < 0 ? ts : -5;
+  if (ms <= 0)
+    return ms < 0 ? ms : -5;
+  uint32_t total = (uint32_t)ts / 2048;
   int dd = fileXioDopen("hdd0:");
   if (dd < 0)
     return dd;
@@ -41,8 +48,7 @@ int hdd_space_mb(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb) {
   if (free_mb)
     *free_mb = used > total ? 0 : total - used;
   if (max_part_mb)
-    *max_part_mb =
-        (uint32_t)fileXioDevctl("hdd0:", HDIOC_MAXSECTOR, NULL, 0, NULL, 0) / 2048;
+    *max_part_mb = (uint32_t)ms / 2048;
   return 0;
 }
 
@@ -163,7 +169,7 @@ inst_err_t pfs_create_partition(const char *name, const char *size_str,
                         sizeof(PFS_FORMAT_ARG));
   if (r < 0) {
     *rc_out = r;
-    fileXioRemove(dev);
+    hdd_remove_exact(name, NULL); /* typed whitelist applies here too */
     return ERR_PFS_FORMAT;
   }
   return ERR_OK;

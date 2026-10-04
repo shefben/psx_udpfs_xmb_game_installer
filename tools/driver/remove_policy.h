@@ -15,7 +15,7 @@
  * behave exactly as before.
  *
  * Compiled into the driver by patches/apa-hdl/0001-allow-removing-hidden-hdl-games.patch
- * and, unchanged, into the host tests (test/host/test_driver_policy.c).
+ * and, unchanged, into the host tests (test/host/test_policy.c).
  */
 #ifndef APA_REMOVE_POLICY_H
 #define APA_REMOVE_POLICY_H

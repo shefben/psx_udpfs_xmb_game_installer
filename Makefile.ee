@@ -91,7 +91,8 @@ $(foreach b,$(BLOBS),$(eval $(call BLOB_RULE,$(b))))
 $(BUILD)/blob_%.o: $(BUILD)/blob_%.c
 	$(EE_CC) $(EE_CFLAGS) -c $< -o $@
 
-$(BUILD)/build_info.c: $(BLOB_FILES) tools/gen-build-info.sh $(BUILD)/.flags
+GITID_STAMP ?=
+$(BUILD)/build_info.c: $(BLOB_FILES) tools/gen-build-info.sh $(BUILD)/.flags $(GITID_STAMP)
 	bash tools/gen-build-info.sh $@ $(VARIANT) $(BLOBS)
 
 $(BUILD)/build_info.o: $(BUILD)/build_info.c $(SRC_DIR)/build_info.h
