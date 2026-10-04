@@ -68,6 +68,16 @@ Variants share all sources (`-DVARIANT_APP/BOOTSTRAP/DEV`):
 A release variant that does not embed the OPL-Launcher KELF fails to
 compile (`#error`), so a normal install never depends on the server.
 
+## udpfsd server (`make udpfsd`)
+
+`tools/build-udpfsd.sh` copies the pinned `reference/udpfsd`, applies
+`patches/udpfsd/0001-install-dir.patch` (adds `-install-dir`, served
+read-only as `/INSTALL`), runs the Go tests of the touched packages and
+builds `build/udpfsd/udpfsd-windows-amd64.exe` and `udpfsd-linux-amd64`
+(CGO off, so ISO/CSO/ZSO like upstream's release binaries). It uses a
+local Go >= 1.25 or the digest-pinned `golang:1.25` Docker image.
+`make dist` includes both binaries; `make test-udpfsd` only tests.
+
 ## Signing (`tools/kelf-sign.sh`)
 
 ```sh

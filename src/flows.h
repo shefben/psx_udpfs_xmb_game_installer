@@ -18,6 +18,10 @@ void flow_pair_actions(const char *visible, const char *hidden);
 void flow_show_error(const char *what, const install_report_t *rep,
                      const char *recovery);
 
+/* Install every selected game found in udpfs:/INSTALL (udpfsd
+ * -install-dir), one after another, each through game_install(). */
+void flow_batch_install(void);
+
 void flow_installed_games(void);
 void flow_repair(void);
 void flow_network_settings(void);

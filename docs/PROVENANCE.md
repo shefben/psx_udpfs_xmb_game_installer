@@ -19,6 +19,13 @@ binary, unchanged.
 Because GPL-2.0 modules are embedded, the installer ELF as distributed
 is GPL-2.0.
 
+## udpfsd
+
+`dist/udpfsd/` binaries are pcm720/udpfsd 58d7c8f (MIT, see
+reference/udpfsd/LICENSE) plus `patches/udpfsd/0001-install-dir.patch`
+(new `internal/fs/installdir.go` and tests; small hooks in
+`backend.go`, `utils.go`, `fileops.go`, `cmd/udpfsd/main.go`).
+
 ## Upstream code copied or adapted
 
 | This project | Upstream | Revision | What |

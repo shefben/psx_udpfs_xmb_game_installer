@@ -7,6 +7,7 @@
 #include <io_common.h>
 
 #include "app_state.h"
+#include "batch.h"
 #include "flows.h"
 #include "hdd_partitions.h"
 #include "hdl_install.h"
@@ -164,6 +165,193 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
         run_install(p, allow_without_opl);
     }
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Batch install of udpfs:/INSTALL (udpfsd -install-dir)               */
+
+static batch_entry_t batch[BATCH_MAX];
+static game_plan_t batch_plans[BATCH_MAX];
+static char batch_rows[BATCH_MAX][UI_ROW_LEN];
+
+/* "<dir>/<name>" into out; -1 if it does not fit. */
+static int join_path(char *out, size_t outsz, const char *dir, const char *name) {
+  size_t a = strlen(dir), b = strlen(name);
+  if (a + 1 + b >= outsz)
+    return -1;
+  memcpy(out, dir, a);
+  out[a] = '/';
+  memcpy(out + a + 1, name, b + 1);
+  return 0;
+}
+
+/* Collect candidate images under dir (and one level of subfolders such
+ * as CD/ and DVD/, which also give the disc-type hint). */
+static void batch_collect(const char *dir, int depth, int *n) {
+  int dd = fileXioDopen(dir);
+  if (dd < 0)
+    return;
+  static iox_dirent_t de;
+  char subdirs[8][128];
+  int nsub = 0;
+  while (*n < BATCH_MAX && fileXioDread(dd, &de) > 0) {
+    if (!strcmp(de.name, ".") || !strcmp(de.name, ".."))
+      continue;
+    char path[SOURCE_PATH_MAX];
+    if (join_path(path, sizeof(path), dir, de.name) < 0)
+      continue;
+    if ((de.stat.mode & FIO_S_IFMT) == FIO_S_IFDIR) {
+      if (depth > 0 && nsub < 8 && strlen(de.name) < sizeof(subdirs[0]))
+        str_copy(subdirs[nsub++], de.name, sizeof(subdirs[0]));
+      continue;
+    }
+    source_type_t t = source_classify(de.name);
+    if (t == SRC_TYPE_NONE)
+      continue;
+    batch_entry_t *e = &batch[*n];
+    memset(e, 0, sizeof(*e));
+    str_copy(e->path, path, sizeof(e->path));
+    str_copy(e->name, de.name, sizeof(e->name));
+    e->type = t;
+    (*n)++;
+  }
+  fileXioDclose(dd);
+  for (int i = 0; i < nsub; i++) {
+    char sub[SOURCE_PATH_MAX];
+    if (join_path(sub, sizeof(sub), dir, subdirs[i]) == 0)
+      batch_collect(sub, depth - 1, n);
+  }
+}
+
+static void batch_probe(int n) {
+  for (int i = 0; i < n; i++) {
+    batch_entry_t *e = &batch[i];
+    game_plan_t *p = &batch_plans[i];
+    ui_at(4, " Checking %d/%d: %.60s", i + 1, n, e->name);
+    int rc = 0;
+    e->probe_err = game_plan_build(e->path, p, &rc);
+    e->bytes = p->iso.source_size;
+    str_copy(e->boot_id, p->iso.boot_id, sizeof(e->boot_id));
+    str_copy(e->title, p->title, sizeof(e->title));
+    str_copy(e->visible, p->visible, sizeof(e->visible));
+    str_copy(e->hidden, p->hidden, sizeof(e->hidden));
+    e->alloc_mb = p->alloc.total_mb;
+    e->pair = PAIR_NONE;
+    if (e->probe_err == ERR_OK) {
+      pair_facts_t f;
+      game_pair_facts(p->visible, p->hidden, &f);
+      e->pair = pair_classify(&f);
+    }
+  }
+  batch_classify(batch, n);
+}
+
+void flow_batch_install(void) {
+  if (g_app.net != NETWORK_READY) {
+    ui_message("Install All", "The network is not ready. See Network Settings.");
+    return;
+  }
+  ui_header("Install All Games", "Reading " BATCH_DIR " ...");
+  int n = 0;
+  batch_collect(BATCH_DIR, 1, &n);
+  if (n == 0) {
+    ui_message("Install All Games",
+               "No .iso/.zso games found in " BATCH_DIR ".\n\n"
+               "Start the server with the install folder, e.g.\n"
+               "  udpfsd -fsroot D:\\PS2 -install-dir D:\\PS2\\ToInstall -ro\n"
+               "(this udpfsd build is in dist/udpfsd/).");
+    return;
+  }
+  ui_header("Install All Games", "Checking images (ISO9660 + SYSTEM.CNF) ...");
+  batch_probe(n);
+
+  /* Selection: Square toggles, X starts, O backs out. */
+  int sel = 0;
+  for (;;) {
+    for (int i = 0; i < n; i++)
+      batch_format_row(&batch[i], batch_rows[i], UI_ROW_LEN);
+    uint32_t free_mb = 0;
+    hdd_space_mb(NULL, &free_mb, NULL);
+    char status[96];
+    snprintf(status, sizeof(status), "%d of %d selected, need %lu MiB, free %lu MiB",
+             batch_count_selected(batch, n), n, (unsigned long)batch_needed_mb(batch, n),
+             (unsigned long)free_mb);
+    int key = 0;
+    int c = ui_select("Install All Games", status, batch_rows, n, sel,
+                      "[Sq] toggle  [X] install selected  [O] back", &key);
+    if (c < 0)
+      return;
+    sel = c;
+    if (key & UI_SQUARE) {
+      batch_toggle(&batch[c]);
+      continue;
+    }
+    int count = batch_count_selected(batch, n);
+    if (count == 0) {
+      ui_message("Install All Games", "Nothing selected.");
+      continue;
+    }
+    if (batch_needed_mb(batch, n) > free_mb) {
+      ui_message("Install All Games",
+                 "Not enough free space for the selected games.\nDeselect some with Square.");
+      continue;
+    }
+    break;
+  }
+
+  int allow_without_opl = 0;
+  opl_runtime_t opl;
+  int orc;
+  if (opl_check_runtime(&opl, &orc) != ERR_OK) {
+    char txt[400];
+    snprintf(txt, sizeof(txt),
+             "OPL runtime not found (looked for %s on hdd0:%s).\n\n"
+             "No XMB channel can be created without it. Copy and verify the\n"
+             "game data of all selected games anyway (channels later via\n"
+             "Repair XMB Channels)?",
+             opl.elf_path, opl.partition);
+    if (!ui_confirm("OPL runtime not found", txt))
+      return;
+    allow_without_opl = 1;
+  }
+  char txt[300];
+  snprintf(txt, sizeof(txt),
+           "Install %d game(s), one after another (%lu MiB).\n\n"
+           "Each game is copied, read back and CRC-checked before its XMB\n"
+           "channel is created. Hold SELECT + O to abort the current game.",
+           batch_count_selected(batch, n), (unsigned long)batch_needed_mb(batch, n));
+  if (!ui_confirm("Install All Games", txt))
+    return;
+
+  int idx = 0, total = batch_count_selected(batch, n), stop = 0;
+  for (int i = 0; i < n; i++) {
+    batch_entry_t *e = &batch[i];
+    if (!e->selected)
+      continue;
+    idx++;
+    if (stop) {
+      e->result = BATCH_SKIPPED;
+      continue;
+    }
+    char title[48];
+    snprintf(title, sizeof(title), "Install All %d/%d", idx, total);
+    progress_ctx_t ctx = {&batch_plans[i], STAGE_PREPARING};
+    install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx};
+    install_report_t rep;
+    draw_install_static(&batch_plans[i], title);
+    ui_footer("Do not power off.");
+    game_install(&batch_plans[i], allow_without_opl, &ui, &rep);
+    e->err = rep.err;
+    e->stage = install_stage_name(rep.stage);
+    e->result = rep.err == ERR_OK              ? BATCH_DONE
+                : rep.data_installed_no_channel ? BATCH_DATA_ONLY
+                                                : BATCH_FAILED;
+    if (rep.err == ERR_USER_ABORT && idx < total)
+      stop = ui_confirm("Install All Games", "Game aborted. Stop the remaining games too?");
+  }
+  static char summary[4096];
+  batch_summary(batch, n, summary, sizeof(summary));
+  ui_text_view("Install All Games - summary", summary);
 }
 
 void flow_install_game(game_plan_t *p) {

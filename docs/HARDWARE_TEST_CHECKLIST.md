@@ -30,6 +30,8 @@ or pfsshell) so the disk can be restored.
 | P10 | Release build graph order / embedding / no spurious re-sign | `make test-graph` (fake kelftool) | PASS |
 | P11 | Signed release built with real kelftool + PS2KEYS | `PS2KEYS=... KELF_MODE=none make dist` with xfwcfw kelftool 6b9b471; both KELFs pass `kelftool decrypt` (all signatures) and decrypt to the exact input ELF | PASS (mode none) |
 | P12 | Signed release in canonical `KELF_MODE=mbr` | needs a kelftool fork with `encrypt mbr` | NOT RUN |
+| P13 | udpfsd `-install-dir`: listing, read-only, no path escape, install-dir-only mode | Go tests in `patches/udpfsd/0001` (`make test-udpfsd`) | PASS |
+| P14 | Batch selection/summary logic | `test_batch.c` | PASS |
 
 ## Level 2 - DESR NON-DESTRUCTIVE VERIFIED
 
@@ -44,6 +46,7 @@ Run in this order. Nothing here creates or deletes a game partition.
 | N5 | Select a valid ISO and a ZSO, back out at the install screen | ID/title/partitions/allocation shown, no HDD change | NOT RUN |
 | N6 | Unplug network, select a game | source error, no HDD change | NOT RUN |
 | N7 | Diagnostics > HDD self-test (`PP.UDPFS-TEST`) | all 10 steps PASS; partition count unchanged | NOT RUN |
+| N9 | Install All Games list with `-install-dir` (ISO, ZSO, CD/ DVD/ subfolders, an invalid file, a game already installed) | correct statuses, only `new` selected; back out writes nothing | NOT RUN |
 | N8 | Installed Games on a disk with existing hdl-dump games | visible hdl-dump games (PP., type HDL) not listed; `-hide` games listed as UNKNOWN/UNVERIFIED | NOT RUN |
 
 ## Level 3 - DESR DESTRUCTIVE/BOOT VERIFIED
@@ -66,6 +69,7 @@ Run in this order. Nothing here creates or deletes a game partition.
 | D14 | Delete a complete game | journal deleting=1, PP. removed first, `__.` removed (patched driver), journal removed | NOT RUN |
 | D15 | Delete refused for `__common` etc. (cannot be selected in the UI) | | NOT RUN |
 | D16 | Reboot after successful installs | channels remain | NOT RUN |
+| D18 | Install All: 2+ games (one ISO, one ZSO) in one batch | each completes the acceptance chain; summary correct; abort mid-batch leaves aborted game UNVERIFIED and the rest skipped | NOT RUN |
 | D17 | Remove one of two games, reboot | other game and installer still work | NOT RUN |
 
 ### Acceptance chain for D4 / D5 (each must be observed)

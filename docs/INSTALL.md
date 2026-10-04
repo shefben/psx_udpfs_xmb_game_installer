@@ -79,6 +79,27 @@ verified, the channel is **not** created, and the game is shown as
 "verified, channel pending" until **Repair XMB Channels > Create XMB
 channel** succeeds.
 
+## 3b. Install several games at once
+
+1. Put the games in one folder on the PC and start the server with
+   `-install-dir`, e.g.
+   `udpfsd-windows-amd64.exe -fsroot D:\PS2 -install-dir D:\PS2\ToInstall -ro`.
+   The folder appears on the console as `udpfs:/INSTALL` (read-only).
+2. **Install All Games from udpfs:/INSTALL**. Every `.iso` / `.zso` in
+   the folder (and in subfolders one level down, such as `CD/`, `DVD/`)
+   is checked. The list shows type, file, startup ID, size and status:
+   `new` (selected), `already on HDD`, `duplicate`, `not a PS2 image`,
+   `too big for APA` (not selectable).
+3. Square toggles a game; the status line shows the space needed against
+   the free space. X starts.
+4. Games are installed one after another with exactly the single-game
+   procedure (copy, full read-back CRC check, then the XMB channel), using
+   the default title of each game. Hold SELECT + O to abort the current
+   game; you are then asked whether to stop the rest.
+5. A summary lists each game as installed, data only (channel pending,
+   when OPL is missing), FAILED (with error and stage) or skipped. Failed
+   copies show as UNKNOWN/UNVERIFIED in Repair XMB Channels.
+
 ## 4. Installed games, repair and delete
 
 | State | Meaning | Offered actions |

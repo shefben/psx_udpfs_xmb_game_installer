@@ -58,7 +58,7 @@ $(BUILD)/.refs-ok: reference/REVISIONS.txt FORCE
 	@bash tools/fetch-references.sh --check
 	$(call UPDATE_STAMP,$@,$(shell cat reference/REVISIONS.txt))
 
-.PHONY: all dev kelfs dist test test-graph references irx driver driver-check clean distclean FORCE
+.PHONY: all dev kelfs dist test test-graph test-udpfsd udpfsd references irx driver driver-check clean distclean FORCE
 
 all: test dev
 
@@ -74,6 +74,17 @@ test:
 # Release graph with a fake kelftool in a private directory (needs PS2SDK).
 test-graph:
 	bash test/host/test_build_graph.sh
+
+# ---- udpfsd server (pinned upstream + patches/udpfsd, adds -install-dir) --
+# Needs Go >= 1.25 or Docker. `make test-udpfsd` runs only its Go tests.
+UDPFSD_BIN := $(BUILD)/udpfsd/udpfsd-windows-amd64.exe $(BUILD)/udpfsd/udpfsd-linux-amd64
+
+udpfsd: $(UDPFSD_BIN)
+$(UDPFSD_BIN) &: $(BUILD)/.refs-ok $(wildcard patches/udpfsd/*.patch) tools/build-udpfsd.sh
+	bash tools/build-udpfsd.sh $(BUILD)/udpfsd
+
+test-udpfsd: $(BUILD)/.refs-ok
+	bash tools/build-udpfsd.sh $(BUILD)/udpfsd test
 
 # ---- HDD driver ---------------------------------------------------------
 # vendor/irx/ps2hdd-hdl.irx is the output of `make driver` (reproducible
@@ -180,10 +191,11 @@ dev: $(EE_DEPS) FORCE
 DIST_FILES := desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
               installer-EXECUTE.KELF opl-launcher-EXECUTE.KELF
 
-dist: test $(BOOT_ELF)
+dist: test $(BOOT_ELF) $(UDPFSD_BIN)
 	rm -rf $(DIST)
-	mkdir -p $(DIST)/udpfsd-example $(DIST)/docs
+	mkdir -p $(DIST)/udpfsd-example $(DIST)/docs $(DIST)/udpfsd
 	cp $(BOOT_ELF) $(APP_ELF) $(APP_KELF) $(OPL_KELF) $(DIST)/
+	cp $(UDPFSD_BIN) $(DIST)/udpfsd/
 	cp docs/udpfsd-example/* $(DIST)/udpfsd-example/
 	cp docs/INSTALL.md docs/HARDWARE_TEST_CHECKLIST.md $(DIST)/docs/
 	cp KNOWN_LIMITATIONS.md $(DIST)/

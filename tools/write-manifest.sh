@@ -11,7 +11,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/driver/driver.env"
 cd "$DIST"
 sha256sum desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
-  installer-EXECUTE.KELF opl-launcher-EXECUTE.KELF > SHA256SUMS
+  installer-EXECUTE.KELF opl-launcher-EXECUTE.KELF \
+  udpfsd/udpfsd-windows-amd64.exe udpfsd/udpfsd-linux-amd64 > SHA256SUMS
 {
   echo "build: $(git -C "$ROOT" describe --always --dirty --abbrev=12)"
   echo "commit date: $(git -C "$ROOT" log -1 --format=%cI)"
@@ -31,6 +32,10 @@ sha256sum desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
   echo
   echo "== OPL-Launcher (unsigned input of opl-launcher-EXECUTE.KELF)"
   sha256sum "$OPL_ELF" | sed "s#$ROOT/##"
+  echo
+  echo "== udpfsd server"
+  echo "pinned upstream + patches/udpfsd/0001-install-dir.patch (adds -install-dir, served as /INSTALL)"
+  echo "patch sha256: $(sha256sum "$ROOT/patches/udpfsd/0001-install-dir.patch" | cut -d' ' -f1)"
   echo
   echo "== upstream revisions"
   cat "$ROOT/reference/REVISIONS.txt"

@@ -53,8 +53,9 @@ int main(int argc, char *argv[]) {
   app_boot();
   startup_notices();
 
-  static char rows[7][UI_ROW_LEN] = {
+  static char rows[8][UI_ROW_LEN] = {
       "Install Games from UDPFS",
+      "Install All Games from udpfs:/INSTALL",
       "Installed Games",
       "Repair XMB Channels",
       "Network Settings",
@@ -65,18 +66,20 @@ int main(int argc, char *argv[]) {
   int sel = 0;
   for (;;) {
     int hdd_ok = g_app.iop.hdd_ok && g_app.hdd_state == ERR_OK;
-    int c = ui_select("Main menu", network_status_line(), rows, 7, sel,
+    enum { M_BROWSE, M_BATCH, M_INSTALLED, M_REPAIR, M_NET, M_SELF, M_DIAG, M_EXIT, M_COUNT };
+    int c = ui_select("Main menu", network_status_line(), rows, M_COUNT, sel,
                       "[Up/Down] move  [X] select", NULL);
     if (c < 0)
       continue;
     sel = c;
-    if (!hdd_ok && (c == 0 || c == 1 || c == 2 || c == 4)) {
+    int needs_games = c == M_BROWSE || c == M_BATCH || c == M_INSTALLED || c == M_REPAIR;
+    if (!hdd_ok && (needs_games || c == M_SELF)) {
       ui_message("HDD unavailable",
                  "The internal HDD is not usable or a required HDD module failed\n"
                  "to load. All HDD writes are disabled. See Diagnostics.");
       continue;
     }
-    if (!g_app.app_mounted && (c == 0 || c == 1 || c == 2)) {
+    if (!g_app.app_mounted && needs_games) {
       ui_message("Installer partition required",
                  "PP.UDPFS-INSTALLER is not present (or could not be mounted).\n\n"
                  "It stores the install journals that prove a game was copied\n"
@@ -85,25 +88,28 @@ int main(int argc, char *argv[]) {
       continue;
     }
     switch (c) {
-    case 0:
+    case M_BROWSE:
       browser_run();
       break;
-    case 1:
+    case M_BATCH:
+      flow_batch_install();
+      break;
+    case M_INSTALLED:
       flow_installed_games();
       break;
-    case 2:
+    case M_REPAIR:
       flow_repair();
       break;
-    case 3:
+    case M_NET:
       flow_network_settings();
       break;
-    case 4:
+    case M_SELF:
       flow_self_install();
       break;
-    case 5:
+    case M_DIAG:
       flow_diagnostics();
       break;
-    case 6:
+    case M_EXIT:
       if (ui_confirm("Exit", "Return to the system menu?")) {
         app_unmount();
         ui_pad_close();

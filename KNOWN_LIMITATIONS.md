@@ -45,6 +45,11 @@ level unless stated otherwise.
 * **Patched HDD driver.** `ps2hdd-hdl.irx` is a reproducible source build
   with one change (remove `__.` partitions of type HDL). See
   `tools/driver/README.md`.
+* **Batch install** (udpfsd `-install-dir`, served as `udpfs:/INSTALL`)
+  uses each game's default title (no per-game title edit), scans one
+  subfolder level, and handles up to 64 images per batch. It needs the
+  patched udpfsd from `dist/udpfsd/`; a stock udpfsd has no
+  `/INSTALL`.
 * **Lists.** The browser shows up to 256 entries per folder; the manage
   screens handle up to 128 game pairs.
 * **Disc type** comes from the server folder (`CD/`, `DVD/`), else UDF
