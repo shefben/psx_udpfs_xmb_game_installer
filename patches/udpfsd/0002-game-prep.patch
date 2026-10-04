@@ -1,5 +1,5 @@
 diff --git a/cmd/udpfsd/main.go b/cmd/udpfsd/main.go
-index c6bda9c..5f07bf4 100644
+index c6bda9c..69e161a 100644
 --- a/cmd/udpfsd/main.go
 +++ b/cmd/udpfsd/main.go
 @@ -5,6 +5,7 @@ import (
@@ -99,7 +99,7 @@ index c6bda9c..5f07bf4 100644
  
  	var metricsPeriod time.Duration
  	if *logMetricsPeriod != "" {
-@@ -172,6 +212,109 @@ func loadEnvironment() {
+@@ -172,6 +212,116 @@ func loadEnvironment() {
  	if value := envVarLookup("peer-timeout", ""); value != "" {
  		*peerTimeout = value
  	}
@@ -170,6 +170,7 @@ index c6bda9c..5f07bf4 100644
 +		c := config.Defaults()
 +		c.Cache = filepath.Join(base, c.Cache)
 +		c.OPLLauncher = filepath.Join(base, c.OPLLauncher)
++		c.OPLElf = filepath.Join(base, c.OPLElf)
 +		return c
 +	}
 +	c, err := config.Load(path, filepath.Dir(path))
@@ -188,8 +189,14 @@ index c6bda9c..5f07bf4 100644
 +		log.Printf("prep: no OPL-Launcher at %s; the PS2 will use its embedded copy", launcher)
 +		launcher = ""
 +	}
++	oplElf := cfg.OPLElf
++	if _, err := os.Stat(oplElf); err != nil {
++		log.Printf("prep: no OPL runtime at %s; consoles without OPL cannot get it from this server", oplElf)
++		oplElf = ""
++	}
 +	o := prep.Options{Folders: gameFolders(cfg), CFGDir: cfg.CFG, ARTDir: cfg.ART,
-+		Gamelist: cfg.Gamelist, CacheDir: cfg.Cache, Launcher: launcher, Auto: cfg.AutoInstall,
++		Gamelist: cfg.Gamelist, CacheDir: cfg.Cache, Launcher: launcher, OPL: oplElf,
++		Auto:       cfg.AutoInstall,
 +		Download:   cfg.DownloadCovers && !*noDownload,
 +		Downloader: &prep.Downloader{BaseURL: prep.CoverURL, CacheDir: cfg.Cache}}
 +	// Before the server answers discovery: never serve the previous run's
@@ -246,10 +253,10 @@ index 0000000..00c2160
 +}
 diff --git a/internal/config/config.go b/internal/config/config.go
 new file mode 100644
-index 0000000..9268349
+index 0000000..74cd2f9
 --- /dev/null
 +++ b/internal/config/config.go
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,157 @@
 +// Package config reads udpfsd.cfg: "key = value" lines, '#' comments.
 +package config
 +
@@ -266,6 +273,7 @@ index 0000000..9268349
 +type Config struct {
 +	DVD, CD, Games, Install, CFG, ART     string
 +	Gamelist, Cache, OPLLauncher, FSRoot  string
++	OPLElf                                string // OPL runtime offered to consoles without OPL
 +	DownloadCovers, AutoInstall, ReadOnly bool
 +	Port                                  int
 +	Bind                                  string
@@ -276,11 +284,11 @@ index 0000000..9268349
 +
 +// Keys lists every accepted key.
 +var Keys = []string{"dvd", "cd", "games", "install", "cfg", "art", "gamelist", "cache",
-+	"download_covers", "opl_launcher", "auto_install", "fsroot", "read_only", "port", "bind"}
++	"download_covers", "opl_launcher", "opl_elf", "auto_install", "fsroot", "read_only", "port", "bind"}
 +
 +// Defaults returns the built-in defaults (relative paths not yet resolved).
 +func Defaults() Config {
-+	return Config{Cache: "udpfsd-cache", OPLLauncher: "opl-launcher-EXECUTE.KELF",
++	return Config{Cache: "udpfsd-cache", OPLLauncher: "opl-launcher-EXECUTE.KELF", OPLElf: "OPNPS2LD.ELF",
 +		DownloadCovers: true, Port: 62966}
 +}
 +
@@ -354,6 +362,11 @@ index 0000000..9268349
 +		if _, err := os.Stat(c.OPLLauncher); err != nil {
 +			return fmt.Errorf("opl_launcher %s: %w", c.OPLLauncher, err)
 +		}
++	case "opl_elf":
++		c.OPLElf = resolve(v, baseDir)
++		if _, err := os.Stat(c.OPLElf); err != nil {
++			return fmt.Errorf("opl_elf %s: %w", c.OPLElf, err)
++		}
 +	case "download_covers":
 +		c.DownloadCovers, err = parseBool(v)
 +	case "auto_install":
@@ -375,6 +388,7 @@ index 0000000..9268349
 +	c := Defaults()
 +	c.Cache = resolve(c.Cache, baseDir)
 +	c.OPLLauncher = resolve(c.OPLLauncher, baseDir)
++	c.OPLElf = resolve(c.OPLElf, baseDir)
 +	f, err := os.Open(path)
 +	if err != nil {
 +		return c, err
@@ -402,10 +416,10 @@ index 0000000..9268349
 +}
 diff --git a/internal/config/config_test.go b/internal/config/config_test.go
 new file mode 100644
-index 0000000..4da73c1
+index 0000000..e53ee49
 --- /dev/null
 +++ b/internal/config/config_test.go
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,136 @@
 +package config
 +
 +import (
@@ -523,6 +537,23 @@ index 0000000..4da73c1
 +	c.Games = "/x"
 +	if !c.HasGameFolders() {
 +		t.Fatal("games folder not detected")
++	}
++}
++
++func TestOPLElfKey(t *testing.T) {
++	base := t.TempDir()
++	c := Defaults()
++	if c.OPLElf != "OPNPS2LD.ELF" {
++		t.Fatalf("default %q", c.OPLElf)
++	}
++	write(t, base, "my.elf", "x")
++	p := write(t, base, "udpfsd.cfg", "opl_elf = my.elf\n")
++	if c, err := Load(p, base); err != nil || c.OPLElf != filepath.Join(base, "my.elf") {
++		t.Fatalf("%v %q", err, c.OPLElf)
++	}
++	p = write(t, base, "udpfsd.cfg", "opl_elf = missing.elf\n")
++	if _, err := Load(p, base); err == nil {
++		t.Fatal("missing explicit opl_elf accepted")
 +	}
 +}
 diff --git a/internal/fs/backend.go b/internal/fs/backend.go
@@ -2138,10 +2169,10 @@ index 0000000..99c47c6
 +}
 diff --git a/internal/prep/scan.go b/internal/prep/scan.go
 new file mode 100644
-index 0000000..d8a7b8b
+index 0000000..1d9fb5d
 --- /dev/null
 +++ b/internal/prep/scan.go
-@@ -0,0 +1,301 @@
+@@ -0,0 +1,332 @@
 +package prep
 +
 +import (
@@ -2166,6 +2197,7 @@ index 0000000..d8a7b8b
 +type Options struct {
 +	Folders                                      []Folder
 +	CFGDir, ARTDir, Gamelist, CacheDir, Launcher string
++	OPL                                          string // OPNPS2LD.ELF offered to consoles without OPL
 +	Download, Auto                               bool
 +	Downloader                                   *Downloader
 +}
@@ -2276,31 +2308,50 @@ index 0000000..d8a7b8b
 +	e.Info = info
 +}
 +
-+func copyLauncher(src, served string) (string, error) {
-+	in, err := os.Open(src)
-+	if err != nil {
++// serveFile copies src into the served dir as name and returns the
++// manifest header field " key=<sha256>:<bytes>". check, if set, must
++// accept the file's first bytes. On any failure a previous copy is removed.
++func serveFile(src, served, name, key string, check func(head []byte) bool) (string, error) {
++	dst := filepath.Join(served, name)
++	fail := func(err error) (string, error) {
++		os.Remove(dst)
 +		return "", err
 +	}
++	in, err := os.Open(src)
++	if err != nil {
++		return fail(err)
++	}
 +	defer in.Close()
++	if check != nil {
++		head := make([]byte, 4)
++		if _, err := io.ReadFull(in, head); err != nil || !check(head) {
++			return fail(fmt.Errorf("%s: unexpected file type", src))
++		}
++		if _, err := in.Seek(0, io.SeekStart); err != nil {
++			return fail(err)
++		}
++	}
 +	h := sha256.New()
-+	tmp := filepath.Join(served, "EXECUTE.KELF.tmp")
++	tmp := dst + ".tmp"
 +	out, err := os.Create(tmp)
 +	if err != nil {
-+		return "", err
++		return fail(err)
 +	}
 +	n, err := io.Copy(io.MultiWriter(out, h), in)
 +	if cerr := out.Close(); err == nil {
 +		err = cerr
 +	}
++	if err == nil {
++		err = renameFile(tmp, dst)
++	}
 +	if err != nil {
 +		os.Remove(tmp)
-+		return "", err
++		return fail(err)
 +	}
-+	if err := os.Rename(tmp, filepath.Join(served, "EXECUTE.KELF")); err != nil {
-+		return "", err
-+	}
-+	return fmt.Sprintf(" launcher=%s:%d", hex.EncodeToString(h.Sum(nil)), n), nil
++	return fmt.Sprintf(" %s=%s:%d", key, hex.EncodeToString(h.Sum(nil)), n), nil
 +}
++
++func isELF(head []byte) bool { return string(head) == "\x7fELF" }
 +
 +func (o *Options) manifest(entries []entry, launcher string) []byte {
 +	var b strings.Builder
@@ -2392,11 +2443,22 @@ index 0000000..d8a7b8b
 +	}
 +	launcher := ""
 +	if o.Launcher != "" {
-+		if l, err := copyLauncher(o.Launcher, served); err == nil {
++		if l, err := serveFile(o.Launcher, served, "EXECUTE.KELF", "launcher", nil); err == nil {
 +			launcher = l
 +		} else {
 +			log.Printf("prep: OPL-Launcher not served: %v", err)
 +		}
++	} else {
++		os.Remove(filepath.Join(served, "EXECUTE.KELF"))
++	}
++	if o.OPL != "" {
++		if l, err := serveFile(o.OPL, served, "OPNPS2LD.ELF", "opl", isELF); err == nil {
++			launcher += l
++		} else {
++			log.Printf("prep: OPL runtime not served: %v", err)
++		}
++	} else {
++		os.Remove(filepath.Join(served, "OPNPS2LD.ELF"))
 +	}
 +	if err := writeAtomic(filepath.Join(served, "manifest.txt"), o.manifest(entries, launcher)); err != nil {
 +		return res, err
@@ -2445,10 +2507,10 @@ index 0000000..d8a7b8b
 +}
 diff --git a/internal/prep/scan_test.go b/internal/prep/scan_test.go
 new file mode 100644
-index 0000000..0683556
+index 0000000..5c0eee5
 --- /dev/null
 +++ b/internal/prep/scan_test.go
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,264 @@
 +package prep
 +
 +import (
@@ -2674,6 +2736,43 @@ index 0000000..0683556
 +	}
 +	if b, _ := os.ReadFile(p); string(b) != "x" || fails != 0 {
 +		t.Fatalf("%q fails=%d", b, fails)
++	}
++}
++
++func TestServesOPLRuntime(t *testing.T) {
++	base := t.TempDir()
++	dir := filepath.Join(base, "G")
++	os.MkdirAll(dir, 0755)
++	elf := append([]byte("\x7fELF"), []byte(strings.Repeat("O", 5000))...)
++	oplPath := filepath.Join(base, "OPNPS2LD.ELF")
++	os.WriteFile(oplPath, elf, 0644)
++	kelf := []byte(strings.Repeat("K", 2048))
++	lPath := filepath.Join(base, "l.KELF")
++	os.WriteFile(lPath, kelf, 0644)
++	cache := filepath.Join(base, "c")
++	if _, err := Run(Options{Folders: []Folder{{"GAMES", dir}}, CacheDir: cache,
++		Launcher: lPath, OPL: oplPath, Auto: true}); err != nil {
++		t.Fatal(err)
++	}
++	head, _ := readManifest(t, cache)
++	ls, os2 := sha256.Sum256(kelf), sha256.Sum256(elf)
++	want := fmt.Sprintf("udpfsd-manifest 1 launcher=%x:%d opl=%x:%d auto=1", ls, len(kelf), os2, len(elf))
++	if head != want {
++		t.Fatalf("header\n%q\nwant\n%q", head, want)
++	}
++	if b, _ := os.ReadFile(filepath.Join(ServedDir(cache), "OPNPS2LD.ELF")); string(b) != string(elf) {
++		t.Fatal("OPL not served")
++	}
++	// A file that is not an ELF is never offered as the OPL runtime.
++	os.WriteFile(oplPath, []byte("not an elf"), 0644)
++	if _, err := Run(Options{Folders: []Folder{{"GAMES", dir}}, CacheDir: cache, OPL: oplPath}); err != nil {
++		t.Fatal(err)
++	}
++	if head, _ := readManifest(t, cache); strings.Contains(head, "opl=") {
++		t.Fatalf("non-ELF offered: %q", head)
++	}
++	if _, err := os.Stat(filepath.Join(ServedDir(cache), "OPNPS2LD.ELF")); err == nil {
++		t.Fatal("stale OPL left in served dir")
 +	}
 +}
 diff --git a/internal/prep/testiso_test.go b/internal/prep/testiso_test.go

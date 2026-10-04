@@ -12,6 +12,8 @@ Quick start
       udpfsd-windows-amd64.exe   (or udpfsd-linux-amd64)
       udpfsd.cfg                 settings, edit this
       opl-launcher-EXECUTE.KELF  signed OPL-Launcher for the game channels
+      OPNPS2LD.ELF               Open PS2 Loader, installed on a DESR without OPL
+      OPL-LICENSE.txt            its licence (AFL-3.0)
 2. Edit udpfsd.cfg: set your game folders (dvd, cd, games, install) and,
    if you have them, your OPL cfg/art folders and a game list:
       dvd      = F:\ps2\PFS-BatchKit-Manager\DVD
@@ -65,6 +67,9 @@ udpfsd.cfg reference
   download_covers           yes/no (default yes)
   opl_launcher              signed OPL-Launcher KELF
                             (default opl-launcher-EXECUTE.KELF)
+  opl_elf                   OPL installed on consoles without OPL
+                            (default OPNPS2LD.ELF; shipped: official
+                            v1.2.0-Beta-2245-3e3f34e)
   auto_install              yes/no (default no)
   fsroot                    optional folder served as /
   read_only                 yes/no for fsroot (mounts are always read-only)

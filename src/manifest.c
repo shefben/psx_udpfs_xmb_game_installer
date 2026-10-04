@@ -14,6 +14,27 @@ static int is_hex64(const char *s, size_t n) {
   return 1;
 }
 
+/* "<64 lowercase hex>:<bytes>" (n chars at v) -> sha/size; 1 if valid.
+ * A malformed value is never trusted. */
+static int parse_sha_size(const char *v, size_t n, char sha[65], uint32_t *size) {
+  const char *colon = memchr(v, ':', n);
+  if (!colon || !is_hex64(v, (size_t)(colon - v)))
+    return 0;
+  char num[24];
+  size_t nl = n - (size_t)(colon + 1 - v);
+  uint64_t sz;
+  if (nl == 0 || nl >= sizeof(num))
+    return 0;
+  memcpy(num, colon + 1, nl);
+  num[nl] = 0;
+  if (parse_u64(num, &sz) != 0 || sz == 0 || sz >= 0xFFFFFFFFull)
+    return 0;
+  memcpy(sha, v, 64);
+  sha[64] = 0;
+  *size = (uint32_t)sz;
+  return 1;
+}
+
 static int parse_header(const char *line, manifest_t *m) {
   if (strncmp(line, "udpfsd-manifest ", 16) != 0)
     return -1;
@@ -27,22 +48,9 @@ static int parse_header(const char *line, manifest_t *m) {
     const char *end = strchr(p, ' ');
     size_t n = end ? (size_t)(end - p) : strlen(p);
     if (n > 9 && !strncmp(p, "launcher=", 9)) {
-      const char *colon = memchr(p + 9, ':', n - 9);
-      uint64_t sz;
-      char num[24];
-      if (colon && is_hex64(p + 9, (size_t)(colon - p - 9))) {
-        size_t nl = n - (size_t)(colon + 1 - p);
-        if (nl > 0 && nl < sizeof(num)) {
-          memcpy(num, colon + 1, nl);
-          num[nl] = 0;
-          if (parse_u64(num, &sz) == 0 && sz > 0 && sz < 0xFFFFFFFFull) {
-            memcpy(m->launcher_sha, p + 9, 64);
-            m->launcher_sha[64] = 0;
-            m->launcher_size = (uint32_t)sz;
-            m->has_launcher = 1;
-          }
-        }
-      }
+      m->has_launcher = parse_sha_size(p + 9, n - 9, m->launcher_sha, &m->launcher_size);
+    } else if (n > 4 && !strncmp(p, "opl=", 4)) {
+      m->has_opl = parse_sha_size(p + 4, n - 4, m->opl_sha, &m->opl_size);
     } else if (n == 6 && !strncmp(p, "auto=", 5)) {
       m->auto_install = p[5] == '1';
     } else if (n == 10 && !strncmp(p, "scanning=", 9)) {

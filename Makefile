@@ -86,6 +86,12 @@ $(UDPFSD_BIN) &: $(BUILD)/.refs-ok $(wildcard patches/udpfsd/*.patch) tools/buil
 test-udpfsd: $(BUILD)/.refs-ok
 	bash tools/build-udpfsd.sh $(BUILD)/udpfsd test
 
+# ---- OPL runtime handed out by udpfsd when the console has none ---------
+# Pinned official build (tools/opl.env), verified by SHA-256.
+OPL_RUNTIME := $(BUILD)/opl/OPNPS2LD.ELF
+$(OPL_RUNTIME): tools/opl.env tools/fetch-opl.sh
+	bash tools/fetch-opl.sh $(BUILD)/opl
+
 # ---- HDD driver ---------------------------------------------------------
 # vendor/irx/ps2hdd-hdl.irx is the output of `make driver` (reproducible
 # legacy source build, see tools/driver/README.md). Every build checks
@@ -191,11 +197,16 @@ dev: $(EE_DEPS) FORCE
 DIST_FILES := desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
               installer-EXECUTE.KELF opl-launcher-EXECUTE.KELF
 
-dist: test $(BOOT_ELF) $(UDPFSD_BIN)
-	rm -rf $(DIST)
+dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME)
+	@# Empty dist/ rather than delete it: an Explorer window open on a
+	@# folder in it locks the folder on Windows. No old file may survive.
+	mkdir -p $(DIST)
+	find $(DIST) -mindepth 1 -depth -delete 2>/dev/null || true
+	test -z "$$(find $(DIST) -type f)"
 	mkdir -p $(DIST)/udpfsd-example $(DIST)/docs $(DIST)/udpfsd
 	cp $(BOOT_ELF) $(APP_ELF) $(APP_KELF) $(OPL_KELF) $(DIST)/
 	cp $(UDPFSD_BIN) $(OPL_KELF) docs/udpfsd-example/udpfsd.cfg $(DIST)/udpfsd/
+	cp $(OPL_RUNTIME) $(BUILD)/opl/OPL-LICENSE.txt $(DIST)/udpfsd/
 	cp docs/udpfsd-example/* $(DIST)/udpfsd-example/
 	cp docs/INSTALL.md docs/HARDWARE_TEST_CHECKLIST.md $(DIST)/docs/
 	cp docs/QUICKSTART.md $(DIST)/

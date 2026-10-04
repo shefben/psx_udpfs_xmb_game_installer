@@ -82,3 +82,16 @@ TEST(manifest_lookups) {
   CHECK(manifest_find_path(&m, "udpfs:/DVD/broken.iso") == &m.e[2]);
   CHECK(manifest_find_path(&m, "udpfs:/nope.iso") == NULL);
 }
+
+TEST(manifest_opl_runtime_header) {
+  const char *t =
+      "udpfsd-manifest 1 launcher=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:1561728 "
+      "opl=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210:1360884 auto=1\n";
+  CHECK_EQ_INT(manifest_parse(t, strlen(t), &m), 0);
+  CHECK(m.has_launcher && m.has_opl && m.auto_install);
+  CHECK_EQ_INT(m.opl_size, 1360884);
+  CHECK_STR(m.opl_sha, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210");
+  t = "udpfsd-manifest 1 opl=nothex:12 auto=0\n";
+  CHECK_EQ_INT(manifest_parse(t, strlen(t), &m), 0);
+  CHECK(!m.has_opl);
+}

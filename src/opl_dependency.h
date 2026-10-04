@@ -28,6 +28,11 @@ int opl_resolve_from_conf(const char *conf_text, opl_runtime_t *out);
 /* Full on-console check: resolves and verifies the ELF exists.
  * ERR_OK or ERR_OPL_NOT_FOUND; `rc_out` receives a driver code. */
 inst_err_t opl_check_runtime(opl_runtime_t *out, int *rc_out);
+
+/* OPL missing: install the OPNPS2LD.ELF udpfsd offers (hash-checked)
+ * where OPL-Launcher looks for it, creating only the default +OPL.
+ * ERR_OK when OPL is present afterwards; else *detail says why. */
+inst_err_t opl_install_from_server(const char **detail, int *rc_out);
 #endif
 
 #endif

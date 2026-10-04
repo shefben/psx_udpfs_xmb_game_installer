@@ -292,6 +292,42 @@ static int batch_load_entries(const char *title) {
   return n;
 }
 
+/* OPL missing on the HDD: install the server's pinned OPL without asking
+ * (it only adds files/the default +OPL partition, never overwrites).
+ * Returns 1 when OPL is present afterwards. quiet: no result screen. */
+static int ensure_opl(const char *title, int quiet, const char **why) {
+  opl_runtime_t opl;
+  int rc;
+  const char *dummy;
+  if (!why)
+    why = &dummy;
+  *why = NULL;
+  if (opl_check_runtime(&opl, &rc) == ERR_OK)
+    return 1;
+  if (g_app.net != NETWORK_READY || !g_manifest_loaded || !g_manifest.has_opl) {
+    *why = "the server offers no OPL (OPNPS2LD.ELF next to udpfsd)";
+    return 0;
+  }
+  ui_header(title, "OPL not found - installing it from the server ...");
+  ui_at(4, " Open PS2 Loader is needed to start the games.");
+  ui_at(5, " Copying the server's OPNPS2LD.ELF to hdd0:%s ...", opl.partition);
+  const char *detail = NULL;
+  inst_err_t e = opl_install_from_server(&detail, &rc);
+  *why = detail;
+  if (!quiet) {
+    char msg[300];
+    if (e == ERR_OK)
+      snprintf(msg, sizeof(msg), "OPL was installed from the server to hdd0:%s and\n"
+                                 "verified (SHA-256). Games can now get XMB channels.",
+               opl.partition);
+    else
+      snprintf(msg, sizeof(msg), "OPL could not be installed from the server:\n%s\n%s (code %d)",
+               detail ? detail : "-", err_name(e), rc);
+    ui_message(title, msg);
+  }
+  return e == ERR_OK;
+}
+
 /* Install every selected entry with the unchanged single-game install
  * (copy, CRC read-back, journal, channel). SELECT+O aborts a game. */
 static void batch_run_selected(int n, int allow_without_opl, const char *label) {
@@ -381,7 +417,7 @@ void flow_batch_install(void) {
   int allow_without_opl = 0;
   opl_runtime_t opl;
   int orc;
-  if (opl_check_runtime(&opl, &orc) != ERR_OK) {
+  if (!ensure_opl("Install All Games", 0, NULL) && opl_check_runtime(&opl, &orc) != ERR_OK) {
     char txt[400];
     snprintf(txt, sizeof(txt),
              "OPL runtime not found (looked for %s on hdd0:%s).\n\n"
@@ -494,16 +530,19 @@ void flow_auto_install(void) {
   }
   }
 
-  /* 4. Never create channel-less games here: OPL must be present. */
+  /* 4. Never create channel-less games here: OPL must be present. If it
+   * is missing, the server's pinned OPL is installed first. */
   opl_runtime_t opl;
   int orc;
-  if (opl_check_runtime(&opl, &orc) != ERR_OK) {
+  const char *why = NULL;
+  if (!ensure_opl("Auto-install", 1, &why) && opl_check_runtime(&opl, &orc) != ERR_OK) {
     char msg[400];
     snprintf(msg, sizeof(msg),
-             "OPL runtime not found (looked for %s on hdd0:%s).\n\n"
-             "Auto-install did not install anything. Install OPL on the\n"
-             "HDD, then start the installer again.",
-             opl.elf_path, opl.partition);
+             "OPL runtime not found (looked for %s on hdd0:%s)\n"
+             "and the server's OPL could not be installed: %s\n\n"
+             "Auto-install did not install anything.",
+             opl.elf_path, opl.partition,
+             why ? why : "the server offers no OPL (OPNPS2LD.ELF next to udpfsd)");
     auto_show("Auto-install", msg, 15000);
     return;
   }
@@ -577,7 +616,7 @@ void flow_install_game(game_plan_t *p) {
     int allow_without_opl = 0;
     opl_runtime_t opl;
     int rc;
-    if (opl_check_runtime(&opl, &rc) != ERR_OK) {
+    if (!ensure_opl("Install game", 0, NULL) && opl_check_runtime(&opl, &rc) != ERR_OK) {
       char txt[700];
       snprintf(txt, sizeof(txt),
                "OPL runtime not found (looked for %s on hdd0:%s).\n\n"
@@ -628,6 +667,7 @@ static void do_create_channel(const char *hidden) {
   progress_ctx_t ctx = {NULL, STAGE_VALIDATING};
   install_ui_t ui = {cb_stage, NULL, NULL, &ctx};
   install_report_t rep;
+  ensure_opl("Create/Repair XMB Channel", 0, NULL);
   ui_header("Create/Repair XMB Channel", hidden);
   game_create_channel(hidden, &ui, &rep);
   if (rep.err)

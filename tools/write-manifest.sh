@@ -13,7 +13,7 @@ cd "$DIST"
 sha256sum desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
   installer-EXECUTE.KELF opl-launcher-EXECUTE.KELF \
   udpfsd/udpfsd-windows-amd64.exe udpfsd/udpfsd-linux-amd64 \
-  udpfsd/opl-launcher-EXECUTE.KELF udpfsd/udpfsd.cfg > SHA256SUMS
+  udpfsd/opl-launcher-EXECUTE.KELF udpfsd/udpfsd.cfg udpfsd/OPNPS2LD.ELF > SHA256SUMS
 {
   echo "build: $(git -C "$ROOT" describe --always --dirty --abbrev=12)"
   echo "commit date: $(git -C "$ROOT" log -1 --format=%cI)"
@@ -38,6 +38,11 @@ sha256sum desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
   echo "pinned upstream + patches/udpfsd (udpfsd.cfg, read-only mounts, game prep + manifest)"
   (cd "$ROOT" && sha256sum patches/udpfsd/*.patch)
   echo "udpfsd/opl-launcher-EXECUTE.KELF is the signed KELF above (served as /.udpfsd/EXECUTE.KELF)"
+  echo
+  echo "== OPL runtime (udpfsd/OPNPS2LD.ELF, served as /.udpfsd/OPNPS2LD.ELF)"
+  (. "$ROOT/tools/opl.env"; echo "Open PS2 Loader $OPL_VERSION, official build, AFL-3.0 (udpfsd/OPL-LICENSE.txt)"
+   echo "archive $OPL_ARCHIVE sha256 $OPL_ARCHIVE_SHA256"
+   echo "ELF sha256 $OPL_ELF_SHA256")
   echo
   echo "== upstream revisions"
   cat "$ROOT/reference/REVISIONS.txt"

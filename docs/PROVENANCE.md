@@ -58,3 +58,12 @@ none are shipped.
 
 OPL-Launcher itself is built unmodified from 6da1af2 and signed; every
 game channel gets its own copy of that KELF.
+
+## Open PS2 Loader runtime (dist/udpfsd/OPNPS2LD.ELF)
+
+Official ps2homebrew build `OPNPS2LD-v1.2.0-Beta-2245-3e3f34e` (the
+same commit as `reference/Open-PS2-Loader`), unmodified. The release
+archive is kept in `vendor/opl/` because it was published under OPL's
+rolling `latest` tag; archive and ELF are pinned by SHA-256 in
+`tools/opl.env` and checked by `tools/fetch-opl.sh` at every build.
+Licence: AFL-3.0, shipped as `dist/udpfsd/OPL-LICENSE.txt`.

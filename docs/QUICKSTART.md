@@ -11,8 +11,9 @@ DESR. Back up the HDD partition table before the first run (e.g.
 
 ## What you need
 
-* A PSX DESR whose internal HDD has **OPL** installed (`OPNPS2LD.ELF` in
-  `+OPL`, or wherever `hdd0:__common/OPL/conf_hdd.cfg` points).
+* A PSX DESR with its internal HDD. OPL does not need to be installed:
+  if it is missing, the installer puts the official OPL shipped with the
+  server (v1.2.0-Beta-2245-3e3f34e) into `+OPL` automatically.
 * A way to start an ELF on the DESR (e.g. wLaunchELF from a USB stick).
 * A PC on the same network (wired) as the DESR.
 * The release files from `dist/`:
@@ -29,7 +30,8 @@ DESR. Back up the HDD partition table before the first run (e.g.
 1. **Copy the server folder.** Copy `dist/udpfsd/` to the PC, e.g. to
    `F:\ps2\udpfsd\`. Keep its four files together:
    `udpfsd-windows-amd64.exe`, `udpfsd-linux-amd64`, `udpfsd.cfg`,
-   `opl-launcher-EXECUTE.KELF`.
+   `opl-launcher-EXECUTE.KELF`, `OPNPS2LD.ELF` (OPL, installed on the DESR
+   when it has none) and `OPL-LICENSE.txt`.
 
 2. **Edit `udpfsd.cfg`.** Point it at your folders; delete or `#` out
    lines you don't need:
@@ -119,7 +121,7 @@ DESR. Back up the HDD partition table before the first run (e.g.
 |---|---|
 | `udpfsd not found` | Firewall (UDP 62966), same IP range, only one udpfsd running, `bind =` on multi-network PCs; then **Restart network**. |
 | "No games found on the server" | Check the game folder lines in `udpfsd.cfg` and the server log. |
-| "OPL runtime not found" | Install OPL on the HDD; auto mode installs nothing without it. |
+| "OPL runtime not found" | Keep `OPNPS2LD.ELF` next to udpfsd (shipped); if `__common/OPL/conf_hdd.cfg` names a partition that does not exist, fix or delete that file. |
 | A game shows `duplicate` | Two images have the same game ID (e.g. `.iso` and `.zso` of one game); only one is installed. |
 | A game shows `already on HDD` | Use **Installed Games** to delete it first if you want to reinstall. |
 | Install failed / power cut | **Repair XMB Channels** lists unfinished installs; delete and reinstall. |

@@ -72,3 +72,11 @@ level unless stated otherwise.
 * **No controller:** the installer only backs out of menus; it never
   starts an install or accepts a prompt without a pad.
 * **Transfer tuning** has not been done; the stream buffer is 1 MiB.
+* **OPL from the server** is installed only where OPL-Launcher looks for
+  it: the default `+OPL` is created (128 MiB PFS) when missing; if
+  `__common/OPL/conf_hdd.cfg` names a partition that does not exist,
+  nothing is created. An existing `OPNPS2LD.ELF` is never replaced or
+  updated. If formatting a newly created `+OPL` fails, the empty
+  partition stays (the installer may not delete `+OPL`); remove it with
+  another tool. OPL itself creates its folders (CFG, ART, ...) on first
+  start.

@@ -7,8 +7,11 @@ on the bottom line. Destructive actions need **R1 held + X**.
 
 * PSX DESR with its internal HDD (APA formatted, as the DESR ships it).
 * A way to run one unsigned ELF once (any homebrew launcher).
-* OPL on the HDD: `OPNPS2LD.ELF` in `+OPL`, or wherever
-  `hdd0:__common/OPL/conf_hdd.cfg` points (`hdd_partition=...`).
+* OPL: if the HDD has none (`OPNPS2LD.ELF` in `+OPL`, or wherever
+  `hdd0:__common/OPL/conf_hdd.cfg` points), the installer installs the
+  official OPL shipped next to udpfsd (`OPNPS2LD.ELF`, v1.2.0-Beta-2245-3e3f34e):
+  it creates the default `+OPL` (128 MiB PFS, as OPL does) or adds the ELF to
+  an existing OPL partition; an existing `OPNPS2LD.ELF` is never replaced.
 * A PC/NAS running the `udpfsd` from `dist/udpfsd/` on the LAN, with
   `udpfsd.cfg` pointing at your game folders and, optionally, your OPL
   `CFG`/`ART` folders and a game list (`udpfsd-example/README.txt`).
@@ -113,7 +116,8 @@ bootstrap ELF from wLaunchELF, or its XMB channel) needs no further input:
    O or Triangle cancels into the normal menu.
 2. First run: `PP.UDPFS-INSTALLER` is created and verified (the installer
    then also appears in the XMB).
-3. If OPL is not on the HDD nothing is installed; the reason is shown.
+3. If OPL is not on the HDD, the server's OPL is installed first (checked by
+   SHA-256). If that is impossible nothing is installed; the reason is shown.
 4. Every game that is not on the HDD yet and fits the free space is
    installed as in 3b. Each new channel gets the server's OPL-Launcher
    (if its SHA-256 matches the server's list; otherwise the built-in

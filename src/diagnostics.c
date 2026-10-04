@@ -159,6 +159,11 @@ static void check_payloads(void) {
   } else {
     line("INFO", "no OPL-Launcher offered by the server; embedded copy used");
   }
+  if (g_app.net == NETWORK_READY && g_manifest_loaded && g_manifest.has_opl)
+    line("INFO", "server offers OPL %lu bytes (installed if OPL is missing)",
+         (unsigned long)g_manifest.opl_size);
+  else
+    line("INFO", "server offers no OPL runtime (OPNPS2LD.ELF next to udpfsd)");
   if (payload_installer(&k, g_app.app_mounted, 0) == ERR_OK) {
     if (!strcmp(k.origin, "embedded")) {
       blob_check("installer app KELF (embedded)", "installer_kelf", k.data, k.size);

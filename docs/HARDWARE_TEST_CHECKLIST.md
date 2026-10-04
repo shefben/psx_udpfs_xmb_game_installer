@@ -34,6 +34,7 @@ or pfsshell) so the disk can be restored.
 | P14 | Batch selection/summary logic | `test_batch.c` | PASS |
 | P15 | udpfsd.cfg parsing/precedence; game prep: ISO/ZSO probe, titles (CFG > game list > file name), art lookup + 74x108 PNG, cover download (local test server), manifest format/atomic write, scan cache | Go tests in `patches/udpfsd/0002` (`make test-udpfsd`) | PASS |
 | P16 | PS2 manifest parser, server-launcher check (hash/size/KELF), OPL cfg decision, auto-install selection, journal fields | `test_manifest.c`, `test_server_assets.c`, `test_batch.c`, `test_state.c` | PASS |
+| P17 | OPL runtime: pinned archive/ELF SHA-256 (`tools/fetch-opl.sh`), server serves only an ELF with `opl=` hash, console install decision (create `+OPL` only by default, add ELF to existing partition, never for a missing configured partition), hash check | `make dist`, Go `TestServesOPLRuntime`, `test_server_assets.c`, `test_manifest.c` | PASS |
 
 ## Level 2 - DESR NON-DESTRUCTIVE VERIFIED
 
@@ -78,6 +79,8 @@ Run in this order. Nothing here creates or deletes a game partition.
 | D21 | Channels use the server OPL-Launcher (Diagnostics: "OPL-Launcher KELF from server", journal `launcher_source=server`); a mismatching server copy falls back to the embedded one | | NOT RUN |
 | D22 | Fresh console (no `PP.UDPFS-INSTALLER`), `auto_install = yes`, one ISO + one ZSO on the server: start the bootstrap ELF, no further input | installer partition created, both games complete the acceptance chain, console returns to the XMB, both games boot | NOT RUN |
 | D23 | `LoadExecPS2("rom0:OSDSYS")` after auto-install lands in the DESR XMB | | NOT RUN |
+| D24 | DESR without OPL: auto-install creates `+OPL` with the server's OPNPS2LD.ELF, then installs games; channels boot through it | `+OPL` 128 MiB PFS, ELF hash = manifest, games reach title screen | NOT RUN |
+| D25 | OPL already present: server OPL is never written; a configured partition that is missing stops with a reason | | NOT RUN |
 | D17 | Remove one of two games, reboot | other game and installer still work | NOT RUN |
 
 ### Acceptance chain for D4 / D5 (each must be observed)
