@@ -49,6 +49,8 @@ typedef struct {
   tx_state_t state;
   tx_state_t failed_from; /* stage that failed, when state == TX_FAILED */
   char last_error[64];
+  char launcher_source[24]; /* "server" | "embedded": channel KELF origin */
+  char opl_cfg[8];          /* "copied" | "kept" | "failed" | "none" */
 } tx_journal_t;
 
 const char *tx_state_name(tx_state_t s); /* "TX_PLANNED" ... */

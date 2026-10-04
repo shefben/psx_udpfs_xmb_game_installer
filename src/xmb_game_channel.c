@@ -179,6 +179,8 @@ static void finish_report(install_report_t *rep, const char *visible,
  * anything was removed, and is released here. */
 static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
                           const install_ui_t *ui, install_report_t *rep) {
+  str_copy(j->launcher_source, !strcmp(kelf->origin, "server") ? "server" : "embedded",
+           sizeof(j->launcher_source));
   stage(ui, rep, STAGE_CREATING_CHANNEL);
   char info[1024];
   uint32_t info_len = (uint32_t)xmb_game_info_sys(info, sizeof(info), title,

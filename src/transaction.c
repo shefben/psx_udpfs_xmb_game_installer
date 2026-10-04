@@ -90,7 +90,8 @@ int tx_journal_equal(const tx_journal_t *a, const tx_journal_t *b) {
          a->has_hdl_identity == b->has_hdl_identity && a->hdl_start == b->hdl_start &&
          a->hdl_size == b->hdl_size && a->hdl_header_crc32 == b->hdl_header_crc32 &&
          a->state == b->state && a->failed_from == b->failed_from &&
-         !strcmp(a->last_error, b->last_error);
+         !strcmp(a->last_error, b->last_error) &&
+         !strcmp(a->launcher_source, b->launcher_source) && !strcmp(a->opl_cfg, b->opl_cfg);
 }
 
 int tx_identity_matches(const tx_journal_t *j, uint32_t start, uint32_t size,
@@ -158,14 +159,17 @@ size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz) {
                    "hdl_header_crc32=%s\n"
                    "state=%s\n"
                    "failed_from=%s\n"
-                   "last_error=%s\n",
+                   "last_error=%s\n"
+                   "launcher_source=%s\n"
+                   "opl_cfg=%s\n",
                    j->source_path, (unsigned long long)j->source_size,
                    j->startup_id, j->visible_partition, j->hidden_partition,
                    (unsigned long long)j->bytes_expected,
                    (unsigned long long)j->bytes_written,
                    (unsigned long long)j->bytes_verified, scrc, icrc,
                    j->deleting ? 1 : 0, id_start, id_size, id_crc, tx_state_name(j->state),
-                   tx_state_name(j->failed_from), j->last_error);
+                   tx_state_name(j->failed_from), j->last_error, j->launcher_source,
+                   j->opl_cfg);
   if (n < 0 || (size_t)n >= outsz)
     return 0;
   return (size_t)n;
@@ -206,6 +210,10 @@ int tx_parse(const char *text, tx_journal_t *out) {
       str_copy(out->hidden_partition, v, sizeof(out->hidden_partition));
     else if (!strcmp(k, "last_error"))
       str_copy(out->last_error, v, sizeof(out->last_error));
+    else if (!strcmp(k, "launcher_source"))
+      str_copy(out->launcher_source, v, sizeof(out->launcher_source));
+    else if (!strcmp(k, "opl_cfg"))
+      str_copy(out->opl_cfg, v, sizeof(out->opl_cfg));
     else if (!strcmp(k, "source_size")) {
       if (parse_u64(v, &out->source_size) < 0)
         return -1;
@@ -263,7 +271,7 @@ int tx_parse(const char *text, tx_journal_t *out) {
 #include <fileXio_rpc.h>
 #include <io_common.h>
 
-static char io_buf[1024];
+static char io_buf[1536];
 
 static int journal_path(const char *dir, const char *partition, char *out,
                         size_t sz) {

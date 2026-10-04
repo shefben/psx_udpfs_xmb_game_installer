@@ -11,6 +11,7 @@
 #include "build_info.h"
 #include "diagnostics.h"
 #include "hdd_partitions.h"
+#include "manifest.h"
 #include "network.h"
 #include "opl_dependency.h"
 #include "opl_launcher_payload.h"
@@ -142,6 +143,22 @@ static void check_payloads(void) {
          "OPL-Launcher KELF not embedded (%s build)", build_variant);
   }
   payload_release(&k);
+  /* udpfsd's copy, used for new channels when it matches the manifest. */
+  if (g_app.net == NETWORK_READY && g_manifest_loaded && g_manifest.has_launcher) {
+    if (payload_opl_launcher(&k, 1) == ERR_OK && !strcmp(k.origin, "server")) {
+      char hex[65];
+      sha256_hex(k.data, k.size, hex);
+      line("PASS", "OPL-Launcher KELF from server, %lu bytes", (unsigned long)k.size);
+      line(NULL, "     sha256 %.32s", hex);
+      line(NULL, "            %.32s", hex + 32);
+    } else {
+      line("WARN", "server OPL-Launcher does not match the manifest;");
+      line(NULL, "     channels use the embedded copy");
+    }
+    payload_release(&k);
+  } else {
+    line("INFO", "no OPL-Launcher offered by the server; embedded copy used");
+  }
   if (payload_installer(&k, g_app.app_mounted, 0) == ERR_OK) {
     if (!strcmp(k.origin, "embedded")) {
       blob_check("installer app KELF (embedded)", "installer_kelf", k.data, k.size);

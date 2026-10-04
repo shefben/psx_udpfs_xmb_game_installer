@@ -340,3 +340,18 @@ TEST(opl_resolve_malformed) {
                    "hdd_partition=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n", &r),
                -1);
 }
+
+TEST(tx_launcher_and_opl_cfg_fields_roundtrip) {
+  tx_journal_t j, k;
+  verified_journal(&j);
+  strcpy(j.launcher_source, "server");
+  strcpy(j.opl_cfg, "copied");
+  char buf[1200];
+  CHECK(tx_serialize(&j, buf, sizeof(buf)) > 0);
+  CHECK(strstr(buf, "launcher_source=server\n") != NULL);
+  CHECK(strstr(buf, "opl_cfg=copied\n") != NULL);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK(tx_journal_equal(&j, &k));
+  strcpy(k.opl_cfg, "kept");
+  CHECK(!tx_journal_equal(&j, &k));
+}

@@ -3,7 +3,9 @@
 
 #include "hdd_partitions.h"
 #include "hdl_header.h"
+#include "manifest.h"
 #include "opl_launcher_payload.h"
+#include "server_assets.h"
 
 #define KELF_MAX (16 * 1024 * 1024)
 
@@ -90,7 +92,21 @@ __attribute__((unused)) static int try_file(payload_t *out, const char *path) {
 
 inst_err_t payload_opl_launcher(payload_t *out, int udpfs_ok) {
   memset(out, 0, sizeof(*out));
-  (void)udpfs_ok;
+  /* udpfsd's copy (udpfsd.cfg opl_launcher), only when its bytes match
+   * the size and SHA-256 the manifest announced; else the embedded one. */
+  if (udpfs_ok && g_manifest_loaded && g_manifest.has_launcher) {
+    void *buf = NULL;
+    int n = file_load(MANIFEST_DIR "/EXECUTE.KELF", &buf, KELF_MAX);
+    if (n > 0 && launcher_copy_valid(buf, (uint32_t)n, g_manifest.launcher_sha,
+                                     g_manifest.launcher_size)) {
+      out->data = buf;
+      out->size = (uint32_t)n;
+      out->owned = 1;
+      out->origin = "server";
+      return ERR_OK;
+    }
+    free(buf);
+  }
 #ifdef HAVE_EMBEDDED_OPL_LAUNCHER
   if (use_embedded(out, opl_launcher_kelf, size_opl_launcher_kelf))
     return ERR_OK;
