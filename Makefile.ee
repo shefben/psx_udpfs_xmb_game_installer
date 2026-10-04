@@ -11,7 +11,9 @@ SRC_DIR := src
 
 # Standard PS2SDK modules.
 SDK_IRX := iomanX fileXio poweroff ps2dev9 ps2atad ps2fs sio2man padman
-# HDLGameInstaller (ec37c81) modules; identical to ps2-usbhdl's vendored copies.
+# HDLGameInstaller (ec37c81) modules; identical to ps2-usbhdl's vendored
+# copies. ps2hdd-hdl.irx is taken from $(NEUTRINO_IRX_DIR) after
+# tools/patch-ps2hdd-hdl.py (removal of "__." partitions).
 HDL_IRX := ps2hdd_hdl hdlfs
 NEU_IRX := smap ministack udpfs_ioman
 
@@ -44,7 +46,7 @@ $(BUILD)/%.o: $(SRC_DIR)/%.c $(wildcard $(SRC_DIR)/*.h)
 $(BUILD)/blob_%_irx.c: $(PS2SDK)/iop/irx/%.irx
 	@mkdir -p $(@D)
 	bin2c $< $@ $*_irx
-$(BUILD)/blob_ps2hdd_hdl_irx.c: reference/HDLGameInstaller/irx/ps2hdd-hdl.irx
+$(BUILD)/blob_ps2hdd_hdl_irx.c: $(NEUTRINO_IRX_DIR)/ps2hdd-hdl.irx
 	@mkdir -p $(@D)
 	bin2c $< $@ ps2hdd_hdl_irx
 $(BUILD)/blob_hdlfs_irx.c: reference/HDLGameInstaller/irx/hdlfs.irx

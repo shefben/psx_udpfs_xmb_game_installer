@@ -5,13 +5,18 @@
 | Module | Source | Revision | License |
 |---|---|---|---|
 | iomanX.irx, fileXio.irx, poweroff.irx, ps2dev9.irx, ps2atad.irx, ps2fs.irx, sio2man.irx, padman.irx | PS2SDK installed with the toolchain (`$PS2SDK/iop/irx`) | toolchain build | AFL 2.0 (PS2SDK) |
-| ps2hdd-hdl.irx (embedded as `ps2hdd_hdl_irx`) | HDLGameInstaller `irx/ps2hdd-hdl.irx` | ec37c81 | GPL-2.0 (HDLGameInstaller); built from PS2SDK APA sources |
+| ps2hdd-hdl.irx (embedded as `ps2hdd_hdl_irx`) | HDLGameInstaller `irx/ps2hdd-hdl.irx` + `tools/patch-ps2hdd-hdl.py` (one 32-bit word) | ec37c81 | GPL-2.0 (HDLGameInstaller); built from PS2SDK APA sources |
 | hdlfs.irx | HDLGameInstaller `irx/hdlfs.irx` | ec37c81 | GPL-2.0 |
 | smap.irx, ministack.irx, udpfs_ioman.irx | Neutrino `iop/smap`, `iop/ministack`, `iop/udpfs` (UDPFS_IOMAN=1), built here with `patches/neutrino/0001` | 7be8de2 | Neutrino license (see reference/neutrino/LICENSE) |
 
 The two HDLGameInstaller binaries are byte-identical to the copies
 vendored by ps2-usbhdl b681bc6 (`vendor/irx/`), which proved them on
-hardware.
+hardware. `ps2hdd-hdl.irx` is then patched at build time: `apaRemove`
+refuses every name starting with `__`, which would make hidden
+`__.` game partitions impossible to delete. The patch changes the
+`li v0,'_'` constant at file offset 0xdfc to 0x100 (input sha256
+58b217e9…, output f61e139d…; exactly two bytes differ). The installer
+protects system partitions itself (`partition_remove_allowed`).
 
 Because GPL-2.0 modules are embedded, the installer ELF as distributed
 is GPL-2.0.
@@ -24,6 +29,7 @@ is GPL-2.0.
 | src/hdl_plan.c | ps2-usbhdl src/iso.c | b681bc6 | APA size buckets and sub-partition spill (rounding changed to round up) |
 | src/iso9660.c | ps2-usbhdl src/iso.c | b681bc6 | PVD parse, root-directory walk, SYSTEM.CNF BOOT2 extraction; moved behind GameSource |
 | src/iso9660.c | Open-PS2-Loader src/supportbase.c | 3e3f34e | DVD9 layer-1 detection (PVD at maxLBA, layer1 = maxLBA-16) |
+| src/hdl_header.c | HDLGameInstaller hdlfs/hdlfs.h | ec37c81 | header parse; installer marker in the unused `reserved` field |
 | src/iop_boot.c | ps2-usbhdl src/iop.c | b681bc6 | embedded module loading, ps2hdd-hdl `-o 4 -n 128` args |
 | src/ui.c | ps2-usbhdl src/ui.c | b681bc6 | libpad init and edge-detected polling |
 | src/hdl_header.h | HDLGameInstaller hdlfs/hdlfs.h | ec37c81 | HDLFS_FormatArgs and hdl_game_info layout |

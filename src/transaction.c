@@ -37,9 +37,13 @@ int tx_transition_allowed(tx_state_t from, tx_state_t to) {
   /* Retry from start / reinstall. */
   if (to == TX_PLANNED)
     return from == TX_FAILED || from == TX_COMPLETE;
-  /* Channel repair on a hidden game that re-verified. */
+  /* Channel (re)build on a hidden game whose data already verified:
+   * fresh repair, after a failure or completion, after a data-only
+   * install (OPL missing), or after power loss mid-channel. */
   if (to == TX_HDL_VERIFIED)
-    return from == TX_NONE || from == TX_FAILED || from == TX_COMPLETE;
+    return from == TX_NONE || from == TX_FAILED || from == TX_COMPLETE ||
+           from == TX_HDL_VERIFIED || from == TX_CHANNEL_CREATED ||
+           from == TX_CHANNEL_VERIFIED;
   return 0;
 }
 
@@ -70,6 +74,14 @@ int tx_journal_filename(const char *startup_id, char out[64]) {
   if (boot_id_to_part_id(startup_id, part_id) < 0)
     return -1;
   snprintf(out, 64, "install-%s.ini", part_id);
+  return 0;
+}
+
+int tx_journal_filename_for(const char *partition, char out[96]) {
+  out[0] = 0;
+  if (!partition_is_game_channel(partition) && !partition_is_hidden_game(partition))
+    return -1;
+  snprintf(out, 96, "install-%s.ini", partition + 3);
   return 0;
 }
 
@@ -160,17 +172,20 @@ int tx_parse(const char *text, tx_journal_t *out) {
 
 static char io_buf[1024];
 
-static void journal_path(const char *dir, const char *startup_id, char *out,
-                         size_t sz) {
-  char fn[64];
-  tx_journal_filename(startup_id, fn);
+static int journal_path(const char *dir, const char *partition, char *out,
+                        size_t sz) {
+  char fn[96];
+  if (tx_journal_filename_for(partition, fn) < 0)
+    return -1;
   snprintf(out, sz, "%s/%s", dir, fn);
+  return 0;
 }
 
 inst_err_t tx_save(const char *dir, const tx_journal_t *j) {
-  char path[128];
+  char path[160];
   fileXioMkdir(dir, 0777); /* may already exist */
-  journal_path(dir, j->startup_id, path, sizeof(path));
+  if (journal_path(dir, j->hidden_partition, path, sizeof(path)) < 0)
+    return ERR_JOURNAL;
   size_t n = tx_serialize(j, io_buf, sizeof(io_buf));
   if (n == 0)
     return ERR_JOURNAL;
@@ -194,15 +209,21 @@ static inst_err_t load_path(const char *path, tx_journal_t *j) {
   return tx_parse(io_buf, j) == 0 ? ERR_OK : ERR_JOURNAL;
 }
 
-inst_err_t tx_load(const char *dir, const char *startup_id, tx_journal_t *j) {
-  char path[128];
-  journal_path(dir, startup_id, path, sizeof(path));
-  return load_path(path, j);
+inst_err_t tx_load(const char *dir, const char *partition, tx_journal_t *j) {
+  char path[160];
+  if (journal_path(dir, partition, path, sizeof(path)) < 0)
+    return ERR_JOURNAL;
+  inst_err_t e = load_path(path, j);
+  /* Defensive: the file must describe this exact pair. */
+  if (!e && strcmp(j->hidden_partition + 2, partition + 2) != 0)
+    return ERR_JOURNAL;
+  return e;
 }
 
-inst_err_t tx_remove(const char *dir, const char *startup_id) {
-  char path[128];
-  journal_path(dir, startup_id, path, sizeof(path));
+inst_err_t tx_remove(const char *dir, const char *partition) {
+  char path[160];
+  if (journal_path(dir, partition, path, sizeof(path)) < 0)
+    return ERR_JOURNAL;
   int r = fileXioRemove(path);
   return (r >= 0 || r == -2 /* ENOENT */) ? ERR_OK : ERR_JOURNAL;
 }

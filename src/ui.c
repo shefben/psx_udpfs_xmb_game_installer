@@ -71,8 +71,11 @@ int ui_poll_button(void) {
 
 int ui_wait_button(void) {
   if (!pad_open) {
+    /* Without a pad, never "press" an accepting button: answering O
+     * backs out of every menu and declines every confirmation, so no
+     * HDD write can start unattended. */
     ui_delay_ms(3000);
-    return UI_CROSS;
+    return UI_CIRCLE;
   }
   for (;;) {
     int n = ui_poll_button();

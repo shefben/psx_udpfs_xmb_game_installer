@@ -19,7 +19,7 @@ DESR yet.
 | 12 | OPL missing | channel creation blocked, clear error | NOT RUN |
 | 13 | Existing valid hidden game, no PP. | Create XMB channel; data untouched | NOT RUN |
 | 14 | Existing PP., no hidden game | ORPHANED channel, removable | NOT RUN |
-| 15 | Delete complete game | PP. removed first, then __. | NOT RUN |
+| 15 | Delete complete game | PP. removed first, then __. (patched ps2hdd-hdl) | NOT RUN |
 | 16 | Reboot after successful install | channel still visible | NOT RUN |
 | 17 | Select game from XMB | that channel's OPL-Launcher runs | NOT RUN |
 | 18 | OPL-Launcher hand-off | the intended HDL game boots | NOT RUN |

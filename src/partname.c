@@ -106,6 +106,11 @@ static int has_game_shape(const char *name) {
   for (int i = 8; i < 13; i++)
     if (!is_digit(name[i]))
       return 0;
+  /* Title bytes are exactly what build_game_partition_pair (and
+   * hdl-dump) produce; anything else, notably ',', is foreign. */
+  for (size_t i = 15; i < n; i++)
+    if (!is_upper(name[i]) && !is_digit(name[i]) && name[i] != '_')
+      return 0;
   return 1;
 }
 
@@ -151,6 +156,17 @@ int part_id_from_partition(const char *name, char out[16]) {
   memcpy(out + 9, name + 11, 2);
   out[11] = 0;
   return boot_id_is_valid(out) ? 0 : -1;
+}
+
+int partition_remove_allowed(const char *name) {
+  if (!name || !name[0] || strlen(name) > APA_NAME_MAX || strchr(name, ','))
+    return 0;
+  return partition_is_game_channel(name) || partition_is_hidden_game(name) ||
+         strcmp(name, "PP.UDPFS-INSTALLER") == 0;
+}
+
+int hdd_dirent_is_main(unsigned mode, unsigned attr) {
+  return mode != 0 && !(attr & 0x0001 /* APA_FLAG_SUB */);
 }
 
 const char *region_label(const char *id) {

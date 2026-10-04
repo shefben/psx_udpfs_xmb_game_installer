@@ -73,10 +73,7 @@ inst_err_t game_plan_set_title(game_plan_t *p, const char *title) {
 
 /* Load the journal belonging to exactly this pair, if any. */
 static int load_pair_journal(const char *hidden, tx_journal_t *j) {
-  char id[16];
-  if (!g_app.app_mounted || part_id_from_partition(hidden, id) < 0)
-    return 0;
-  if (tx_load(APP_STATE_DIR, id, j) != ERR_OK)
+  if (!g_app.app_mounted || tx_load(APP_STATE_DIR, hidden, j) != ERR_OK)
     return 0;
   return strcmp(j->hidden_partition, hidden) == 0;
 }
@@ -85,8 +82,10 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
   memset(f, 0, sizeof(*f));
   hdl_header_info_t h;
   f->hidden_exists = hdd_exists(hidden) > 0;
-  if (f->hidden_exists)
+  if (f->hidden_exists) {
     f->hidden_header_valid = hdl_partition_looks_valid(hidden, &h);
+    f->hidden_marker = f->hidden_header_valid ? h.marker : HDL_MARK_NONE;
+  }
   tx_journal_t j;
   if (load_pair_journal(hidden, &j)) {
     f->has_journal = 1;
@@ -153,18 +152,12 @@ static void finish_report(install_report_t *rep, const char *visible,
 }
 
 /* Build the channel for a verified hidden game; journal must be at
- * TX_HDL_VERIFIED. Shared by install and repair. */
-static void build_channel(tx_journal_t *j, const char *title,
+ * TX_HDL_VERIFIED. Shared by install and repair. `kelf` is loaded by
+ * the caller before anything is removed, and released here. */
+static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf_in,
                           const install_ui_t *ui, install_report_t *rep) {
-  payload_t kelf;
+  payload_t kelf = *kelf_in;
   stage(ui, rep, STAGE_CREATING_CHANNEL);
-  if ((rep->err = payload_opl_launcher(&kelf, g_app.app_mounted,
-                                       g_app.net == NETWORK_READY))) {
-    rep->detail = "OPL-Launcher EXECUTE.KELF";
-    tx_fail(j, rep->err);
-    journal_save(j);
-    return;
-  }
   char info[1024];
   uint32_t info_len = (uint32_t)xmb_game_info_sys(info, sizeof(info), title,
                                                   j->startup_id);
@@ -287,6 +280,11 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     goto fail;
   }
   advance(&j, TX_HDL_CREATED);
+  /* Mark the data incomplete on disk so it is never trusted, even if
+   * this journal is lost before the copy verifies. */
+  if ((rep->err = hdl_write_marker(p->hidden, HDL_MARK_INCOMPLETE, ERR_HDL_FORMAT,
+                                   &rep->rc)))
+    goto fail;
 
   /* 13-15. stream */
   advance(&j, TX_STREAMING);
@@ -311,6 +309,9 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     rep->rc = hr.rc;
     goto fail;
   }
+  if ((rep->err = hdl_write_marker(p->hidden, HDL_MARK_COMPLETE, ERR_HDL_VERIFY,
+                                   &rep->rc)))
+    goto fail;
   advance(&j, TX_HDL_VERIFIED);
   source_close(&g_src);
 
@@ -321,7 +322,14 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     goto out;
   }
   /* 19-31 */
-  build_channel(&j, p->title, ui, rep);
+  payload_t kelf;
+  if ((rep->err = payload_opl_launcher(&kelf, g_app.app_mounted,
+                                       g_app.net == NETWORK_READY))) {
+    rep->detail = "OPL-Launcher EXECUTE.KELF";
+    rep->data_installed_no_channel = 1;
+    goto out;
+  }
+  build_channel(&j, p->title, &kelf, ui, rep);
   if (!rep->err)
     stage(ui, rep, STAGE_FINISHED);
   goto out;
@@ -376,16 +384,25 @@ void game_create_channel(const char *hidden, const install_ui_t *ui,
     rep->detail = "journal state does not allow channel repair";
     goto out;
   }
+  /* Everything the new channel needs is loaded before an existing
+   * channel is touched, so a missing payload never costs a working one. */
+  payload_t kelf;
+  if ((rep->err = payload_opl_launcher(&kelf, g_app.app_mounted,
+                                       g_app.net == NETWORK_READY))) {
+    rep->detail = "OPL-Launcher EXECUTE.KELF (existing channel left untouched)";
+    goto out;
+  }
   journal_save(&j);
 
   /* Rebuild: an existing (broken) PP. is removed first. */
   if (f.visible_exists) {
     if ((rep->err = hdd_remove_exact(visible, &rep->rc))) {
       rep->detail = visible;
+      payload_release(&kelf);
       goto out;
     }
   }
-  build_channel(&j, h.title, ui, rep);
+  build_channel(&j, h.title, &kelf, ui, rep);
   if (!rep->err)
     stage(ui, rep, STAGE_FINISHED);
 out:
@@ -410,17 +427,9 @@ inst_err_t game_delete_pair(const char *visible, const char *hidden,
       return ERR_PARTITION_DELETE;
     }
   }
-  char id[16];
+  /* The journal file is named after this exact pair. */
   const char *any = (hidden && hidden[0]) ? hidden : visible;
-  if (g_app.app_mounted && any && part_id_from_partition(any, id) == 0) {
-    tx_journal_t j;
-    char other[APA_NAME_MAX + 1] = "";
-    if (any == visible)
-      partition_partner(visible, other);
-    const char *h = any == visible ? other : hidden;
-    /* Only remove a journal that belongs to this pair. */
-    if (tx_load(APP_STATE_DIR, id, &j) == ERR_OK && strcmp(j.hidden_partition, h) == 0)
-      tx_remove(APP_STATE_DIR, id);
-  }
+  if (g_app.app_mounted && any)
+    tx_remove(APP_STATE_DIR, any);
   return ERR_OK;
 }

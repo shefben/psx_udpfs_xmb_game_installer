@@ -2,7 +2,7 @@
 # with the native compiler and runs them. No PS2SDK needed.
 
 CC ?= cc
-CFLAGS ?= -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined
+CFLAGS ?= -std=gnu11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined
 SRC := ../../src
 BUILD := build
 

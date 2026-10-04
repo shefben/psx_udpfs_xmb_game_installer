@@ -1,10 +1,14 @@
 #include "game_pair.h"
+#include "hdl_header.h"
 
 int pair_hidden_trusted(const pair_facts_t *f) {
   if (!f->hidden_exists || !f->hidden_header_valid)
     return 0;
+  /* The on-disk marker outlives a lost journal. */
+  if (f->hidden_marker == HDL_MARK_INCOMPLETE)
+    return 0;
   if (!f->has_journal)
-    return 1;
+    return 1; /* marker COMPLETE, or a game from another tool */
   tx_state_t s = f->journal_state;
   if (s == TX_FAILED)
     s = f->journal_failed_from;

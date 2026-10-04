@@ -36,9 +36,24 @@ _Static_assert(offsetof(struct HDLFS_FormatArgs, StartupPath) == 172, "StartupPa
 void hdl_format_args_build(struct HDLFS_FormatArgs *a, const iso_info_t *iso,
                            const char *title);
 
+/* Installer completion marker, kept in hdl_game_info.reserved (u16 at
+ * header offset 4). hdlfs writes 0 there; OPL, OPL-Launcher and
+ * hdl-dump never read it and OPL's header edit preserves it. The
+ * installer writes INCOMPLETE right after format and COMPLETE only
+ * after the copied data verified, so an interrupted copy stays
+ * recognisable even if its journal is lost. */
+#define HDL_MARK_NONE 0
+#define HDL_MARK_INCOMPLETE 0x4955 /* "UI" */
+#define HDL_MARK_COMPLETE 0x4355   /* "UC" */
+#define HDL_MARK_OFFSET 4
+
+/* Set the marker in a raw header buffer (bytes 4..5 only). */
+void hdl_header_set_marker(uint8_t *buf, uint16_t marker);
+
 /* Parsed hdl_game_info (offsets per hdlfs.h / hdl-dump hdl.c). */
 typedef struct {
   uint32_t magic;
+  int marker; /* HDL_MARK_*; unknown values read as HDL_MARK_NONE */
   uint16_t version;
   char title[HDLFS_GAME_TITLE_LEN + 1];
   char startup[HDLFS_STARTUP_PTH_LEN + 1];

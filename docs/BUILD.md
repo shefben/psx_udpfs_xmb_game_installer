@@ -77,6 +77,13 @@ self-install) or `udpfs:/PAYLOAD/opl-launcher-EXECUTE.KELF`.
   because the current EE toolchain rejects upstream's `-G8192` with
   abicalls. `-G` only affects small-data placement.
 
+* **ps2hdd-hdl.irx** (`tools/patch-ps2hdd-hdl.py`): one-word binary
+  patch so the driver can remove `__.` hidden game partitions (the
+  stock module returns -EACCES for any `__*` name). The script checks
+  the input hash and the surrounding instructions and refuses anything
+  else. A source rebuild was rejected: apa-hdl only builds against a
+  2022 libapa and would replace the hardware-proven binary wholesale.
+
 ## Host tests
 
 `make test` builds `src/` modules that have no PS2 dependencies with

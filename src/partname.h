@@ -66,6 +66,16 @@ int partition_partner(const char *name, char out[APA_NAME_MAX + 1]);
  * not a game partition. */
 int part_id_from_partition(const char *name, char out[16]);
 
+/* Whether the installer may remove partition `name`: game channels,
+ * hidden game partitions and PP.UDPFS-INSTALLER only. Never system
+ * "__xxx" partitions, never names containing ',' (the APA driver would
+ * parse the rest as a password and act on a different partition). */
+int partition_remove_allowed(const char *name);
+
+/* An hdd0: dirent is a main partition (not free space, not a
+ * sub-partition entry, which carry APA_FLAG_SUB in attr). */
+int hdd_dirent_is_main(unsigned mode, unsigned attr);
+
 /* Region label for info.sys title_id (plan section 19). Never NULL. */
 const char *region_label(const char *startup_id);
 

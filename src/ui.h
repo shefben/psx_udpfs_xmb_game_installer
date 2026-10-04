@@ -41,8 +41,8 @@ void ui_footer(const char *keys);
 void ui_delay_ms(int ms);
 
 /* Block until a new button press; returns the newly pressed mask.
- * Without a pad it returns UI_CROSS after a short delay so that
- * informational screens never hang. */
+ * Without a pad it returns UI_CIRCLE (back/decline) after a short
+ * delay: informational screens advance, nothing is ever accepted. */
 int ui_wait_button(void);
 /* Non-blocking poll for newly pressed buttons. */
 int ui_poll_button(void);

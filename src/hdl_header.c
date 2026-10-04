@@ -21,6 +21,8 @@ void hdl_format_args_build(struct HDLFS_FormatArgs *a, const iso_info_t *iso,
 int hdl_header_parse(const uint8_t buf[HDL_HEADER_SIZE], hdl_header_info_t *out) {
   memset(out, 0, sizeof(*out));
   out->magic = get_u32le(buf);
+  uint16_t mk = get_u16le(buf + HDL_MARK_OFFSET);
+  out->marker = (mk == HDL_MARK_INCOMPLETE || mk == HDL_MARK_COMPLETE) ? mk : HDL_MARK_NONE;
   out->version = get_u16le(buf + 6);
   memcpy(out->title, buf + 0x08, HDLFS_GAME_TITLE_LEN);
   out->title[HDLFS_GAME_TITLE_LEN] = 0;
@@ -46,6 +48,11 @@ inst_err_t hdl_header_check(const hdl_header_info_t *h, const char *boot_id,
       h->data_bytes != expected_bytes)
     return ERR_HDL_VERIFY;
   return ERR_OK;
+}
+
+void hdl_header_set_marker(uint8_t *buf, uint16_t marker) {
+  buf[HDL_MARK_OFFSET] = (uint8_t)marker;
+  buf[HDL_MARK_OFFSET + 1] = (uint8_t)(marker >> 8);
 }
 
 int kelf_looks_valid(const void *data, uint32_t size) {

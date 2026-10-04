@@ -53,7 +53,9 @@ int hdd_list(hdd_part_t *out, int max) {
   iox_dirent_t de;
   int n = 0;
   while (n < max && fileXioDread(dd, &de) > 0) {
-    if (de.stat.mode == 0)
+    /* Skip free space and sub-partition entries (they repeat the main
+     * partition's name with APA_FLAG_SUB set). */
+    if (!hdd_dirent_is_main(de.stat.mode, de.stat.attr))
       continue;
     /* APA ids are 32 bytes, not necessarily terminated. */
     memcpy(out[n].name, de.name, APA_NAME_MAX);
@@ -105,7 +107,9 @@ inst_err_t hdd_remove_exact(const char *name, int *rc_out) {
   if (!rc_out)
     rc_out = &rc;
   *rc_out = 0;
-  if (!name || !name[0] || strlen(name) > APA_NAME_MAX)
+  /* The patched ps2hdd-hdl.irx no longer refuses "__" names, so the
+   * system-partition protection lives here. */
+  if (!partition_remove_allowed(name))
     return ERR_INVALID_ARG;
   int ex = hdd_exists(name);
   if (ex == 0)

@@ -56,16 +56,22 @@ int tx_channel_creation_allowed(const tx_journal_t *j);
 /* "install-SLUS-20312.ini" (normalized partition-form game id). */
 int tx_journal_filename(const char *startup_id, char out[64]);
 
+/* Journal file for one PP./__. pair: "install-<name without prefix>.ini",
+ * e.g. "install-SLUS-20312..GRAN_TURISMO_4.ini". Same result for either
+ * member of the pair. -1 if `partition` is not a game partition. */
+int tx_journal_filename_for(const char *partition, char out[96]);
+
 /* key=value text, one field per line (LF). */
 size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz);
 /* 0 on success; -1 if malformed or a required field is missing. */
 int tx_parse(const char *text, tx_journal_t *out);
 
 #ifdef _EE
-/* Persist under <dir> (e.g. "pfs0:/state"). */
+/* Persist under <dir> (e.g. "pfs0:/state"), one file per pair
+ * (tx_journal_filename_for). `partition` may be either pair member. */
 inst_err_t tx_save(const char *dir, const tx_journal_t *j);
-inst_err_t tx_load(const char *dir, const char *startup_id, tx_journal_t *j);
-inst_err_t tx_remove(const char *dir, const char *startup_id);
+inst_err_t tx_load(const char *dir, const char *partition, tx_journal_t *j);
+inst_err_t tx_remove(const char *dir, const char *partition);
 /* Scan <dir> for journals not in TX_COMPLETE. Returns count (<= max). */
 int tx_scan_unfinished(const char *dir, tx_journal_t *out, int max);
 #endif

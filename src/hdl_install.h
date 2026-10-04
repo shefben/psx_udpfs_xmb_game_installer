@@ -43,6 +43,11 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
 hdl_result_t hdl_verify(const char *hidden, GameSource *src,
                         const iso_info_t *iso, int expected_parts);
 
+/* Read-modify-write the installer marker (HDL_MARK_*) into the hidden
+ * partition's HDL header, then read it back. ERR_OK or `fail_err`. */
+inst_err_t hdl_write_marker(const char *hidden, uint16_t marker,
+                            inst_err_t fail_err, int *rc_out);
+
 /* Header-only read for repair/manage scans. 0 or <0. */
 int hdl_read_header(const char *hidden, hdl_header_info_t *out);
 

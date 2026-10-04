@@ -27,6 +27,7 @@ typedef enum {
 typedef struct {
   int hidden_exists;
   int hidden_header_valid; /* HDL type + parsable header + id + title */
+  int hidden_marker;       /* HDL_MARK_* from the header */
   int has_journal;
   tx_state_t journal_state;
   tx_state_t journal_failed_from;

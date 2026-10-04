@@ -10,6 +10,7 @@
 #include "hdd_partitions.h"
 #include "hdl_install.h"
 #include "partname.h"
+#include "util.h"
 
 static uint8_t stream_buf[STREAM_BUF_SIZE] __attribute__((aligned(64)));
 static uint8_t sec_a[ISO_SECTOR] __attribute__((aligned(64)));
@@ -133,6 +134,46 @@ int hdl_read_header(const char *hidden, hdl_header_info_t *out) {
   if (r != HDL_HEADER_SIZE)
     return r < 0 ? r : -5;
   return hdl_header_parse(hdr, out) == 0 ? 0 : -22;
+}
+
+inst_err_t hdl_write_marker(const char *hidden, uint16_t marker,
+                            inst_err_t fail_err, int *rc_out) {
+  static uint8_t sec[512] __attribute__((aligned(64)));
+  char dev[48];
+  int rc = 0;
+  if (!rc_out)
+    rc_out = &rc;
+  snprintf(dev, sizeof(dev), "hdd0:%s", hidden);
+  /* Raw hdd0: I/O is in 512-byte units; the header's first sector
+   * holds the marker at offset 4. */
+  int fd = fileXioOpen(dev, FIO_O_RDWR);
+  if (fd < 0) {
+    *rc_out = fd;
+    return fail_err;
+  }
+  int r = fileXioLseek(fd, HDL_GAME_DATA_OFFSET, FIO_SEEK_SET);
+  if (r == HDL_GAME_DATA_OFFSET)
+    r = fileXioRead(fd, sec, sizeof(sec));
+  if (r == (int)sizeof(sec) && get_u32le(sec) == HDL_INFO_MAGIC) {
+    hdl_header_set_marker(sec, marker);
+    r = fileXioLseek(fd, HDL_GAME_DATA_OFFSET, FIO_SEEK_SET);
+    if (r == HDL_GAME_DATA_OFFSET)
+      r = fileXioWrite(fd, sec, sizeof(sec));
+  } else if (r == (int)sizeof(sec)) {
+    r = -22; /* no HDL header: refuse to write */
+  }
+  fileXioClose(fd);
+  if (r != (int)sizeof(sec)) {
+    *rc_out = r;
+    return fail_err;
+  }
+  hdl_header_info_t h;
+  r = hdl_read_header(hidden, &h);
+  if (r < 0 || h.marker != marker) {
+    *rc_out = r;
+    return fail_err;
+  }
+  return ERR_OK;
 }
 
 int hdl_partition_looks_valid(const char *hidden, hdl_header_info_t *out) {

@@ -21,6 +21,7 @@ OPL_LAUNCHER_ELF := $(BUILD)/opl-launcher/OPL-Launcher.elf
 OPL_LAUNCHER_KELF_VENDOR := $(ROOT)/vendor/opl-launcher/EXECUTE.KELF
 
 NEUTRINO_IRX := $(BUILD)/irx/smap.irx $(BUILD)/irx/ministack.irx $(BUILD)/irx/udpfs_ioman.irx
+PATCHED_IRX := $(BUILD)/irx/ps2hdd-hdl.irx
 
 .PHONY: all installer opl-launcher kelfs test dist references irx clean distclean
 
@@ -58,8 +59,14 @@ $(BUILD)/irx/udpfs_ioman.irx: $(BUILD)/neutrino/.patched
 	$(MAKE) -C $(BUILD)/neutrino/iop/udpfs all DEBUG=0 UDPFS_IOMAN=1
 	@mkdir -p $(@D) && cp $(BUILD)/neutrino/iop/udpfs/irx/udpfs_ioman.irx $@
 
+# ---- ps2hdd-hdl.irx (HDLGameInstaller ec37c81, one-word patch) ----------
+# Lets the driver remove "__." hidden game partitions; see the script.
+$(BUILD)/irx/ps2hdd-hdl.irx: $(REF)/HDLGameInstaller/irx/ps2hdd-hdl.irx tools/patch-ps2hdd-hdl.py
+	@mkdir -p $(@D)
+	python3 tools/patch-ps2hdd-hdl.py $< $@
+
 # ---- Installer ELF ----------------------------------------------------
-installer: $(NEUTRINO_IRX)
+installer: $(NEUTRINO_IRX) $(PATCHED_IRX)
 	$(MAKE) -f Makefile.ee BUILD=$(BUILD)/ee EE_BIN=$(INSTALLER_ELF) \
 	  NEUTRINO_IRX_DIR=$(BUILD)/irx OPL_LAUNCHER_KELF=$(wildcard $(OPL_LAUNCHER_KELF_VENDOR))
 
