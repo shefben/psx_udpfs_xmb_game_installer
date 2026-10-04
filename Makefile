@@ -1,12 +1,19 @@
 # PSX DESR UDPFS XMB Game Installer
 #
-#   make all            installer ELF + OPL-Launcher ELF + host tests
-#   make installer      dist/desr-udpfs-installer.elf
-#   make opl-launcher   build/opl-launcher/OPL-Launcher.elf (unsigned)
-#   make kelfs          dist/installer-EXECUTE.KELF, dist/opl-launcher-EXECUTE.KELF
-#                       (needs kelftool + your PS2KEYS.dat; see docs/BUILD.md)
-#   make test           host unit tests (native cc, no PS2SDK needed)
-#   make dist           everything for first bootstrap and server setup
+# Release build graph (make dist), strictly in this order:
+#   1. build/opl-launcher/OPL-Launcher.elf        pinned upstream, unmodified
+#   2. build/kelf/opl-launcher-EXECUTE.KELF       signed + verified
+#   3. build/app/desr-udpfs-installer-app.elf     embeds (2)
+#   4. build/kelf/installer-EXECUTE.KELF          (3) signed + verified
+#   5. build/bootstrap/desr-udpfs-installer-bootstrap.elf   embeds (2) and (4)
+#   6. dist/
+# Signing needs kelftool and PS2KEYS=/absolute/path/to/PS2KEYS.dat.
+#
+#   make test           host unit tests (native cc; no PS2SDK, no keys)
+#   make dev            unsigned development ELF (build/dev/), never in dist/
+#   make kelfs          steps 1-4
+#   make dist           steps 1-6 + test
+#   make driver         rebuild vendor/irx/ps2hdd-hdl.irx from source (Docker)
 #   make references     fetch pinned upstream sources into reference/
 #
 # Requires PS2DEV/PS2SDK (source tools/ps2env.sh) for everything but `test`.
@@ -16,22 +23,48 @@ BUILD := $(ROOT)/build
 DIST := $(ROOT)/dist
 REF := $(ROOT)/reference
 
-INSTALLER_ELF := $(DIST)/desr-udpfs-installer.elf
-OPL_LAUNCHER_ELF := $(BUILD)/opl-launcher/OPL-Launcher.elf
-OPL_LAUNCHER_KELF_VENDOR := $(ROOT)/vendor/opl-launcher/EXECUTE.KELF
+OPL_ELF := $(BUILD)/opl-launcher/OPL-Launcher.elf
+OPL_KELF := $(BUILD)/kelf/opl-launcher-EXECUTE.KELF
+APP_ELF := $(BUILD)/app/desr-udpfs-installer-app.elf
+APP_KELF := $(BUILD)/kelf/installer-EXECUTE.KELF
+BOOT_ELF := $(BUILD)/bootstrap/desr-udpfs-installer-bootstrap.elf
+DEV_ELF := $(BUILD)/dev/desr-udpfs-installer-dev.elf
+DRIVER := vendor/irx/ps2hdd-hdl.irx
 
 NEUTRINO_IRX := $(BUILD)/irx/smap.irx $(BUILD)/irx/ministack.irx $(BUILD)/irx/udpfs_ioman.irx
-PATCHED_IRX := $(BUILD)/irx/ps2hdd-hdl.irx
+EE_DEPS := $(NEUTRINO_IRX) $(BUILD)/.driver-ok
 
-.PHONY: all installer opl-launcher kelfs test dist references irx clean distclean
+.PHONY: all dev kelfs dist test test-graph references irx driver driver-check clean distclean FORCE
 
-all: installer opl-launcher test
+all: test dev
 
 references:
 	bash tools/fetch-references.sh
 
 test:
 	$(MAKE) -C test/host
+	python3 test/host/test_driver.py
+	bash test/host/test_kelf_sign.sh
+	python3 tools/verify-assets.py
+
+# Release graph with a fake kelftool in a private directory (needs PS2SDK).
+test-graph:
+	bash test/host/test_build_graph.sh
+
+# ---- HDD driver ---------------------------------------------------------
+# vendor/irx/ps2hdd-hdl.irx is the output of `make driver` (reproducible
+# legacy source build, see tools/driver/README.md). Every build checks
+# its hash against tools/driver/driver.env.
+driver:
+	bash tools/driver/make-driver.sh
+
+driver-check: $(BUILD)/.driver-ok
+$(BUILD)/.driver-ok: $(DRIVER) tools/driver/driver.env
+	@. tools/driver/driver.env; \
+	 h=$$(sha256sum $(DRIVER) | cut -d' ' -f1); \
+	 if [ "$$h" != "$$DRIVER_PATCHED_SHA256" ]; then \
+	   echo "ERROR: $(DRIVER) sha256 $$h != $$DRIVER_PATCHED_SHA256 (tools/driver/driver.env)"; exit 1; fi
+	@mkdir -p $(@D) && touch $@
 
 # ---- Neutrino IOP modules (smap, ministack, udpfs_ioman) -------------
 # Built from the pinned reference tree in a scratch copy with
@@ -59,27 +92,15 @@ $(BUILD)/irx/udpfs_ioman.irx: $(BUILD)/neutrino/.patched
 	$(MAKE) -C $(BUILD)/neutrino/iop/udpfs all DEBUG=0 UDPFS_IOMAN=1
 	@mkdir -p $(@D) && cp $(BUILD)/neutrino/iop/udpfs/irx/udpfs_ioman.irx $@
 
-# ---- ps2hdd-hdl.irx (HDLGameInstaller ec37c81, one-word patch) ----------
-# Lets the driver remove "__." hidden game partitions; see the script.
-$(BUILD)/irx/ps2hdd-hdl.irx: $(REF)/HDLGameInstaller/irx/ps2hdd-hdl.irx tools/patch-ps2hdd-hdl.py
-	@mkdir -p $(@D)
-	python3 tools/patch-ps2hdd-hdl.py $< $@
-
-# ---- Installer ELF ----------------------------------------------------
-installer: $(NEUTRINO_IRX) $(PATCHED_IRX)
-	$(MAKE) -f Makefile.ee BUILD=$(BUILD)/ee EE_BIN=$(INSTALLER_ELF) \
-	  NEUTRINO_IRX_DIR=$(BUILD)/irx OPL_LAUNCHER_KELF=$(wildcard $(OPL_LAUNCHER_KELF_VENDOR))
-
-# ---- OPL-Launcher (pinned, unmodified) --------------------------------
+# ---- 1. OPL-Launcher (pinned, unmodified) -----------------------------
 # tools/bin2s stands in for the bin2s tool current PS2SDK no longer
 # ships, so the upstream Makefile builds without patches. Upstream's
 # EE_CFLAGS (-O2 -G8192 -mgpopt) is replaced on the command line: the
 # current EE toolchain rejects -G with abicalls. -G only controls the
 # small-data optimisation; code semantics are unchanged.
 OPL_LAUNCHER_CFLAGS := -D_EE -G0 -O2 -Wno-stringop-truncation
-opl-launcher: $(OPL_LAUNCHER_ELF)
 
-$(OPL_LAUNCHER_ELF):
+$(OPL_ELF):
 	@test -d $(REF)/OPL-Launcher || { echo "reference/OPL-Launcher missing: run 'make references'"; exit 1; }
 	rm -rf $(BUILD)/opl-launcher
 	mkdir -p $(BUILD)/opl-launcher
@@ -89,30 +110,63 @@ $(OPL_LAUNCHER_ELF):
 	PATH="$(ROOT)/tools:$$PATH" $(MAKE) -C $(BUILD)/opl-launcher \
 	  EE_CFLAGS="$(OPL_LAUNCHER_CFLAGS)"
 
-# ---- Signed payloads ---------------------------------------------------
-kelfs: installer opl-launcher
-	bash tools/package-installer-kelf.sh $(INSTALLER_ELF) $(DIST)/installer-EXECUTE.KELF
-	bash tools/package-opl-launcher.sh $(OPL_LAUNCHER_ELF) $(DIST)/opl-launcher-EXECUTE.KELF
+# ---- 2. signed OPL-Launcher -------------------------------------------
+$(OPL_KELF): $(OPL_ELF) tools/kelf-sign.sh
+	bash tools/kelf-sign.sh $(OPL_ELF) $@
 
-# ---- Distribution ------------------------------------------------------
-dist: installer opl-launcher test
-	mkdir -p $(DIST)/udpfsd-example $(DIST)/PAYLOAD
+# ---- 3. app ELF (embeds 2) ---------------------------------------------
+# The sub-make is always entered (FORCE) but only relinks when an input
+# changed. The release ELF is the debug-stripped link output and is only
+# replaced when its bytes change, so step 4 re-signs only a changed ELF.
+EE_STRIP_CMD = mips64r5900el-ps2-elf-strip
+define STRIP_IF_CHANGED
+	$(EE_STRIP_CMD) -o $(1).new $(2)
+	if cmp -s $(1).new $(1); then rm -f $(1).new; else mv -f $(1).new $(1); fi
+endef
+
+$(APP_ELF): $(OPL_KELF) $(EE_DEPS) FORCE
+	$(MAKE) -f Makefile.ee VARIANT=app BUILD=$(BUILD)/app EE_BIN=$(BUILD)/app/app-debug.elf \
+	  IRX_DIR=$(BUILD)/irx EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF)"
+	$(call STRIP_IF_CHANGED,$@,$(BUILD)/app/app-debug.elf)
+
+# ---- 4. signed app -----------------------------------------------------
+$(APP_KELF): $(APP_ELF) tools/kelf-sign.sh
+	bash tools/kelf-sign.sh $(APP_ELF) $@
+
+# ---- 5. bootstrap ELF (embeds 2 and 4) --------------------------------
+$(BOOT_ELF): $(OPL_KELF) $(APP_KELF) $(EE_DEPS) FORCE
+	$(MAKE) -f Makefile.ee VARIANT=bootstrap BUILD=$(BUILD)/bootstrap \
+	  EE_BIN=$(BUILD)/bootstrap/bootstrap-debug.elf IRX_DIR=$(BUILD)/irx \
+	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) installer_kelf=$(APP_KELF)"
+	$(call STRIP_IF_CHANGED,$@,$(BUILD)/bootstrap/bootstrap-debug.elf)
+
+kelfs: $(OPL_KELF) $(APP_KELF)
+
+# ---- dev (unsigned, nothing embedded) --------------------------------
+dev: $(EE_DEPS) FORCE
+	$(MAKE) -f Makefile.ee VARIANT=dev BUILD=$(BUILD)/dev EE_BIN=$(DEV_ELF) \
+	  IRX_DIR=$(BUILD)/irx
+
+# ---- 6. dist -----------------------------------------------------------
+DIST_FILES := desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
+              installer-EXECUTE.KELF opl-launcher-EXECUTE.KELF
+
+dist: test $(BOOT_ELF)
+	rm -rf $(DIST)
+	mkdir -p $(DIST)/udpfsd-example $(DIST)/docs
+	cp $(BOOT_ELF) $(APP_ELF) $(APP_KELF) $(OPL_KELF) $(DIST)/
 	cp docs/udpfsd-example/* $(DIST)/udpfsd-example/
-	cp docs/INSTALL.md $(DIST)/INSTALL.md
+	cp docs/INSTALL.md docs/HARDWARE_TEST_CHECKLIST.md $(DIST)/docs/
 	cp KNOWN_LIMITATIONS.md $(DIST)/
-	cp $(OPL_LAUNCHER_ELF) $(DIST)/opl-launcher-unsigned.elf
-	@if [ -f $(DIST)/installer-EXECUTE.KELF ] && [ -f $(DIST)/opl-launcher-EXECUTE.KELF ]; then \
-	  cp $(DIST)/installer-EXECUTE.KELF $(DIST)/opl-launcher-EXECUTE.KELF $(DIST)/PAYLOAD/; \
-	  echo "dist: signed KELFs staged in dist/PAYLOAD/"; \
-	else \
-	  echo "dist: NOTE signed KELFs not present - run 'make kelfs' (needs kelftool + PS2KEYS.dat)"; \
-	fi
-	cd $(DIST) && sha256sum desr-udpfs-installer.elf opl-launcher-unsigned.elf \
-	  $$(ls installer-EXECUTE.KELF opl-launcher-EXECUTE.KELF 2>/dev/null) > SHA256SUMS
+	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF)
 
 clean:
 	rm -rf $(BUILD)
+	rm -f $(DIST)/*.tmp
+	find . -name '*.KELF.tmp' -o -name '*.KELF.verify.elf' | xargs -r rm -f
 	$(MAKE) -C test/host clean
 
 distclean: clean
 	rm -rf $(DIST)
+
+FORCE:

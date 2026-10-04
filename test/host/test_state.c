@@ -10,6 +10,17 @@ static const tx_state_t HAPPY[] = {
     TX_STREAMING,    TX_HDL_COMPLETE,    TX_HDL_VERIFIED,
     TX_CHANNEL_CREATED, TX_CHANNEL_VERIFIED, TX_COMPLETE};
 
+static void verified_journal(tx_journal_t *j) {
+  memset(j, 0, sizeof(*j));
+  strcpy(j->startup_id, "SLUS_203.12");
+  strcpy(j->visible_partition, "PP.SLUS-20312..GRAN_TURISMO_4");
+  strcpy(j->hidden_partition, "__.SLUS-20312..GRAN_TURISMO_4");
+  j->bytes_expected = j->bytes_written = j->bytes_verified = 8547991552ull;
+  j->has_source_crc = j->has_installed_crc = 1;
+  j->source_crc32 = j->installed_crc32 = 0xDEADBEEFu;
+  j->state = TX_HDL_VERIFIED;
+}
+
 TEST(tx_happy_path) {
   tx_journal_t j;
   memset(&j, 0, sizeof(j));
@@ -25,6 +36,8 @@ TEST(tx_no_skipping_forward) {
   CHECK(!tx_transition_allowed(TX_CHANNEL_CREATED, TX_COMPLETE));
   CHECK(!tx_transition_allowed(TX_HDL_VERIFIED, TX_COMPLETE));
   CHECK(!tx_transition_allowed(TX_STREAMING, TX_HDL_CREATED));
+  CHECK(!tx_transition_allowed(TX_PLANNED, TX_HDL_VERIFIED));
+  CHECK(!tx_transition_allowed(TX_HDL_CREATED, TX_HDL_VERIFIED));
 }
 
 TEST(tx_channel_only_after_hdl_verified) {
@@ -53,13 +66,57 @@ TEST(tx_fail_from_any_unfinished) {
   CHECK(!tx_channel_creation_allowed(&j));
 }
 
-TEST(tx_restart_and_repair) {
+TEST(tx_restart_and_channel_repair) {
   CHECK(tx_transition_allowed(TX_FAILED, TX_PLANNED));
   CHECK(tx_transition_allowed(TX_COMPLETE, TX_PLANNED));
-  CHECK(tx_transition_allowed(TX_NONE, TX_HDL_VERIFIED));
+  /* Channel (re)build from any state whose data already verified. */
+  CHECK(tx_transition_allowed(TX_HDL_VERIFIED, TX_HDL_VERIFIED));
+  CHECK(tx_transition_allowed(TX_CHANNEL_CREATED, TX_HDL_VERIFIED));
+  CHECK(tx_transition_allowed(TX_CHANNEL_VERIFIED, TX_HDL_VERIFIED));
   CHECK(tx_transition_allowed(TX_FAILED, TX_HDL_VERIFIED));
   CHECK(tx_transition_allowed(TX_COMPLETE, TX_HDL_VERIFIED));
-  CHECK(!tx_transition_allowed(TX_PLANNED, TX_HDL_VERIFIED));
+  /* ...but never from nothing: a channel needs a verified journal. */
+  CHECK(!tx_transition_allowed(TX_NONE, TX_HDL_VERIFIED));
+}
+
+TEST(tx_verified_predicate) {
+  tx_journal_t j;
+  verified_journal(&j);
+  CHECK(tx_hidden_data_verified(&j));
+  j.state = TX_COMPLETE;
+  CHECK(tx_hidden_data_verified(&j));
+  j.state = TX_CHANNEL_CREATED;
+  CHECK(tx_hidden_data_verified(&j));
+
+  verified_journal(&j);
+  j.state = TX_HDL_COMPLETE; /* copied, not yet read back */
+  CHECK(!tx_hidden_data_verified(&j));
+  verified_journal(&j);
+  j.installed_crc32 ^= 1;
+  CHECK(!tx_hidden_data_verified(&j));
+  verified_journal(&j);
+  j.has_installed_crc = 0;
+  CHECK(!tx_hidden_data_verified(&j));
+  verified_journal(&j);
+  j.bytes_verified -= 2048;
+  CHECK(!tx_hidden_data_verified(&j));
+  verified_journal(&j);
+  j.bytes_written -= 2048;
+  CHECK(!tx_hidden_data_verified(&j));
+  verified_journal(&j);
+  j.deleting = 1; /* a delete was started: data no longer trusted */
+  CHECK(!tx_hidden_data_verified(&j));
+
+  /* Failure after verification (channel stage) keeps the data verified;
+   * failure before it does not. */
+  verified_journal(&j);
+  j.state = TX_HDL_VERIFIED;
+  tx_fail(&j, ERR_XMB_VERIFY);
+  CHECK(tx_hidden_data_verified(&j));
+  verified_journal(&j);
+  j.state = TX_STREAMING;
+  tx_fail(&j, ERR_SOURCE_READ);
+  CHECK(!tx_hidden_data_verified(&j));
 }
 
 TEST(tx_state_names_roundtrip) {
@@ -72,27 +129,35 @@ TEST(tx_state_names_roundtrip) {
   CHECK_EQ_INT(tx_state_parse("TX_BOGUS", &p), -1);
 }
 
-TEST(tx_serialize_roundtrip_large_sizes) {
+TEST(tx_serialize_roundtrip_large_sizes_and_crc) {
   tx_journal_t j, k;
-  memset(&j, 0, sizeof(j));
+  verified_journal(&j);
   strcpy(j.source_path, "udpfs:/DVD/Game B.zso.iso");
   j.source_size = 8547991552ull;
-  strcpy(j.startup_id, "SLUS_203.12");
-  strcpy(j.visible_partition, "PP.SLUS-20312..GRAN_TURISMO_4");
-  strcpy(j.hidden_partition, "__.SLUS-20312..GRAN_TURISMO_4");
-  j.bytes_expected = 8547991552ull;
   j.bytes_written = 4294967296ull + 2048;
+  j.source_crc32 = 0x0000ABCDu;
   j.state = TX_FAILED;
   j.failed_from = TX_STREAMING;
+  j.deleting = 1;
   strcpy(j.last_error, "ERR_SOURCE_READ");
   char buf[1024];
   size_t n = tx_serialize(&j, buf, sizeof(buf));
   CHECK(n > 0);
   CHECK(strstr(buf, "source_path=udpfs:/DVD/Game B.zso.iso\n") != NULL);
   CHECK(strstr(buf, "bytes_written=4294969344\n") != NULL);
+  CHECK(strstr(buf, "source_crc32=0000abcd\n") != NULL);
   CHECK(strstr(buf, "state=TX_FAILED\n") != NULL);
+  CHECK(strstr(buf, "deleting=1\n") != NULL);
   CHECK_EQ_INT(tx_parse(buf, &k), 0);
   CHECK(memcmp(&j, &k, sizeof(j)) == 0);
+
+  /* Unset CRCs serialize empty and parse back as unset. */
+  j.has_installed_crc = 0;
+  j.installed_crc32 = 0;
+  tx_serialize(&j, buf, sizeof(buf));
+  CHECK(strstr(buf, "installed_crc32=\n") != NULL);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK_EQ_INT(k.has_installed_crc, 0);
 }
 
 TEST(tx_parse_rejects_garbage) {
@@ -106,15 +171,22 @@ TEST(tx_parse_rejects_garbage) {
   CHECK_EQ_INT(tx_parse("startup_id=SLUS_203.12\nvisible_partition=PP.SLUS-20312..A\n"
                         "hidden_partition=__.SLUS-20312..A\nstate=TX_PLANNED\n"
                         "bytes_written=12x\n", &k), -1);
+  CHECK_EQ_INT(tx_parse("startup_id=SLUS_203.12\nvisible_partition=PP.SLUS-20312..A\n"
+                        "hidden_partition=__.SLUS-20312..A\nstate=TX_PLANNED\n"
+                        "source_crc32=xyz\n", &k), -1);
   CHECK_EQ_INT(tx_parse("startup_id=SLUS_203.12\r\nvisible_partition=PP.SLUS-20312..A\r\n"
                         "hidden_partition=__.SLUS-20312..A\r\nstate=TX_PLANNED\r\n", &k), 0);
 }
 
-TEST(tx_filename) {
-  char f[64];
-  CHECK_EQ_INT(tx_journal_filename("SLUS_203.12", f), 0);
-  CHECK_STR(f, "install-SLUS-20312.ini");
-  CHECK_EQ_INT(tx_journal_filename("bad", f), -1);
+TEST(tx_journal_keyed_by_pair) {
+  char a[96], b[96];
+  CHECK_EQ_INT(tx_journal_filename_for("__.SLUS-20312..GRAN_TURISMO_4", a), 0);
+  CHECK_STR(a, "install-SLUS-20312..GRAN_TURISMO_4.ini");
+  CHECK_EQ_INT(tx_journal_filename_for("PP.SLUS-20312..GRAN_TURISMO_4", b), 0);
+  CHECK_STR(a, b); /* same file from either member */
+  CHECK_EQ_INT(tx_journal_filename_for("__.SLUS-20312..GT4", b), 0);
+  CHECK(strcmp(a, b) != 0); /* different title, different journal */
+  CHECK_EQ_INT(tx_journal_filename_for("__common", b), -1);
 }
 
 /* ---- settings ---- */

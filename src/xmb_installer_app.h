@@ -12,7 +12,6 @@ typedef struct {
   const char *detail;
   const char *kelf_origin;
   int created; /* 1 if the partition was newly created */
-  int opl_launcher_stashed; /* payload/OPL-LAUNCHER.KELF written */
 } selfinstall_report_t;
 
 void installer_app_install(selfinstall_report_t *rep);

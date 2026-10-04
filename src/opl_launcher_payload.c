@@ -5,7 +5,17 @@
 #include "hdl_header.h"
 #include "opl_launcher_payload.h"
 
-#define KELF_MAX (4 * 1024 * 1024)
+#define KELF_MAX (16 * 1024 * 1024)
+
+#if !defined(VARIANT_APP) && !defined(VARIANT_BOOTSTRAP) && !defined(VARIANT_DEV)
+#error "build with -DVARIANT_APP, -DVARIANT_BOOTSTRAP or -DVARIANT_DEV"
+#endif
+#if (defined(VARIANT_APP) || defined(VARIANT_BOOTSTRAP)) && !defined(HAVE_EMBEDDED_OPL_LAUNCHER)
+#error "release variants must embed the signed OPL-Launcher KELF"
+#endif
+#if defined(VARIANT_BOOTSTRAP) && !defined(HAVE_EMBEDDED_INSTALLER_KELF)
+#error "the bootstrap variant must embed the signed installer app KELF"
+#endif
 
 extern unsigned char default_jkt_png[];
 extern unsigned int size_default_jkt_png;
@@ -16,9 +26,31 @@ extern unsigned int size_installer_jkt_png;
 extern unsigned char opl_launcher_kelf[];
 extern unsigned int size_opl_launcher_kelf;
 #endif
+#ifdef HAVE_EMBEDDED_INSTALLER_KELF
+extern unsigned char installer_kelf[];
+extern unsigned int size_installer_kelf;
+#endif
+
+const char *payload_build_variant(void) {
+#if defined(VARIANT_BOOTSTRAP)
+  return "bootstrap";
+#elif defined(VARIANT_APP)
+  return "app";
+#else
+  return "dev";
+#endif
+}
 
 int payload_opl_launcher_embedded(void) {
 #ifdef HAVE_EMBEDDED_OPL_LAUNCHER
+  return 1;
+#else
+  return 0;
+#endif
+}
+
+int payload_installer_embedded(void) {
+#ifdef HAVE_EMBEDDED_INSTALLER_KELF
   return 1;
 #else
   return 0;
@@ -31,7 +63,16 @@ void payload_release(payload_t *p) {
   memset(p, 0, sizeof(*p));
 }
 
-static int try_file(payload_t *out, const char *path) {
+__attribute__((unused)) static int use_embedded(payload_t *out, const uint8_t *data, uint32_t size) {
+  if (!kelf_looks_valid(data, size))
+    return 0;
+  out->data = data;
+  out->size = size;
+  out->origin = "embedded";
+  return 1;
+}
+
+__attribute__((unused)) static int try_file(payload_t *out, const char *path) {
   void *buf = NULL;
   int n = file_load(path, &buf, KELF_MAX);
   if (n <= 0)
@@ -47,29 +88,37 @@ static int try_file(payload_t *out, const char *path) {
   return 1;
 }
 
-inst_err_t payload_opl_launcher(payload_t *out, int app_mounted, int udpfs_ok) {
+inst_err_t payload_opl_launcher(payload_t *out, int udpfs_ok) {
   memset(out, 0, sizeof(*out));
+  (void)udpfs_ok;
 #ifdef HAVE_EMBEDDED_OPL_LAUNCHER
-  if (kelf_looks_valid(opl_launcher_kelf, size_opl_launcher_kelf)) {
-    out->data = opl_launcher_kelf;
-    out->size = size_opl_launcher_kelf;
-    out->origin = "embedded";
+  if (use_embedded(out, opl_launcher_kelf, size_opl_launcher_kelf))
     return ERR_OK;
-  }
 #endif
-  if (app_mounted && try_file(out, PFS_APP "payload/OPL-LAUNCHER.KELF"))
-    return ERR_OK;
+#ifdef VARIANT_DEV
   if (udpfs_ok && try_file(out, "udpfs:/PAYLOAD/opl-launcher-EXECUTE.KELF"))
     return ERR_OK;
+#endif
   return ERR_KELF_MISSING;
 }
 
 inst_err_t payload_installer(payload_t *out, int app_mounted, int udpfs_ok) {
   memset(out, 0, sizeof(*out));
-  if (udpfs_ok && try_file(out, "udpfs:/PAYLOAD/installer-EXECUTE.KELF"))
+  (void)app_mounted;
+  (void)udpfs_ok;
+#ifdef HAVE_EMBEDDED_INSTALLER_KELF
+  if (use_embedded(out, installer_kelf, size_installer_kelf))
     return ERR_OK;
+#endif
+#ifdef VARIANT_APP
+  /* Repair in place from the KELF this app was launched from. */
   if (app_mounted && try_file(out, PFS_APP "EXECUTE.KELF"))
     return ERR_OK;
+#endif
+#ifdef VARIANT_DEV
+  if (udpfs_ok && try_file(out, "udpfs:/PAYLOAD/installer-EXECUTE.KELF"))
+    return ERR_OK;
+#endif
   return ERR_KELF_MISSING;
 }
 

@@ -7,13 +7,19 @@
 
 /* Signed KELF payloads and embedded jacket images (plan 15, 20-22).
  *
- * KELFs are never generated on the console. Lookup order:
- *   OPL-Launcher:  embedded at build time (vendor/opl-launcher/EXECUTE.KELF)
- *                  -> pfs0:/payload/OPL-LAUNCHER.KELF (installer partition)
- *                  -> udpfs:/PAYLOAD/opl-launcher-EXECUTE.KELF
- *   Installer:     udpfs:/PAYLOAD/installer-EXECUTE.KELF
- *                  -> pfs0:/EXECUTE.KELF (an existing installer channel)
- * Every candidate must pass kelf_looks_valid().
+ * Build variants (see Makefile):
+ *   app        desr-udpfs-installer-app.elf, signed as the XMB channel's
+ *              EXECUTE.KELF. Embeds the signed OPL-Launcher KELF.
+ *   bootstrap  desr-udpfs-installer-bootstrap.elf, run once from a
+ *              homebrew launcher. Embeds the signed OPL-Launcher KELF
+ *              AND the signed app KELF it installs into
+ *              PP.UDPFS-INSTALLER.
+ *   dev        unsigned development build (make dev). Nothing embedded;
+ *              payloads may come from udpfs:/PAYLOAD/ as an explicit
+ *              development fallback. Never shipped in dist/.
+ *
+ * KELFs are never generated on the console. Every candidate must pass
+ * kelf_looks_valid().
  */
 
 typedef struct {
@@ -23,12 +29,21 @@ typedef struct {
   const char *origin; /* "embedded", a path, ... */
 } payload_t;
 
-inst_err_t payload_opl_launcher(payload_t *out, int app_mounted, int udpfs_ok);
+/* OPL-Launcher KELF for game channels: embedded copy; in dev builds
+ * only, udpfs:/PAYLOAD/opl-launcher-EXECUTE.KELF. */
+inst_err_t payload_opl_launcher(payload_t *out, int udpfs_ok);
+
+/* Installer app KELF for PP.UDPFS-INSTALLER: bootstrap -> embedded;
+ * app -> its own pfs0:/EXECUTE.KELF (repair in place); dev ->
+ * udpfs:/PAYLOAD/installer-EXECUTE.KELF. */
 inst_err_t payload_installer(payload_t *out, int app_mounted, int udpfs_ok);
+
 void payload_release(payload_t *p);
 
-/* 1 if an OPL-Launcher KELF was embedded at build time. */
+/* "app", "bootstrap" or "dev". */
+const char *payload_build_variant(void);
 int payload_opl_launcher_embedded(void);
+int payload_installer_embedded(void);
 
 /* Embedded PNGs (always present). */
 void payload_default_jacket(const uint8_t **data, uint32_t *size);

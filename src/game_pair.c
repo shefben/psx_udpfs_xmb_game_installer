@@ -1,18 +1,8 @@
 #include "game_pair.h"
-#include "hdl_header.h"
 
 int pair_hidden_trusted(const pair_facts_t *f) {
-  if (!f->hidden_exists || !f->hidden_header_valid)
-    return 0;
-  /* The on-disk marker outlives a lost journal. */
-  if (f->hidden_marker == HDL_MARK_INCOMPLETE)
-    return 0;
-  if (!f->has_journal)
-    return 1; /* marker COMPLETE, or a game from another tool */
-  tx_state_t s = f->journal_state;
-  if (s == TX_FAILED)
-    s = f->journal_failed_from;
-  return s >= TX_HDL_VERIFIED && s <= TX_COMPLETE;
+  return f->hidden_exists && f->hidden_header_valid && f->has_journal &&
+         f->journal_verified;
 }
 
 pair_state_t pair_classify(const pair_facts_t *f) {
@@ -26,7 +16,7 @@ pair_state_t pair_classify(const pair_facts_t *f) {
       return PAIR_HIDDEN_INVALID_WITH_CHANNEL;
     return f->visible_valid ? PAIR_COMPLETE : PAIR_CHANNEL_BROKEN;
   }
-  return trusted ? PAIR_HIDDEN_ONLY : PAIR_HIDDEN_INCOMPLETE;
+  return trusted ? PAIR_HIDDEN_ONLY : PAIR_HIDDEN_UNVERIFIED;
 }
 
 unsigned pair_actions(pair_state_t s) {
@@ -36,7 +26,7 @@ unsigned pair_actions(pair_state_t s) {
   case PAIR_COMPLETE:
   case PAIR_HIDDEN_ONLY:
     return ACT_CREATE_CHANNEL | ACT_REINSTALL | ACT_DELETE;
-  case PAIR_HIDDEN_INCOMPLETE:
+  case PAIR_HIDDEN_UNVERIFIED:
     return ACT_DELETE_INCOMPLETE | ACT_REINSTALL;
   case PAIR_CHANNEL_BROKEN:
     return ACT_CREATE_CHANNEL | ACT_DELETE;
@@ -54,15 +44,15 @@ const char *pair_state_label(pair_state_t s) {
   case PAIR_COMPLETE:
     return "installed";
   case PAIR_HIDDEN_ONLY:
-    return "no XMB channel";
-  case PAIR_HIDDEN_INCOMPLETE:
-    return "INCOMPLETE copy";
+    return "verified, channel pending";
+  case PAIR_HIDDEN_UNVERIFIED:
+    return "UNKNOWN/UNVERIFIED data";
   case PAIR_CHANNEL_BROKEN:
     return "channel BROKEN";
   case PAIR_ORPHAN_CHANNEL:
     return "ORPHANED channel";
   case PAIR_HIDDEN_INVALID_WITH_CHANNEL:
-    return "game data INVALID";
+    return "channel on UNVERIFIED data";
   }
   return "?";
 }

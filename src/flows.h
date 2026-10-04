@@ -22,6 +22,6 @@ void flow_installed_games(void);
 void flow_repair(void);
 void flow_network_settings(void);
 void flow_self_install(void);
-void flow_diagnostics(void);
+
 
 #endif

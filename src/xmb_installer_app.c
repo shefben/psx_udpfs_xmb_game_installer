@@ -30,37 +30,34 @@ static void build_content(channel_content_t *c, const payload_t *kelf,
   c->jacket_size = jkt_size;
 }
 
-/* Extra (non-XMB) content: config, state dir, OPL-Launcher stash. */
-static int write_app_extras(const payload_t *opl, selfinstall_report_t *rep) {
+/* Extra (non-XMB) content: config and the journal directory. */
+static int write_app_extras(void) {
   if (pfs_mount(PFS_WORK, INSTALLER_PARTITION, FIO_MT_RDWR) < 0)
     return -1;
   fileXioMkdir(PFS_WORK "config", 0777);
   fileXioMkdir(PFS_WORK "state", 0777);
-  fileXioMkdir(PFS_WORK "payload", 0777);
   char buf[64];
   size_t n = settings_serialize(&g_app.settings, buf, sizeof(buf));
   int r = file_write_all(PFS_WORK "config/network.ini", buf, (uint32_t)n);
-  if (r >= 0 && opl && opl->size &&
-      file_write_all(PFS_WORK "payload/OPL-LAUNCHER.KELF", opl->data, opl->size) >= 0)
-    rep->opl_launcher_stashed = 1;
+  iox_stat_t st;
+  if (r >= 0 && fileXioGetStat(PFS_WORK "state", &st) < 0)
+    r = -2;
   pfs_umount(PFS_WORK);
   return r;
 }
 
 void installer_app_install(selfinstall_report_t *rep) {
   memset(rep, 0, sizeof(*rep));
-  payload_t kelf, opl;
-  memset(&opl, 0, sizeof(opl));
+  payload_t kelf;
 
   if ((rep->err = payload_installer(&kelf, g_app.app_mounted,
                                     g_app.net == NETWORK_READY))) {
-    rep->detail = "put installer-EXECUTE.KELF in udpfs:/PAYLOAD/";
+    rep->detail = payload_installer_embedded()
+                      ? "embedded installer KELF failed validation"
+                      : "this build carries no installer KELF: run the bootstrap ELF";
     return;
   }
   rep->kelf_origin = kelf.origin;
-  /* Optional: keep a copy of OPL-Launcher so later game installs do
-   * not depend on the server's PAYLOAD folder. */
-  payload_opl_launcher(&opl, g_app.app_mounted, g_app.net == NETWORK_READY);
 
   /* The partition cannot be mounted twice; release pfs0: first. Any
    * payload we loaded from pfs0: is already in memory. */
@@ -85,8 +82,8 @@ void installer_app_install(selfinstall_report_t *rep) {
   }
 
   channel_result_t cr = channel_populate(INSTALLER_PARTITION, &c);
-  if (!cr.err && write_app_extras(&opl, rep) < 0)
-    cr = (channel_result_t){ERR_XMB_RESOURCE_WRITE, 0, "config/network.ini"};
+  if (!cr.err && write_app_extras() < 0)
+    cr = (channel_result_t){ERR_XMB_RESOURCE_WRITE, 0, "config/ or state/"};
   if (!cr.err)
     cr = channel_verify(INSTALLER_PARTITION, &c);
   rep->err = cr.err;
@@ -98,7 +95,6 @@ void installer_app_install(selfinstall_report_t *rep) {
     hdd_remove_exact(INSTALLER_PARTITION, NULL);
 
 out:
-  payload_release(&opl);
   payload_release(&kelf);
   app_mount();
 }

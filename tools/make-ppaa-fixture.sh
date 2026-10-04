@@ -31,7 +31,7 @@ EOF
 
 # Exact bytes the installer generates (src/xmb_text.c XMB_SYSTEM_CNF).
 printf 'BOOT2 = pfs:/EXECUTE.KELF\nVER = 1.00\nVMODE = NTSC\nHDDUNITPOWER = NICHDD\n' > system.cnf
-cp system.cnf "$out/system.cnf"
+cp system.cnf "$out/system_cnf.bin"
 
 hdl_dump modify_header disk.img PP.SLUS-20312..GRAN_TURISMO_4 | tee hdl_dump.log
 

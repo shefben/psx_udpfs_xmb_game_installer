@@ -189,6 +189,45 @@ void ui_message(const char *title, const char *text) {
   ui_wait_button();
 }
 
+void ui_text_view(const char *title, const char *text) {
+  enum { MAXL = 256, ROWS = UI_ROWS - 5 };
+  static const char *starts[MAXL];
+  static int lens[MAXL];
+  int n = 0;
+  for (const char *p = text; *p && n < MAXL;) {
+    const char *nl = strchr(p, '\n');
+    starts[n] = p;
+    lens[n] = nl ? (int)(nl - p) : (int)strlen(p);
+    n++;
+    p = nl ? nl + 1 : p + strlen(p);
+  }
+  int top = 0;
+  ui_header(title, NULL);
+  for (;;) {
+    for (int r = 0; r < ROWS; r++) {
+      int i = top + r;
+      if (i < n)
+        ui_at(3 + r, " %.*s", lens[i] > UI_COLS - 2 ? UI_COLS - 2 : lens[i], starts[i]);
+      else
+        ui_at(3 + r, "%s", "");
+    }
+    ui_footer(n > ROWS ? "[Up/Down] scroll  [L1/R1] page  [O]/[X] close"
+                       : "[O]/[X] close");
+    int b = ui_wait_button();
+    if (b & (UI_CIRCLE | UI_CROSS | UI_TRIANGLE))
+      return;
+    int maxtop = n > ROWS ? n - ROWS : 0;
+    if (b & UI_DOWN)
+      top = top < maxtop ? top + 1 : maxtop;
+    if (b & UI_UP)
+      top = top > 0 ? top - 1 : 0;
+    if (b & UI_R1)
+      top = top + ROWS < maxtop ? top + ROWS : maxtop;
+    if (b & UI_L1)
+      top = top > ROWS ? top - ROWS : 0;
+  }
+}
+
 int ui_confirm(const char *title, const char *text) {
   ui_header(title, NULL);
   print_block(3, text);

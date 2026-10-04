@@ -59,6 +59,9 @@ int ui_select(const char *title, const char *status, char rows[][UI_ROW_LEN],
 /* Show lines and wait for any button. */
 void ui_message(const char *title, const char *text);
 
+/* Scrollable multi-page text (Up/Down line, L1/R1 page, O/X close). */
+void ui_text_view(const char *title, const char *text);
+
 /* Destructive confirmation: shows `text`, requires holding R1 while
  * pressing X. Returns 1 if confirmed, 0 otherwise. */
 int ui_confirm_destructive(const char *title, const char *text);

@@ -1,0 +1,29 @@
+# ps2hdd-hdl.irx
+# sha256 58b217e93ebaf8b452d948fbde64a324ade6992484e22cc76b9d7aa99b547d15, 31457 bytes; addresses are file offsets
+
+## '_' comparison site 1
+000df0  1440fff1  bnez v0,0xdb8
+000df4  00000000  nop
+000df8  82240000  lb a0,0(s1)
+000dfc  2402005f  li v0,95
+000e00  10820042  beq a0,v0,0xf0c
+000e04  00000000  nop
+000e08  02202821  move a1,s1
+000e0c  02602021  move a0,s3
+000e10  0c001041  jal 0x4104
+000e14  27a60010  addiu a2,sp,16
+000e18  10400039  beqz v0,0xf00
+000e1c  00408821  move s1,v0
+000e20  8c440014  lw a0,20(v0)
+000e24  02802821  move a1,s4
+000e28  0c000aec  jal 0x2bb0
+000e2c  24840038  addiu a0,a0,56
+000e30  1040000d  beqz v0,0xe68
+000e34  00000000  nop
+000e38  0c000e7c  jal 0x39f0
+000e3c  02202021  move a0,s1
+000e40  2403fff3  li v1,-13
+000e44  8fbf002c  lw ra,44(sp)
+000e48  8fb40028  lw s4,40(sp)
+000e4c  8fb30024  lw s3,36(sp)
+000e50  8fb20020  lw s2,32(sp)

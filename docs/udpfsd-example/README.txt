@@ -40,9 +40,10 @@ PS2/
     ART/                 optional jacket art, PNG, named by startup ID
         SLUS_203.12.png
         SCUS_971.99.png
-    PAYLOAD/             signed payloads for the installer
-        installer-EXECUTE.KELF
-        opl-launcher-EXECUTE.KELF
+
+Nothing else is needed on the server: the signed installer and
+OPL-Launcher KELFs are embedded in the release ELFs. (A PAYLOAD/ folder
+is only read by unsigned development builds.)
 
 The CD/ and DVD/ folder names tell the installer the disc type, like OPL.
 Outside those folders the type is detected (UDF present or > 870 MB =

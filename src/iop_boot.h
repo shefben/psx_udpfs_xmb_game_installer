@@ -20,8 +20,18 @@
  */
 
 #define IOP_MAX_FAILS 16
+#define IOP_MAX_MODS 16
 
 typedef struct {
+  /* Every load attempt, in order (diagnostics; `data`/`size` is the
+   * embedded image, so its SHA-256 can be shown). */
+  int nmods;
+  struct {
+    const char *module;
+    int ok, ret, rv;
+    const void *data;
+    unsigned int size;
+  } mods[IOP_MAX_MODS];
   int hdd_ok;   /* iomanX..hdlfs all loaded: HDD writes allowed */
   int pad_ok;   /* sio2man + padman loaded */
   int net_ok;   /* smap + ministack + udpfs_ioman loaded */

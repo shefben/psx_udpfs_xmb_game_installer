@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Test double for kelftool, used only by test/host/test_kelf_sign.sh.
+# "encrypt" writes a reversible non-ELF container; "decrypt" restores it.
+# FAKE_KELF selects a failure: ok | fail-encrypt | empty | plain-elf |
+# fail-decrypt | bad-decrypt | tiny. Every invocation is logged.
+set -eu
+echo "$*" >> "${FAKE_KELF_LOG:-/dev/null}"
+[ -f "$HOME/PS2KEYS.dat" ] || { echo "no keys" >&2; exit 3; }
+cmd=$1; shift
+case "$cmd" in
+  encrypt)
+    [ $# -eq 3 ] && shift  # drop mode
+    in=$1 out=$2
+    case "${FAKE_KELF:-ok}" in
+      fail-encrypt) exit 1 ;;
+      empty) : > "$out" ;;
+      plain-elf) cp "$in" "$out" ;;
+      tiny) printf 'KELF' > "$out" ;;
+      *) { printf 'FAKEKELF'; head -c 2048 /dev/zero; cat "$in"; } > "$out" ;;
+    esac ;;
+  decrypt)
+    in=$1 out=$2
+    case "${FAKE_KELF:-ok}" in
+      fail-decrypt) exit 1 ;;
+      bad-decrypt) printf 'garbage' > "$out" ;;
+      *) tail -c +2057 "$in" > "$out" ;;
+    esac ;;
+  *) exit 2 ;;
+esac

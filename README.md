@@ -17,9 +17,17 @@ PC/NAS .iso/.zso -> udpfsd -> UDPFS/UDPRDMA -> udpfs_ioman.irx -> udpfs:/...
 * Hidden game data `__.SLUS-20312..GRAN_TURISMO_4` and visible channel
   `PP.SLUS-20312..GRAN_TURISMO_4` differ only in the first two bytes —
   the contract OPL-Launcher uses to find the game.
-* The channel is created only after the copied data verified; a failed
-  copy never leaves a visible channel.
-* Every step is journaled under `PP.UDPFS-INSTALLER:/state/`.
+* The channel is created only after the whole installed game was read
+  back from the HDD and its CRC-32 equals the CRC of the stream received
+  from udpfsd; a failed copy never leaves a visible channel.
+* Every step is journaled under `PP.UDPFS-INSTALLER:/state/`; the
+  journal, not the HDL format, records whether data is verified.
+* Release builds: `desr-udpfs-installer-bootstrap.elf` (first run, embeds
+  the signed app and OPL-Launcher KELFs) and the signed XMB app
+  `installer-EXECUTE.KELF`. The HDD driver is a reproducible source
+  build (`tools/driver/`).
+
+Status: PC verified only. See the checklist for DESR status.
 
 Docs: [install & use](docs/INSTALL.md) · [build](docs/BUILD.md) ·
 [server](docs/udpfsd-example/README.txt) ·

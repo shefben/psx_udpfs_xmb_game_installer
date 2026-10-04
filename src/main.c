@@ -4,6 +4,7 @@
 
 #include "app_state.h"
 #include "browser.h"
+#include "diagnostics.h"
 #include "flows.h"
 #include "network.h"
 #include "transaction.h"
@@ -34,9 +35,11 @@ static void startup_notices(void) {
                       "shown in the XMB. See Repair XMB Channels.\n\n", n);
   } else if (g_app.hdd_state == ERR_OK) {
     off += snprintf(msg + off, sizeof(msg) - off,
-                    "PP.UDPFS-INSTALLER does not exist yet. Run\n"
-                    "'Install/Repair Installer XMB App' first: games need it\n"
-                    "for their install journals.\n\n");
+                    "First run: PP.UDPFS-INSTALLER does not exist yet.\n\n"
+                    "Game installation stays disabled until it exists, because\n"
+                    "it holds the install journals and network settings.\n"
+                    "Run 'Install/Repair Installer XMB App' first. Diagnostics\n"
+                    "are available now.\n\n");
   }
   if (off > 0)
     ui_message("Notice", msg);
@@ -68,7 +71,17 @@ int main(int argc, char *argv[]) {
       continue;
     sel = c;
     if (!hdd_ok && (c == 0 || c == 1 || c == 2 || c == 4)) {
-      ui_message("HDD unavailable", "The internal HDD is not usable. See Diagnostics.");
+      ui_message("HDD unavailable",
+                 "The internal HDD is not usable or a required HDD module failed\n"
+                 "to load. All HDD writes are disabled. See Diagnostics.");
+      continue;
+    }
+    if (!g_app.app_mounted && (c == 0 || c == 1 || c == 2)) {
+      ui_message("Installer partition required",
+                 "PP.UDPFS-INSTALLER is not present (or could not be mounted).\n\n"
+                 "It stores the install journals that prove a game was copied\n"
+                 "and verified, so games cannot be installed or managed without\n"
+                 "it. Choose 'Install/Repair Installer XMB App' first.");
       continue;
     }
     switch (c) {

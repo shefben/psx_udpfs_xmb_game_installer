@@ -41,9 +41,8 @@ int tx_transition_allowed(tx_state_t from, tx_state_t to) {
    * fresh repair, after a failure or completion, after a data-only
    * install (OPL missing), or after power loss mid-channel. */
   if (to == TX_HDL_VERIFIED)
-    return from == TX_NONE || from == TX_FAILED || from == TX_COMPLETE ||
-           from == TX_HDL_VERIFIED || from == TX_CHANNEL_CREATED ||
-           from == TX_CHANNEL_VERIFIED;
+    return from == TX_FAILED || from == TX_COMPLETE || from == TX_HDL_VERIFIED ||
+           from == TX_CHANNEL_CREATED || from == TX_CHANNEL_VERIFIED;
   return 0;
 }
 
@@ -68,12 +67,33 @@ int tx_channel_creation_allowed(const tx_journal_t *j) {
          j->state == TX_CHANNEL_VERIFIED;
 }
 
-int tx_journal_filename(const char *startup_id, char out[64]) {
-  char part_id[PART_ID_LEN + 1];
-  out[0] = 0;
-  if (boot_id_to_part_id(startup_id, part_id) < 0)
-    return -1;
-  snprintf(out, 64, "install-%s.ini", part_id);
+int tx_hidden_data_verified(const tx_journal_t *j) {
+  tx_state_t s = j->state == TX_FAILED ? j->failed_from : j->state;
+  return !j->deleting && s >= TX_HDL_VERIFIED && s <= TX_COMPLETE &&
+         j->bytes_expected > 0 && j->bytes_written == j->bytes_expected &&
+         j->bytes_verified == j->bytes_expected && j->has_source_crc &&
+         j->has_installed_crc && j->source_crc32 == j->installed_crc32;
+}
+
+static int parse_crc(const char *v, int *has, uint32_t *out) {
+  *has = 0;
+  *out = 0;
+  if (!v[0])
+    return 0;
+  uint32_t x = 0;
+  int n = 0;
+  for (; *v; v++, n++) {
+    char c = *v;
+    int d = (c >= '0' && c <= '9')   ? c - '0'
+            : (c >= 'a' && c <= 'f') ? c - 'a' + 10
+            : (c >= 'A' && c <= 'F') ? c - 'A' + 10
+                                     : -1;
+    if (d < 0 || n >= 8)
+      return -1;
+    x = (x << 4) | (uint32_t)d;
+  }
+  *has = 1;
+  *out = x;
   return 0;
 }
 
@@ -86,6 +106,11 @@ int tx_journal_filename_for(const char *partition, char out[96]) {
 }
 
 size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz) {
+  char scrc[9] = "", icrc[9] = "";
+  if (j->has_source_crc)
+    snprintf(scrc, sizeof(scrc), "%08lx", (unsigned long)j->source_crc32);
+  if (j->has_installed_crc)
+    snprintf(icrc, sizeof(icrc), "%08lx", (unsigned long)j->installed_crc32);
   int n = snprintf(out, outsz,
                    "source_path=%s\n"
                    "source_size=%llu\n"
@@ -94,13 +119,19 @@ size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz) {
                    "hidden_partition=%s\n"
                    "bytes_expected=%llu\n"
                    "bytes_written=%llu\n"
+                   "bytes_verified=%llu\n"
+                   "source_crc32=%s\n"
+                   "installed_crc32=%s\n"
+                   "deleting=%d\n"
                    "state=%s\n"
                    "failed_from=%s\n"
                    "last_error=%s\n",
                    j->source_path, (unsigned long long)j->source_size,
                    j->startup_id, j->visible_partition, j->hidden_partition,
                    (unsigned long long)j->bytes_expected,
-                   (unsigned long long)j->bytes_written, tx_state_name(j->state),
+                   (unsigned long long)j->bytes_written,
+                   (unsigned long long)j->bytes_verified, scrc, icrc,
+                   j->deleting ? 1 : 0, tx_state_name(j->state),
                    tx_state_name(j->failed_from), j->last_error);
   if (n < 0 || (size_t)n >= outsz)
     return 0;
@@ -149,6 +180,19 @@ int tx_parse(const char *text, tx_journal_t *out) {
     } else if (!strcmp(k, "bytes_written")) {
       if (parse_u64(v, &out->bytes_written) < 0)
         return -1;
+    } else if (!strcmp(k, "bytes_verified")) {
+      if (parse_u64(v, &out->bytes_verified) < 0)
+        return -1;
+    } else if (!strcmp(k, "source_crc32")) {
+      if (parse_crc(v, &out->has_source_crc, &out->source_crc32) < 0)
+        return -1;
+    } else if (!strcmp(k, "installed_crc32")) {
+      if (parse_crc(v, &out->has_installed_crc, &out->installed_crc32) < 0)
+        return -1;
+    } else if (!strcmp(k, "deleting")) {
+      if (strcmp(v, "0") && strcmp(v, "1"))
+        return -1;
+      out->deleting = v[0] == '1';
     } else if (!strcmp(k, "state")) {
       if (tx_state_parse(v, &out->state) < 0)
         return -1;
@@ -181,22 +225,6 @@ static int journal_path(const char *dir, const char *partition, char *out,
   return 0;
 }
 
-inst_err_t tx_save(const char *dir, const tx_journal_t *j) {
-  char path[160];
-  fileXioMkdir(dir, 0777); /* may already exist */
-  if (journal_path(dir, j->hidden_partition, path, sizeof(path)) < 0)
-    return ERR_JOURNAL;
-  size_t n = tx_serialize(j, io_buf, sizeof(io_buf));
-  if (n == 0)
-    return ERR_JOURNAL;
-  int fd = fileXioOpen(path, FIO_O_WRONLY | FIO_O_CREAT | FIO_O_TRUNC, 0666);
-  if (fd < 0)
-    return ERR_JOURNAL;
-  int w = fileXioWrite(fd, io_buf, (int)n);
-  fileXioClose(fd);
-  return w == (int)n ? ERR_OK : ERR_JOURNAL;
-}
-
 static inst_err_t load_path(const char *path, tx_journal_t *j) {
   int fd = fileXioOpen(path, FIO_O_RDONLY);
   if (fd < 0)
@@ -209,11 +237,47 @@ static inst_err_t load_path(const char *path, tx_journal_t *j) {
   return tx_parse(io_buf, j) == 0 ? ERR_OK : ERR_JOURNAL;
 }
 
+static inst_err_t write_file(const char *path, const char *data, size_t n) {
+  int fd = fileXioOpen(path, FIO_O_WRONLY | FIO_O_CREAT | FIO_O_TRUNC, 0666);
+  if (fd < 0)
+    return ERR_JOURNAL;
+  int w = fileXioWrite(fd, (void *)data, (int)n);
+  int c = fileXioClose(fd);
+  return (w == (int)n && c >= 0) ? ERR_OK : ERR_JOURNAL;
+}
+
+/* Write <file>.tmp, read it back, remove <file>, rename .tmp over it.
+ * tx_load falls back to <file>.tmp, so a power cut at any point leaves
+ * either the old or the new state readable. */
+inst_err_t tx_save(const char *dir, const tx_journal_t *j) {
+  char path[160], tmp[168];
+  fileXioMkdir(dir, 0777); /* may already exist */
+  if (journal_path(dir, j->hidden_partition, path, sizeof(path)) < 0)
+    return ERR_JOURNAL;
+  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+  size_t n = tx_serialize(j, io_buf, sizeof(io_buf));
+  if (n == 0 || write_file(tmp, io_buf, n) != ERR_OK)
+    return ERR_JOURNAL;
+  tx_journal_t back;
+  if (load_path(tmp, &back) != ERR_OK || memcmp(&back, j, sizeof(back)) != 0)
+    return ERR_JOURNAL;
+  fileXioRemove(path);
+  if (fileXioRename(tmp, path) < 0)
+    return ERR_JOURNAL;
+  return ERR_OK;
+}
+
 inst_err_t tx_load(const char *dir, const char *partition, tx_journal_t *j) {
   char path[160];
   if (journal_path(dir, partition, path, sizeof(path)) < 0)
     return ERR_JOURNAL;
   inst_err_t e = load_path(path, j);
+  if (e) {
+    /* Power cut between remove and rename in tx_save. */
+    char tmp[168];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    e = load_path(tmp, j);
+  }
   /* Defensive: the file must describe this exact pair. */
   if (!e && strcmp(j->hidden_partition + 2, partition + 2) != 0)
     return ERR_JOURNAL;
@@ -224,6 +288,9 @@ inst_err_t tx_remove(const char *dir, const char *partition) {
   char path[160];
   if (journal_path(dir, partition, path, sizeof(path)) < 0)
     return ERR_JOURNAL;
+  char tmp[168];
+  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+  fileXioRemove(tmp);
   int r = fileXioRemove(path);
   return (r >= 0 || r == -2 /* ENOENT */) ? ERR_OK : ERR_JOURNAL;
 }

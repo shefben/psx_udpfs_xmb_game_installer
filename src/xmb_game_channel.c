@@ -26,7 +26,7 @@ const char *install_stage_name(install_stage_t s) {
   case STAGE_COPYING:
     return "copying game";
   case STAGE_VALIDATING:
-    return "validating";
+    return "validating (full read-back)";
   case STAGE_CREATING_CHANNEL:
     return "creating XMB channel";
   case STAGE_FINISHED:
@@ -57,7 +57,11 @@ inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out) {
   default_display_title(&p->iso, path, title, sizeof(title));
   if (game_plan_set_title(p, title))
     return ERR_SOURCE_SYSTEM_CNF;
-  return hdl_plan_alloc((uint64_t)p->iso.sectors * ISO_SECTOR, &p->alloc);
+  /* Plan only with buckets this drive's APA driver accepts. */
+  uint32_t max_mb = 0;
+  if (hdd_space_mb(NULL, NULL, &max_mb) < 0)
+    return ERR_HDD_MISSING;
+  return hdl_plan_alloc((uint64_t)p->iso.sectors * ISO_SECTOR, max_mb, &p->alloc);
 }
 
 inst_err_t game_plan_set_title(game_plan_t *p, const char *title) {
@@ -82,15 +86,12 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
   memset(f, 0, sizeof(*f));
   hdl_header_info_t h;
   f->hidden_exists = hdd_exists(hidden) > 0;
-  if (f->hidden_exists) {
+  if (f->hidden_exists)
     f->hidden_header_valid = hdl_partition_looks_valid(hidden, &h);
-    f->hidden_marker = f->hidden_header_valid ? h.marker : HDL_MARK_NONE;
-  }
   tx_journal_t j;
   if (load_pair_journal(hidden, &j)) {
     f->has_journal = 1;
-    f->journal_state = j.state;
-    f->journal_failed_from = j.failed_from;
+    f->journal_verified = tx_hidden_data_verified(&j);
   }
   f->visible_exists = hdd_exists(visible) > 0;
   if (f->visible_exists)
@@ -127,16 +128,28 @@ static void load_jacket(const char *boot_id, const char *source_path,
   payload_default_jacket(data, size);
 }
 
-static void journal_save(tx_journal_t *j) {
-  if (g_app.app_mounted)
-    tx_save(APP_STATE_DIR, j);
+/* Journal writes are part of the transaction: a destructive step never
+ * runs unless the state before it is on disk. */
+static inst_err_t persist(const tx_journal_t *j) {
+  if (!g_app.app_mounted)
+    return ERR_JOURNAL;
+  return tx_save(APP_STATE_DIR, j);
 }
 
-static int advance(tx_journal_t *j, tx_state_t s) {
+static inst_err_t advance(tx_journal_t *j, tx_state_t s) {
   if (tx_advance(j, s) != ERR_OK)
-    return -1;
-  journal_save(j);
-  return 0;
+    return ERR_INTERNAL;
+  return persist(j);
+}
+
+static void fail(tx_journal_t *j, install_report_t *rep, inst_err_t e, int rc,
+                 const char *detail) {
+  rep->err = e;
+  rep->rc = rc;
+  if (detail)
+    rep->detail = detail;
+  tx_fail(j, e);
+  persist(j); /* best effort: the data is untrusted either way */
 }
 
 static void stage(const install_ui_t *ui, install_report_t *rep, install_stage_t s) {
@@ -151,12 +164,11 @@ static void finish_report(install_report_t *rep, const char *visible,
   rep->visible_exists = hdd_exists(visible) > 0;
 }
 
-/* Build the channel for a verified hidden game; journal must be at
- * TX_HDL_VERIFIED. Shared by install and repair. `kelf` is loaded by
- * the caller before anything is removed, and released here. */
-static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf_in,
+/* Build the channel for a verified hidden game. The journal is at
+ * TX_HDL_VERIFIED and saved; `kelf` was loaded by the caller before
+ * anything was removed, and is released here. */
+static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
                           const install_ui_t *ui, install_report_t *rep) {
-  payload_t kelf = *kelf_in;
   stage(ui, rep, STAGE_CREATING_CHANNEL);
   char info[1024];
   uint32_t info_len = (uint32_t)xmb_game_info_sys(info, sizeof(info), title,
@@ -166,30 +178,32 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf_in
   void *jkt_owned;
   load_jacket(j->startup_id, j->source_path, &jkt, &jkt_size, &jkt_owned);
 
-  channel_content_t c = {kelf.data, kelf.size, info, info_len, jkt, jkt_size};
+  channel_content_t c = {kelf->data, kelf->size, info, info_len, jkt, jkt_size};
   int rc = 0;
-  rep->err = pfs_create_partition(j->visible_partition, CHANNEL_SIZE_STR, &rc);
-  channel_result_t cr = {rep->err, rc, "create PFS partition"};
+  inst_err_t e = pfs_create_partition(j->visible_partition, CHANNEL_SIZE_STR, &rc);
+  channel_result_t cr = {e, rc, "create PFS partition"};
   if (!cr.err)
     cr = channel_populate(j->visible_partition, &c);
-  if (!cr.err && advance(j, TX_CHANNEL_CREATED) == 0)
+  if (!cr.err && (e = advance(j, TX_CHANNEL_CREATED)))
+    cr = (channel_result_t){e, 0, "journal"};
+  if (!cr.err)
     cr = channel_verify(j->visible_partition, &c);
-  if (!cr.err && advance(j, TX_CHANNEL_VERIFIED) == 0 &&
-      advance(j, TX_COMPLETE) == 0) {
-    rep->err = ERR_OK;
-  } else {
-    rep->err = cr.err ? cr.err : ERR_INTERNAL;
-    rep->rc = cr.rc;
-    rep->detail = cr.step;
+  if (!cr.err && (e = advance(j, TX_CHANNEL_VERIFIED)))
+    cr = (channel_result_t){e, 0, "journal"};
+  if (!cr.err && (e = advance(j, TX_COMPLETE)))
+    cr = (channel_result_t){e, 0, "journal"};
+
+  if (cr.err) {
     /* Never leave a visible channel that did not verify. The hidden
      * game stays so the channel can be repaired without recopying. */
     if (cr.err != ERR_PARTITION_EXISTS)
       hdd_remove_exact(j->visible_partition, NULL);
-    tx_fail(j, rep->err);
-    journal_save(j);
+    fail(j, rep, cr.err, cr.rc, cr.step);
+  } else {
+    rep->err = ERR_OK;
   }
   free(jkt_owned);
-  payload_release(&kelf);
+  payload_release(kelf);
 }
 
 void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
@@ -197,9 +211,11 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   memset(rep, 0, sizeof(*rep));
   tx_journal_t j;
   memset(&j, 0, sizeof(j));
+  payload_t kelf;
+  memset(&kelf, 0, sizeof(kelf));
   stage(ui, rep, STAGE_PREPARING);
 
-  /* 1. network ready */
+  /* 1. network ready; journal storage present */
   if (g_app.net != NETWORK_READY) {
     rep->err = ERR_NETWORK;
     goto out;
@@ -238,9 +254,14 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   /* 7. free space: data partitions + the 128 MiB channel */
   uint32_t total_mb, free_mb, max_mb;
   if (hdd_space_mb(&total_mb, &free_mb, &max_mb) < 0 ||
-      (uint64_t)p->alloc.total_mb + CHANNEL_SIZE_MB > free_mb ||
-      p->alloc.main_mb > max_mb) {
+      (uint64_t)p->alloc.total_mb + CHANNEL_SIZE_MB > free_mb) {
     rep->err = ERR_NO_SPACE;
+    goto out_src;
+  }
+  hdl_alloc_t check;
+  if (hdl_plan_alloc((uint64_t)p->iso.sectors * ISO_SECTOR, max_mb, &check) ||
+      check.total_mb != p->alloc.total_mb) {
+    rep->err = ERR_HDL_PLAN;
     goto out_src;
   }
   /* 8. OPL runtime + launcher payload, before any HDD write */
@@ -250,21 +271,19 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     rep->err = ERR_OPL_NOT_FOUND;
     goto out_src;
   }
-  payload_t probe_kelf;
-  if ((rep->err = payload_opl_launcher(&probe_kelf, g_app.app_mounted, 1))) {
-    rep->detail = "put opl-launcher-EXECUTE.KELF in udpfs:/PAYLOAD/";
+  if ((rep->err = payload_opl_launcher(&kelf, g_app.net == NETWORK_READY))) {
+    rep->detail = "OPL-Launcher EXECUTE.KELF (not embedded in this build)";
     goto out_src;
   }
-  payload_release(&probe_kelf);
 
-  /* 9. journal */
+  /* 9. journal: TX_PLANNED on disk before the first HDD write */
   str_copy(j.source_path, p->source_path, sizeof(j.source_path));
   j.source_size = p->iso.source_size;
   str_copy(j.startup_id, p->iso.boot_id, sizeof(j.startup_id));
   str_copy(j.visible_partition, p->visible, sizeof(j.visible_partition));
   str_copy(j.hidden_partition, p->hidden, sizeof(j.hidden_partition));
   j.bytes_expected = (uint64_t)p->iso.sectors * ISO_SECTOR;
-  if (advance(&j, TX_PLANNED) < 0 || tx_save(APP_STATE_DIR, &j) != ERR_OK) {
+  if (advance(&j, TX_PLANNED) != ERR_OK) {
     rep->err = ERR_JOURNAL;
     goto out_src;
   }
@@ -275,45 +294,59 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   hdl_format_args_build(&args, &p->iso, p->title);
   hdl_result_t hr = hdl_create_and_format(p->hidden, &p->alloc, &args);
   if (hr.err) {
-    rep->err = hr.err;
-    rep->rc = hr.rc;
-    goto fail;
+    fail(&j, rep, hr.err, hr.rc, NULL);
+    goto out_src;
   }
-  advance(&j, TX_HDL_CREATED);
-  /* Mark the data incomplete on disk so it is never trusted, even if
-   * this journal is lost before the copy verifies. */
-  if ((rep->err = hdl_write_marker(p->hidden, HDL_MARK_INCOMPLETE, ERR_HDL_FORMAT,
-                                   &rep->rc)))
-    goto fail;
+  if ((rep->err = advance(&j, TX_HDL_CREATED)) ||
+      (rep->err = advance(&j, TX_STREAMING))) {
+    fail(&j, rep, ERR_JOURNAL, 0, NULL);
+    goto out_src;
+  }
 
-  /* 13-15. stream */
-  advance(&j, TX_STREAMING);
+  /* 13-15. stream, CRC-32 over every byte received */
   stage(ui, rep, STAGE_COPYING);
   stream_cb_t cb = {ui ? ui->progress : NULL, ui ? ui->should_abort : NULL,
                     ui ? ui->ctx : NULL};
   hr = hdl_stream(p->hidden, &g_src, j.bytes_expected, &cb);
-  j.bytes_written = hr.written;
+  j.bytes_written = hr.bytes;
+  rep->bytes_written = hr.bytes;
   if (hr.err) {
-    rep->err = hr.err;
-    rep->rc = hr.rc;
-    goto fail;
+    fail(&j, rep, hr.err, hr.rc, NULL);
+    goto out_src;
   }
+  source_close(&g_src); /* verification does not re-read the network */
+  j.has_source_crc = 1;
+  j.source_crc32 = hr.crc32;
+  rep->source_crc32 = hr.crc32;
   /* 16 */
-  advance(&j, TX_HDL_COMPLETE);
-
-  /* 17-18. verify */
-  stage(ui, rep, STAGE_VALIDATING);
-  hr = hdl_verify(p->hidden, &g_src, &p->iso, 1 + p->alloc.subs);
-  if (hr.err) {
-    rep->err = hr.err;
-    rep->rc = hr.rc;
-    goto fail;
+  if (advance(&j, TX_HDL_COMPLETE)) {
+    fail(&j, rep, ERR_JOURNAL, 0, NULL);
+    goto out;
   }
-  if ((rep->err = hdl_write_marker(p->hidden, HDL_MARK_COMPLETE, ERR_HDL_VERIFY,
-                                   &rep->rc)))
-    goto fail;
-  advance(&j, TX_HDL_VERIFIED);
-  source_close(&g_src);
+
+  /* 17-18. full read-back from the HDD and CRC comparison */
+  stage(ui, rep, STAGE_VALIDATING);
+  hr = hdl_verify(p->hidden, &p->iso, 1 + p->alloc.subs, &cb);
+  j.bytes_verified = hr.bytes;
+  rep->bytes_verified = hr.bytes;
+  if (!hr.err) {
+    j.has_installed_crc = 1;
+    j.installed_crc32 = hr.crc32;
+    rep->installed_crc32 = hr.crc32;
+    rep->have_crc = 1;
+  }
+  if (hr.err) {
+    fail(&j, rep, hr.err, hr.rc, "read-back of installed data");
+    goto out;
+  }
+  if (hr.bytes != j.bytes_expected || hr.crc32 != j.source_crc32) {
+    fail(&j, rep, ERR_HDL_VERIFY, 0, "CRC-32 of installed data != source stream");
+    goto out;
+  }
+  if (advance(&j, TX_HDL_VERIFIED) || !tx_hidden_data_verified(&j)) {
+    fail(&j, rep, ERR_JOURNAL, 0, NULL);
+    goto out;
+  }
 
   /* The channel is only created against a present OPL runtime. */
   if (!opl_ok && opl_check_runtime(&opl, &rep->rc) != ERR_OK) {
@@ -322,24 +355,15 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     goto out;
   }
   /* 19-31 */
-  payload_t kelf;
-  if ((rep->err = payload_opl_launcher(&kelf, g_app.app_mounted,
-                                       g_app.net == NETWORK_READY))) {
-    rep->detail = "OPL-Launcher EXECUTE.KELF";
-    rep->data_installed_no_channel = 1;
-    goto out;
-  }
   build_channel(&j, p->title, &kelf, ui, rep);
   if (!rep->err)
     stage(ui, rep, STAGE_FINISHED);
   goto out;
 
-fail:
-  tx_fail(&j, rep->err);
-  journal_save(&j);
 out_src:
   source_close(&g_src);
 out:
+  payload_release(&kelf);
   finish_report(rep, p->visible, p->hidden);
 }
 
@@ -347,6 +371,8 @@ void game_create_channel(const char *hidden, const install_ui_t *ui,
                          install_report_t *rep) {
   memset(rep, 0, sizeof(*rep));
   char visible[APA_NAME_MAX + 1];
+  payload_t kelf;
+  memset(&kelf, 0, sizeof(kelf));
   stage(ui, rep, STAGE_VALIDATING);
   if (partition_partner(hidden, visible) < 0 || !partition_is_hidden_game(hidden)) {
     rep->err = ERR_INVALID_ARG;
@@ -359,53 +385,42 @@ void game_create_channel(const char *hidden, const install_ui_t *ui,
   }
   pair_facts_t f;
   game_pair_facts(visible, hidden, &f);
-  if (!pair_hidden_trusted(&f)) {
+  tx_journal_t j;
+  if (!pair_hidden_trusted(&f) || !load_pair_journal(hidden, &j)) {
     rep->err = ERR_HDL_VERIFY;
-    rep->detail = "hidden game data is not verified; reinstall instead";
+    rep->detail = "no completed, CRC-verified install journal; reinstall instead";
     goto out;
   }
   hdl_header_info_t h;
-  hdl_read_header(hidden, &h);
+  if (hdl_read_header(hidden, &h) < 0) {
+    rep->err = ERR_HDL_VERIFY;
+    goto out;
+  }
 
+  /* Everything the new channel needs is checked/loaded before an
+   * existing channel is touched. */
   opl_runtime_t opl;
   if ((rep->err = opl_check_runtime(&opl, &rep->rc)))
     goto out;
-
-  tx_journal_t j;
-  if (!load_pair_journal(hidden, &j)) {
-    memset(&j, 0, sizeof(j));
-    str_copy(j.startup_id, h.startup, sizeof(j.startup_id));
-    str_copy(j.visible_partition, visible, sizeof(j.visible_partition));
-    str_copy(j.hidden_partition, hidden, sizeof(j.hidden_partition));
-    j.bytes_expected = j.bytes_written = h.data_bytes;
-  }
-  if (tx_advance(&j, TX_HDL_VERIFIED) != ERR_OK) {
-    rep->err = ERR_JOURNAL;
-    rep->detail = "journal state does not allow channel repair";
-    goto out;
-  }
-  /* Everything the new channel needs is loaded before an existing
-   * channel is touched, so a missing payload never costs a working one. */
-  payload_t kelf;
-  if ((rep->err = payload_opl_launcher(&kelf, g_app.app_mounted,
-                                       g_app.net == NETWORK_READY))) {
+  if ((rep->err = payload_opl_launcher(&kelf, g_app.net == NETWORK_READY))) {
     rep->detail = "OPL-Launcher EXECUTE.KELF (existing channel left untouched)";
     goto out;
   }
-  journal_save(&j);
+  if (tx_advance(&j, TX_HDL_VERIFIED) != ERR_OK || persist(&j) != ERR_OK) {
+    rep->err = ERR_JOURNAL;
+    goto out;
+  }
 
   /* Rebuild: an existing (broken) PP. is removed first. */
-  if (f.visible_exists) {
-    if ((rep->err = hdd_remove_exact(visible, &rep->rc))) {
-      rep->detail = visible;
-      payload_release(&kelf);
-      goto out;
-    }
+  if (f.visible_exists && (rep->err = hdd_remove_exact(visible, &rep->rc))) {
+    rep->detail = visible;
+    goto out;
   }
   build_channel(&j, h.title, &kelf, ui, rep);
   if (!rep->err)
     stage(ui, rep, STAGE_FINISHED);
 out:
+  payload_release(&kelf);
   finish_report(rep, visible, hidden);
 }
 
@@ -413,23 +428,33 @@ inst_err_t game_delete_pair(const char *visible, const char *hidden,
                             const char **failed_name, int *rc_out) {
   *failed_name = NULL;
   *rc_out = 0;
+  const char *any = (hidden && hidden[0]) ? hidden : visible;
+
+  /* Before the first removal: the data is no longer trusted, whatever
+   * happens next (power loss between the two removals included). */
+  tx_journal_t j;
+  if (g_app.app_mounted && any && tx_load(APP_STATE_DIR, any, &j) == ERR_OK) {
+    j.deleting = 1;
+    if (persist(&j) != ERR_OK) {
+      *failed_name = "journal";
+      return ERR_JOURNAL;
+    }
+  }
   /* Visible first: a leftover hidden game is invisible to the XMB,
    * which is preferable to a visible broken channel. */
-  if (visible && visible[0]) {
-    if (hdd_remove_exact(visible, rc_out) != ERR_OK) {
-      *failed_name = visible;
-      return ERR_PARTITION_DELETE;
-    }
+  if (visible && visible[0] && hdd_remove_exact(visible, rc_out) != ERR_OK) {
+    *failed_name = visible;
+    return ERR_PARTITION_DELETE;
   }
-  if (hidden && hidden[0]) {
-    if (hdd_remove_exact(hidden, rc_out) != ERR_OK) {
-      *failed_name = hidden;
-      return ERR_PARTITION_DELETE;
-    }
+  if (hidden && hidden[0] && hdd_remove_exact(hidden, rc_out) != ERR_OK) {
+    *failed_name = hidden;
+    return ERR_PARTITION_DELETE;
   }
-  /* The journal file is named after this exact pair. */
-  const char *any = (hidden && hidden[0]) ? hidden : visible;
-  if (g_app.app_mounted && any)
+  /* The journal file is named after this exact pair; only remove it
+   * once neither partition remains. */
+  char partner[APA_NAME_MAX + 1];
+  if (g_app.app_mounted && any && partition_partner(any, partner) == 0 &&
+      hdd_exists(any) == 0 && hdd_exists(partner) == 0)
     tx_remove(APP_STATE_DIR, any);
   return ERR_OK;
 }

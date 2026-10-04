@@ -6,7 +6,9 @@
 
 #include "errors.h"
 
-/* Per-game install transaction (plan section 24). */
+/* Per-game install transaction (plan section 24). The journal for a
+ * PP./__. pair is the authoritative record of whether its hidden game
+ * data is complete and verified; nothing is stored in the HDL format. */
 
 typedef enum {
   TX_NONE = 0,
@@ -28,8 +30,14 @@ typedef struct {
   char startup_id[16];
   char visible_partition[33];
   char hidden_partition[33];
-  uint64_t bytes_expected;
-  uint64_t bytes_written;
+  uint64_t bytes_expected; /* logical ISO bytes to install */
+  uint64_t bytes_written;  /* bytes streamed to hdl0: */
+  uint64_t bytes_verified; /* bytes read back from hdl0: */
+  int has_source_crc;
+  uint32_t source_crc32; /* CRC-32 of every byte received from UDPFS */
+  int has_installed_crc;
+  uint32_t installed_crc32; /* CRC-32 of the full read-back */
+  int deleting;             /* a delete of this pair was started */
   tx_state_t state;
   tx_state_t failed_from; /* stage that failed, when state == TX_FAILED */
   char last_error[64];
@@ -40,8 +48,9 @@ int tx_state_parse(const char *name, tx_state_t *out);
 
 /* Ordering rules. Forward moves are one step at a time; any
  * unfinished state may fail; a failed or complete transaction may be
- * restarted (TX_PLANNED) or, after the hidden game re-verifies,
- * resumed for channel repair (TX_HDL_VERIFIED). */
+ * restarted (TX_PLANNED); a channel may be (re)built (TX_HDL_VERIFIED)
+ * from any journal whose data was already verified. Callers must also
+ * check tx_hidden_data_verified() before a channel (re)build. */
 int tx_transition_allowed(tx_state_t from, tx_state_t to);
 
 /* Apply a transition; returns ERR_OK or ERR_INTERNAL if forbidden. */
@@ -53,8 +62,11 @@ void tx_fail(tx_journal_t *j, inst_err_t err);
 /* PP. channel creation is only permitted once the HDL data verified. */
 int tx_channel_creation_allowed(const tx_journal_t *j);
 
-/* "install-SLUS-20312.ini" (normalized partition-form game id). */
-int tx_journal_filename(const char *startup_id, char out[64]);
+/* The journal proves the hidden data complete: it reached
+ * TX_HDL_VERIFIED (possibly failing later, in the channel stage), all
+ * expected bytes were written and read back, both CRCs are recorded
+ * and equal, and no delete was started. */
+int tx_hidden_data_verified(const tx_journal_t *j);
 
 /* Journal file for one PP./__. pair: "install-<name without prefix>.ini",
  * e.g. "install-SLUS-20312..GRAN_TURISMO_4.ini". Same result for either
@@ -68,7 +80,8 @@ int tx_parse(const char *text, tx_journal_t *out);
 
 #ifdef _EE
 /* Persist under <dir> (e.g. "pfs0:/state"), one file per pair
- * (tx_journal_filename_for). `partition` may be either pair member. */
+ * (tx_journal_filename_for). `partition` may be either pair member.
+ * tx_save writes <file>.tmp then renames it over <file>. */
 inst_err_t tx_save(const char *dir, const tx_journal_t *j);
 inst_err_t tx_load(const char *dir, const char *partition, tx_journal_t *j);
 inst_err_t tx_remove(const char *dir, const char *partition);

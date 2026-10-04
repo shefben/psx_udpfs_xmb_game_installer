@@ -158,11 +158,16 @@ int part_id_from_partition(const char *name, char out[16]) {
   return boot_id_is_valid(out) ? 0 : -1;
 }
 
-int partition_remove_allowed(const char *name) {
+int partition_remove_allowed(const char *name, unsigned apa_type) {
   if (!name || !name[0] || strlen(name) > APA_NAME_MAX || strchr(name, ','))
     return 0;
-  return partition_is_game_channel(name) || partition_is_hidden_game(name) ||
-         strcmp(name, "PP.UDPFS-INSTALLER") == 0;
+  if (partition_is_hidden_game(name))
+    return apa_type == APA_TYPE_HDL_ID;
+  if (partition_is_game_channel(name))
+    return apa_type == APA_TYPE_PFS_ID;
+  if (!strcmp(name, INSTALLER_PARTITION_NAME) || !strcmp(name, TEST_PARTITION_NAME))
+    return apa_type == APA_TYPE_PFS_ID;
+  return 0;
 }
 
 int hdd_dirent_is_main(unsigned mode, unsigned attr) {

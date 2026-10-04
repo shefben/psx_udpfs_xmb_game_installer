@@ -39,6 +39,8 @@ static const struct {
     [ERR_PARTITION_DELETE] = {"ERR_PARTITION_DELETE",
                               "partition delete failed"},
     [ERR_INTERNAL] = {"ERR_INTERNAL", "internal error"},
+    [ERR_HDL_PLAN] = {"ERR_HDL_PLAN",
+                      "game does not fit the drive's APA partition limits"},
 };
 
 const char *err_name(inst_err_t err) {

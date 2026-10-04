@@ -107,15 +107,28 @@ inst_err_t hdd_remove_exact(const char *name, int *rc_out) {
   if (!rc_out)
     rc_out = &rc;
   *rc_out = 0;
-  /* The patched ps2hdd-hdl.irx no longer refuses "__" names, so the
-   * system-partition protection lives here. */
-  if (!partition_remove_allowed(name))
+  /* Shape check before touching the device (also rejects ','). */
+  if (!partition_remove_allowed(name, APA_TYPE_PFS_ID) &&
+      !partition_remove_allowed(name, APA_TYPE_HDL_ID))
     return ERR_INVALID_ARG;
   int ex = hdd_exists(name);
   if (ex == 0)
     return ERR_OK;
   if (ex < 0)
     return ERR_PARTITION_DELETE;
+  /* Whitelist by name AND actual APA type: a hidden game must be HDL,
+   * a channel or installer partition must be PFS. The driver enforces
+   * its own, looser rule (tools/driver/remove_policy.h). */
+  uint16_t type = 0;
+  int r0 = hdd_stat(name, &type, NULL, NULL);
+  if (r0 < 0) {
+    *rc_out = r0;
+    return ERR_PARTITION_DELETE;
+  }
+  if (!partition_remove_allowed(name, type)) {
+    *rc_out = type;
+    return ERR_INVALID_ARG;
+  }
   char path[48];
   snprintf(path, sizeof(path), "hdd0:%s", name);
   int r = fileXioRemove(path);

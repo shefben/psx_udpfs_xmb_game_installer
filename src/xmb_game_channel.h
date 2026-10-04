@@ -48,6 +48,12 @@ typedef struct {
   int hidden_exists;
   int visible_exists;
   int data_installed_no_channel; /* stopped at TX_HDL_VERIFIED (OPL) */
+  /* Integrity results, shown on the finish/error screen. */
+  int have_crc;
+  uint32_t source_crc32;
+  uint32_t installed_crc32;
+  uint64_t bytes_written;
+  uint64_t bytes_verified;
 } install_report_t;
 
 /* Probe a UDPFS file and build names/sizes. Leaves no source open. */
@@ -70,8 +76,9 @@ void game_install(game_plan_t *p, int allow_without_opl,
 void game_create_channel(const char *hidden, const install_ui_t *ui,
                          install_report_t *rep);
 
-/* Delete in the safe order: PP. (verify gone), __. (verify gone),
- * journal. Either name may be absent. */
+/* Delete in the safe order: mark the journal `deleting` (the data is
+ * untrusted from here on), PP. (verify gone), __. (verify gone), then
+ * remove the journal. Either name may be absent. */
 inst_err_t game_delete_pair(const char *visible, const char *hidden,
                             const char **failed_name, int *rc_out);
 

@@ -10,12 +10,9 @@
 
 #define PFS_APP "pfs0:"  /* installer application partition, kept mounted */
 #define PFS_WORK "pfs1:" /* short-lived work mounts */
-#define INSTALLER_PARTITION "PP.UDPFS-INSTALLER"
+#define INSTALLER_PARTITION INSTALLER_PARTITION_NAME
 #define CHANNEL_SIZE_STR "128M"
 #define CHANNEL_SIZE_MB 128
-
-#define APA_TYPE_PFS_ 0x0100
-#define APA_TYPE_HDL_ 0x1337
 
 typedef struct {
   char name[APA_NAME_MAX + 1];

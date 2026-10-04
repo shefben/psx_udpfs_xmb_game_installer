@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
-# Sign an EE ELF into a KELF with kelftool. Used by the package-*.sh
-# scripts. Contains no key material.
+# Sign an EE ELF into a KELF with kelftool, transactionally.
 #
 #   tools/kelf-sign.sh <input.elf> <output.KELF>
 #
-# Environment:
-#   KELFTOOL   kelftool binary (default: kelftool on PATH)
-#   PS2KEYS    path to your PS2KEYS.dat (default: ./keys/PS2KEYS.dat,
-#              then ~/PS2KEYS.dat)
-#   KELF_MODE  header argument for forks that take one. Default "mbr",
-#              the form OPL-Launcher documents:
-#                 kelftool encrypt mbr <in> <out>
-#              Set KELF_MODE=none for forks whose CLI is
-#                 kelftool encrypt <in> <out>
+# Environment (all explicit; nothing is searched for):
+#   PS2KEYS    REQUIRED. Absolute path to your PS2KEYS.dat. The file is
+#              never copied: kelftool sees it through a symlink in a
+#              private temporary HOME.
+#   KELFTOOL   kelftool binary (default: kelftool on PATH).
+#   KELF_MODE  mbr  (default, canonical) -> kelftool encrypt mbr <in> <out>
+#                   the form OPL-Launcher documents.
+#              none (experimental fallback, only if a DESR rejects the
+#                   canonical KELF) -> kelftool encrypt <in> <out>
+#              Any other value is an error.
 #
-# The script refuses to produce output unless kelftool succeeds and the
-# result is a non-empty file that is not a plain ELF, so an unsigned
-# ELF can never end up under a .KELF name.
+# Transaction: the final file is removed first, the KELF is written to
+# <output>.tmp, verified, and only then renamed to <output>. On any
+# failure the .tmp is removed and the script exits non-zero, so
+# <output> exists only after a successful verification.
+#
+# Verification: non-empty; not an ELF; `kelftool decrypt` (which checks
+# the signatures) succeeds and returns exactly the input ELF bytes.
 set -euo pipefail
 
 die() { printf 'kelf-sign: error: %s\n' "$1" >&2; exit 1; }
@@ -24,42 +28,54 @@ die() { printf 'kelf-sign: error: %s\n' "$1" >&2; exit 1; }
 [ $# -eq 2 ] || die "usage: $0 <input.elf> <output.KELF>"
 IN=$1
 OUT=$2
+TMP=$OUT.tmp
+CHECK=$OUT.verify.elf
+TMPHOME=
+
+cleanup() {
+  rm -f "$TMP" "$CHECK"
+  [ -n "$TMPHOME" ] && rm -rf "$TMPHOME"
+  return 0
+}
+trap cleanup EXIT
+
+# Never leave an earlier, now-stale KELF looking current.
+rm -f "$OUT" "$TMP" "$CHECK"
+
 [ -s "$IN" ] || die "input ELF not found or empty: $IN"
 [ "$(head -c4 "$IN" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ] || die "input is not an ELF: $IN"
 
-KELFTOOL=${KELFTOOL:-kelftool}
-command -v "$KELFTOOL" >/dev/null 2>&1 || die "kelftool not found.
-kelftool is a build prerequisite that this project does not ship.
-Build or install a kelftool fork and put it on PATH, or set KELFTOOL=..."
+[ -n "${PS2KEYS:-}" ] || die "PS2KEYS is not set.
+Run: PS2KEYS=/absolute/path/to/PS2KEYS.dat make kelfs
+The key file comes from a console you own; it is never searched for,
+copied, committed or packaged by this project."
+case "$PS2KEYS" in /*) ;; *) die "PS2KEYS must be an absolute path (got: $PS2KEYS)";; esac
+[ -f "$PS2KEYS" ] && [ -s "$PS2KEYS" ] || die "PS2KEYS file missing or empty: $PS2KEYS"
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
-if [ -n "${PS2KEYS:-}" ]; then KEYS=$PS2KEYS
-elif [ -f "$ROOT/keys/PS2KEYS.dat" ]; then KEYS=$ROOT/keys/PS2KEYS.dat
-elif [ -f "$HOME/PS2KEYS.dat" ]; then KEYS=$HOME/PS2KEYS.dat
-else die "PS2KEYS.dat not found (set PS2KEYS=/path/to/PS2KEYS.dat).
-Key material comes from a console you own and is never committed."
-fi
-[ -s "$KEYS" ] || die "key file empty or unreadable: $KEYS"
-
-# kelftool reads ~/PS2KEYS.dat; give it a private HOME holding a link to
-# the chosen key file so nothing is copied.
-TMPHOME=$(mktemp -d)
-trap 'rm -rf "$TMPHOME"' EXIT
-ln -s "$(cd "$(dirname "$KEYS")" && pwd)/$(basename "$KEYS")" "$TMPHOME/PS2KEYS.dat"
-
-mkdir -p "$(dirname "$OUT")"
-rm -f "$OUT"
 MODE=${KELF_MODE:-mbr}
-if [ "$MODE" = "none" ]; then
-  HOME=$TMPHOME "$KELFTOOL" encrypt "$IN" "$OUT"
-else
-  HOME=$TMPHOME "$KELFTOOL" encrypt "$MODE" "$IN" "$OUT"
-fi
+case "$MODE" in
+  mbr) ENC_ARGS=(encrypt mbr) ;;
+  none) ENC_ARGS=(encrypt)
+        echo "kelf-sign: WARNING: KELF_MODE=none is an experimental fallback" >&2 ;;
+  *) die "KELF_MODE must be 'mbr' (default) or 'none', got '$MODE'" ;;
+esac
 
-[ -s "$OUT" ] || die "kelftool produced no output"
-if [ "$(head -c4 "$OUT" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]; then
-  rm -f "$OUT"
-  die "output is a plain ELF, refusing to keep it as a KELF"
-fi
-python3 "$ROOT/tools/verify-assets.py" --kelf "$OUT"
-echo "kelf-sign: $OUT ($(wc -c < "$OUT") bytes)"
+KELFTOOL=${KELFTOOL:-kelftool}
+command -v "$KELFTOOL" >/dev/null 2>&1 || die "kelftool not found ($KELFTOOL).
+kelftool is a build prerequisite that this project does not ship.
+Install it on PATH or set KELFTOOL=/path/to/kelftool."
+
+TMPHOME=$(mktemp -d)
+ln -s "$PS2KEYS" "$TMPHOME/PS2KEYS.dat"
+mkdir -p "$(dirname "$OUT")"
+
+HOME=$TMPHOME "$KELFTOOL" "${ENC_ARGS[@]}" "$IN" "$TMP" >/dev/null || die "kelftool encrypt failed"
+
+[ -s "$TMP" ] || die "kelftool produced no output"
+[ "$(head -c4 "$TMP" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ] || die "output is a plain ELF"
+[ "$(stat -c %s "$TMP")" -ge 1024 ] || die "output too small for a KELF"
+HOME=$TMPHOME "$KELFTOOL" decrypt "$TMP" "$CHECK" >/dev/null || die "kelftool decrypt (signature check) failed"
+cmp -s "$IN" "$CHECK" || die "decrypted KELF content differs from the input ELF"
+
+mv -f "$TMP" "$OUT"
+echo "kelf-sign: $OUT ($(stat -c %s "$OUT") bytes, mode $MODE, sha256 $(sha256sum "$OUT" | cut -c1-16)...)"

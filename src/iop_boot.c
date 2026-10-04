@@ -51,7 +51,17 @@ static int load(iop_status_t *st, const char *name, void *data,
   int ret = SifExecModuleBuffer(data, size, arglen, args, &rv);
   /* rv: 0 RESIDENT_END, 2 REMOVABLE_END are fine; 1 NO_RESIDENT_END
    * means the module refused to stay (e.g. device init failed). */
-  if (ret < 0 || (rv != 0 && rv != 2)) {
+  int ok = ret >= 0 && (rv == 0 || rv == 2);
+  if (st->nmods < IOP_MAX_MODS) {
+    st->mods[st->nmods].module = name;
+    st->mods[st->nmods].ok = ok;
+    st->mods[st->nmods].ret = ret;
+    st->mods[st->nmods].rv = rv;
+    st->mods[st->nmods].data = data;
+    st->mods[st->nmods].size = size;
+    st->nmods++;
+  }
+  if (!ok) {
     if (st->nfails < IOP_MAX_FAILS) {
       st->fails[st->nfails].module = name;
       st->fails[st->nfails].ret = ret;

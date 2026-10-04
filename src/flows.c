@@ -76,21 +76,28 @@ static int cb_abort(void *ctx) {
 
 void flow_show_error(const char *what, const install_report_t *rep,
                      const char *recovery) {
-  char msg[900];
-  snprintf(msg, sizeof(msg),
-           "%s\n\n"
-           "Stage:            %s\n"
-           "Error:            %s\n"
-           "                  (%s)\n"
-           "Driver code:      %d\n"
-           "Detail:           %s\n\n"
-           "Hidden game partition exists:  %s\n"
-           "Visible XMB channel exists:    %s\n\n"
-           "Safe recovery: %s",
-           what, install_stage_name(rep->stage), err_text(rep->err),
-           err_name(rep->err), rep->rc, rep->detail ? rep->detail : "-",
-           rep->hidden_exists ? "yes" : "no", rep->visible_exists ? "yes" : "no",
-           recovery);
+  char msg[1100];
+  int off = snprintf(msg, sizeof(msg),
+                     "%s\n\n"
+                     "Stage:            %s\n"
+                     "Error:            %s\n"
+                     "                  (%s)\n"
+                     "Driver code:      %d\n"
+                     "Detail:           %s\n\n"
+                     "Hidden game partition exists:  %s\n"
+                     "Visible XMB channel exists:    %s\n",
+                     what, install_stage_name(rep->stage), err_text(rep->err),
+                     err_name(rep->err), rep->rc, rep->detail ? rep->detail : "-",
+                     rep->hidden_exists ? "yes" : "no",
+                     rep->visible_exists ? "yes" : "no");
+  if (rep->bytes_written)
+    off += snprintf(msg + off, sizeof(msg) - off,
+                    "Copied %llu bytes, read back %llu, CRC %08lx / %s\n",
+                    (unsigned long long)rep->bytes_written,
+                    (unsigned long long)rep->bytes_verified,
+                    (unsigned long)rep->source_crc32,
+                    rep->have_crc ? "see journal" : "not verified");
+  snprintf(msg + off, sizeof(msg) - off, "\nSafe recovery: %s", recovery);
   ui_message("Error", msg);
 }
 
@@ -100,7 +107,9 @@ static const char *recovery_for(const install_report_t *rep) {
   if (rep->err == ERR_OPL_NOT_FOUND)
     return "install OPL on the HDD (+OPL or per __common/OPL/conf_hdd.cfg).";
   if (rep->err == ERR_KELF_MISSING)
-    return "copy the signed KELF to the server's PAYLOAD folder.";
+    return "use a signed release build (make dist), not a dev build.";
+  if (rep->err == ERR_HDL_PLAN)
+    return "nothing was written; the game exceeds this drive's APA limits.";
   if (rep->stage <= STAGE_PREPARING)
     return "nothing was written; fix the cause and try again.";
   if (rep->stage >= STAGE_CREATING_CHANNEL)
@@ -118,11 +127,16 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
 
   if (rep.err == ERR_OK) {
     /* TX_COMPLETE reached: only now report success. */
-    char msg[400];
+    char msg[700];
     snprintf(msg, sizeof(msg),
-             "%s installed.\n\n%s\n%s\n\nThe game appears as its own XMB channel\n"
+             "%s installed (TX_COMPLETE).\n\n%s\n%s\n\n"
+             "Bytes copied:     %llu\nBytes read back:  %llu\n"
+             "Source CRC-32:    %08lx\nInstalled CRC-32: %08lx\n\n"
+             "The game appears as its own XMB channel\n"
              "after the XMB refreshes (return to the XMB or reboot).",
-             p->title, p->visible, p->hidden);
+             p->title, p->visible, p->hidden, (unsigned long long)rep.bytes_written,
+             (unsigned long long)rep.bytes_verified, (unsigned long)rep.source_crc32,
+             (unsigned long)rep.installed_crc32);
     ui_message("Finished", msg);
     return;
   }
@@ -161,7 +175,8 @@ void flow_install_game(game_plan_t *p) {
       flow_pair_actions(p->visible, p->hidden);
       /* After a delete the pair may now be free for a fresh install. */
       game_pair_facts(p->visible, p->hidden, &f);
-      if (pair_classify(&f) != PAIR_NONE)
+      st = pair_classify(&f);
+      if (st != PAIR_NONE)
         return;
     }
 
@@ -175,8 +190,11 @@ void flow_install_game(game_plan_t *p) {
           p->iso.layer1_start ? "  DVD9" : "");
     ui_at(11, " Allocation  %s main + %d sub partition(s), %u MiB total + 128 MiB channel",
           p->alloc.main_size_str, p->alloc.subs, (unsigned)p->alloc.total_mb);
-    ui_at(13, " The game data is copied to the hidden partition and verified");
-    ui_at(14, " before the visible XMB channel is created.");
+    ui_at(12, " Validation  ISO9660 PVD ok, SYSTEM.CNF ok, BOOT2 %.40s", p->iso.boot2);
+    ui_at(13, " Region      %s     Install state: %s", region_label(p->iso.boot_id),
+          pair_state_label(st));
+    ui_at(15, " The data is copied to the hidden partition, read back in full and");
+    ui_at(16, " CRC-checked before the visible XMB channel is created.");
     ui_footer("[X] install  [Square] edit title  [O] back");
 
     int b;
@@ -485,8 +503,9 @@ void flow_self_install(void) {
            "Create or repair the installer's own XMB channel:\n\n"
            "  %s (128 MiB PFS)\n\n"
            "It receives the signed installer EXECUTE.KELF, res/info.sys,\n"
-           "jacket images and the PFS boot system.cnf header.\n"
-           "Existing config/ and state/ are kept.\n\nContinue?",
+           "jacket images and the PFS boot system.cnf header, plus\n"
+           "config/network.ini and the state/ journal directory that game\n"
+           "installs need. Existing config/ and state/ are kept.\n\nContinue?",
            INSTALLER_PARTITION);
   if (!ui_confirm("Install/Repair Installer XMB App", txt))
     return;
@@ -504,45 +523,12 @@ void flow_self_install(void) {
   }
   snprintf(txt, sizeof(txt),
            "%s verified:\n  EXECUTE.KELF  (from %s)\n  res/info.sys\n"
-           "  res/jkt_001.png, res/jkt_002.png\n  PPAA/system.cnf header\n%s\n"
+           "  res/jkt_001.png, res/jkt_002.png\n  PPAA/system.cnf header\n"
+           "  config/network.ini, state/\n\n"
+           "Game installation is now enabled.\n"
            "The installer appears in the XMB after the XMB refreshes or the\n"
            "console reboots. The bootstrap ELF was not deleted.",
-           INSTALLER_PARTITION, rep.kelf_origin ? rep.kelf_origin : "?",
-           rep.opl_launcher_stashed ? "  payload/OPL-LAUNCHER.KELF\n" : "");
+           INSTALLER_PARTITION, rep.kelf_origin ? rep.kelf_origin : "?");
   ui_message("Installer XMB App", txt);
 }
 
-void flow_diagnostics(void) {
-  char msg[1400];
-  int off = 0;
-  uint32_t tot = 0, fr = 0, mx = 0;
-#define P(...) off += snprintf(msg + off, sizeof(msg) - off, __VA_ARGS__)
-  P("Build: " __DATE__ " " __TIME__ "\n");
-  P("HDD: %s\n", err_text((inst_err_t)g_app.hdd_state));
-  if (g_app.hdd_state == ERR_OK && hdd_space_mb(&tot, &fr, &mx) == 0)
-    P("     %u MiB total, %u MiB free, max partition %u MiB\n", (unsigned)tot,
-      (unsigned)fr, (unsigned)mx);
-  P("Network: %s\n", network_status_line());
-  P("Installer partition: %s%s\n", g_app.app_exists ? "present" : "absent",
-    g_app.app_mounted ? ", mounted" : "");
-  const char *d;
-  if (g_app.app_exists)
-    P("Installer channel: %s\n", installer_app_verify(&d) == ERR_OK ? "verified" : d);
-  opl_runtime_t opl;
-  int rc;
-  inst_err_t oe = opl_check_runtime(&opl, &rc);
-  P("OPL runtime: %s  (hdd0:%s / %s%s)\n", oe ? "NOT FOUND" : "found", opl.partition,
-    opl.elf_path, opl.from_config ? ", from conf_hdd.cfg" : ", default");
-  payload_t k;
-  if (payload_opl_launcher(&k, g_app.app_mounted, g_app.net == NETWORK_READY) == ERR_OK)
-    P("OPL-Launcher KELF: %s (%u bytes)\n", k.origin, (unsigned)k.size);
-  else
-    P("OPL-Launcher KELF: MISSING\n");
-  payload_release(&k);
-  P("IOP module failures: %d\n", g_app.iop.nfails);
-  for (int i = 0; i < g_app.iop.nfails && i < IOP_MAX_FAILS; i++)
-    P("  %s ret=%d rv=%d\n", g_app.iop.fails[i].module, g_app.iop.fails[i].ret,
-      g_app.iop.fails[i].rv);
-#undef P
-  ui_message("Diagnostics", msg);
-}

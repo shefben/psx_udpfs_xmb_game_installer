@@ -7,17 +7,19 @@
 #include <hdd-ioctl.h>
 #include <io_common.h>
 
+#include "crc32.h"
 #include "hdd_partitions.h"
 #include "hdl_install.h"
 #include "partname.h"
 #include "util.h"
 
 static uint8_t stream_buf[STREAM_BUF_SIZE] __attribute__((aligned(64)));
-static uint8_t sec_a[ISO_SECTOR] __attribute__((aligned(64)));
-static uint8_t sec_b[ISO_SECTOR] __attribute__((aligned(64)));
 
 static hdl_result_t res(inst_err_t e, int rc) {
-  hdl_result_t r = {e, rc, 0};
+  hdl_result_t r;
+  memset(&r, 0, sizeof(r));
+  r.err = e;
+  r.rc = rc;
   return r;
 }
 
@@ -41,7 +43,7 @@ hdl_result_t hdl_create_and_format(const char *hidden, const hdl_alloc_t *alloc,
     int r = fileXioIoctl2(fd, HIOCADDSUB, (char *)sz, strlen(sz) + 1, NULL, 0);
     if (r < 0) {
       fileXioClose(fd);
-      fileXioRemove(dev);
+      hdd_remove_exact(hidden, NULL);
       return res(ERR_HDL_CREATE, r);
     }
   }
@@ -49,16 +51,28 @@ hdl_result_t hdl_create_and_format(const char *hidden, const hdl_alloc_t *alloc,
 
   int r = fileXioFormat("hdl0:", dev, (const char *)args, sizeof(*args));
   if (r < 0) {
-    fileXioRemove(dev);
+    hdd_remove_exact(hidden, NULL);
     return res(ERR_HDL_FORMAT, r);
   }
   return res(ERR_OK, 0);
 }
 
+static void report(const stream_cb_t *cb, time_t start, time_t *last, uint64_t done,
+                   uint64_t total, int *abort) {
+  time_t now = time(NULL);
+  if (!cb || (now == *last && done != total))
+    return;
+  *last = now;
+  if (cb->progress)
+    cb->progress(cb->ctx, done, total, (uint32_t)(now - start));
+  if (cb->should_abort && cb->should_abort(cb->ctx))
+    *abort = 1;
+}
+
 hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
                         const stream_cb_t *cb) {
   char dev[48];
-  hdl_result_t out = {ERR_OK, 0, 0};
+  hdl_result_t out = res(ERR_OK, 0);
   snprintf(dev, sizeof(dev), "hdd0:%s", hidden);
 
   if (total == 0 || total % ISO_SECTOR)
@@ -81,6 +95,8 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
 
   time_t start = time(NULL), last = 0;
   uint64_t written = 0;
+  uint32_t crc = 0;
+  int abort = 0;
   while (written < total) {
     uint32_t want = total - written > STREAM_BUF_SIZE ? STREAM_BUF_SIZE
                                                       : (uint32_t)(total - written);
@@ -91,6 +107,9 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
       out.rc = src->last_rc;
       break;
     }
+    /* CRC over exactly the bytes received from UDPFS (for a ZSO source:
+     * the decompressed ISO stream). */
+    crc = crc32_update(crc, stream_buf, want);
     int w = fileXioWrite(fd, stream_buf, (int)want);
     if (w != (int)want) {
       out.err = ERR_HDL_WRITE;
@@ -98,19 +117,14 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
       break;
     }
     written += want;
-
-    time_t now = time(NULL);
-    if (cb && (now != last || written == total)) {
-      last = now;
-      if (cb->progress)
-        cb->progress(cb->ctx, written, total, (uint32_t)(now - start));
-      if (cb->should_abort && cb->should_abort(cb->ctx)) {
-        out.err = ERR_USER_ABORT;
-        break;
-      }
+    report(cb, start, &last, written, total, &abort);
+    if (abort) {
+      out.err = ERR_USER_ABORT;
+      break;
     }
   }
-  out.written = written;
+  out.bytes = written;
+  out.crc32 = crc;
   if (out.err == ERR_OK && written != total)
     out.err = ERR_HDL_WRITE;
 
@@ -136,87 +150,37 @@ int hdl_read_header(const char *hidden, hdl_header_info_t *out) {
   return hdl_header_parse(hdr, out) == 0 ? 0 : -22;
 }
 
-inst_err_t hdl_write_marker(const char *hidden, uint16_t marker,
-                            inst_err_t fail_err, int *rc_out) {
-  static uint8_t sec[512] __attribute__((aligned(64)));
-  char dev[48];
-  int rc = 0;
-  if (!rc_out)
-    rc_out = &rc;
-  snprintf(dev, sizeof(dev), "hdd0:%s", hidden);
-  /* Raw hdd0: I/O is in 512-byte units; the header's first sector
-   * holds the marker at offset 4. */
-  int fd = fileXioOpen(dev, FIO_O_RDWR);
-  if (fd < 0) {
-    *rc_out = fd;
-    return fail_err;
-  }
-  int r = fileXioLseek(fd, HDL_GAME_DATA_OFFSET, FIO_SEEK_SET);
-  if (r == HDL_GAME_DATA_OFFSET)
-    r = fileXioRead(fd, sec, sizeof(sec));
-  if (r == (int)sizeof(sec) && get_u32le(sec) == HDL_INFO_MAGIC) {
-    hdl_header_set_marker(sec, marker);
-    r = fileXioLseek(fd, HDL_GAME_DATA_OFFSET, FIO_SEEK_SET);
-    if (r == HDL_GAME_DATA_OFFSET)
-      r = fileXioWrite(fd, sec, sizeof(sec));
-  } else if (r == (int)sizeof(sec)) {
-    r = -22; /* no HDL header: refuse to write */
-  }
-  fileXioClose(fd);
-  if (r != (int)sizeof(sec)) {
-    *rc_out = r;
-    return fail_err;
-  }
-  hdl_header_info_t h;
-  r = hdl_read_header(hidden, &h);
-  if (r < 0 || h.marker != marker) {
-    *rc_out = r;
-    return fail_err;
-  }
-  return ERR_OK;
-}
-
 int hdl_partition_looks_valid(const char *hidden, hdl_header_info_t *out) {
   uint16_t type = 0;
-  if (hdd_stat(hidden, &type, NULL, NULL) < 0 || type != APA_TYPE_HDL_)
+  if (hdd_stat(hidden, &type, NULL, NULL) < 0 || type != APA_TYPE_HDL_ID)
     return 0;
   if (hdl_read_header(hidden, out) < 0)
     return 0;
   return boot_id_is_valid(out->startup) && out->title[0] && out->data_bytes > 0;
 }
 
-/* Read one 2 KiB sector of installed data through hdl0:. */
-static int hdl_read_sector(int fd, uint32_t lba, void *buf) {
-  /* hdlfs lseek takes and returns 2048-byte sector numbers. */
-  int s = fileXioLseek(fd, (int)lba, FIO_SEEK_SET);
-  if (s != (int)lba)
-    return s < 0 ? s : -5;
-  int r = fileXioRead(fd, buf, ISO_SECTOR);
-  return r == ISO_SECTOR ? 0 : (r < 0 ? r : -5);
-}
-
-hdl_result_t hdl_verify(const char *hidden, GameSource *src,
-                        const iso_info_t *iso, int expected_parts) {
+hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
+                        int expected_parts, const stream_cb_t *cb) {
+  uint64_t total = (uint64_t)iso->sectors * ISO_SECTOR;
   uint16_t type = 0;
   int r = hdd_stat(hidden, &type, NULL, NULL);
   if (r < 0)
     return res(ERR_HDL_VERIFY, r);
-  if (type != APA_TYPE_HDL_)
+  if (type != APA_TYPE_HDL_ID)
     return res(ERR_HDL_VERIFY, type);
 
+  /* Structural: HDL header fields as written by hdlfs_format. */
   hdl_header_info_t h;
   r = hdl_read_header(hidden, &h);
   if (r < 0)
     return res(ERR_HDL_VERIFY, r);
   inst_err_t e = hdl_header_check(&h, iso->boot_id, iso->disc_type,
-                                  iso->layer1_start, expected_parts,
-                                  (uint64_t)iso->sectors * ISO_SECTOR);
+                                  iso->layer1_start, expected_parts, total);
   if (e)
     return res(e, 0);
 
-  /* Data spot check: the PVD and the final sector must match the
-   * source. This also proves the logical ISO (not ZSO container bytes)
-   * was written, since a ZSO file has no PVD at sector 16. */
+  /* Full read-back of the installed data from the HDD, read-only mount.
+   * The caller compares the CRC with the CRC of the source stream. */
   char dev[48];
   snprintf(dev, sizeof(dev), "hdd0:%s", hidden);
   fileXioUmount("hdl0:");
@@ -228,23 +192,48 @@ hdl_result_t hdl_verify(const char *hidden, GameSource *src,
     fileXioUmount("hdl0:");
     return res(ERR_HDL_VERIFY, fd);
   }
-  uint32_t probes[2] = {16, iso->sectors - 1};
-  e = ERR_OK;
-  for (int i = 0; i < 2 && !e; i++) {
-    r = hdl_read_sector(fd, probes[i], sec_a);
-    if (r < 0) {
-      e = ERR_HDL_VERIFY;
-      break;
-    }
-    if (source_read_at(src, (uint64_t)probes[i] * ISO_SECTOR, sec_b, ISO_SECTOR)) {
-      e = ERR_SOURCE_READ;
-      r = src->last_rc;
-      break;
-    }
-    if (memcmp(sec_a, sec_b, ISO_SECTOR) != 0)
-      e = ERR_HDL_VERIFY;
+
+  hdl_result_t out = res(ERR_OK, 0);
+  /* hdlfs lseek takes 2048-byte sector numbers. */
+  r = fileXioLseek(fd, 0, FIO_SEEK_SET);
+  if (r != 0) {
+    out = res(ERR_HDL_VERIFY, r);
+    goto done;
   }
+  time_t start = time(NULL), last = 0;
+  uint64_t done_bytes = 0;
+  uint32_t crc = 0;
+  int abort = 0;
+  while (done_bytes < total) {
+    uint32_t want = total - done_bytes > STREAM_BUF_SIZE
+                        ? STREAM_BUF_SIZE
+                        : (uint32_t)(total - done_bytes);
+    r = fileXioRead(fd, stream_buf, (int)want);
+    if (r != (int)want) {
+      out = res(ERR_HDL_VERIFY, r);
+      break;
+    }
+    /* Structural: the PVD must be at sector 16 of the installed data.
+     * A ZSO container (no PVD there) can never pass this. */
+    if (done_bytes == 0 && want >= 17 * ISO_SECTOR &&
+        (memcmp(stream_buf + 16 * ISO_SECTOR, "\x01" "CD001", 6) != 0 ||
+         memcmp(stream_buf + 16 * ISO_SECTOR + 40, iso->volume_id,
+                strlen(iso->volume_id)) != 0)) {
+      out = res(ERR_HDL_VERIFY, 0);
+      break;
+    }
+    crc = crc32_update(crc, stream_buf, want);
+    done_bytes += want;
+    report(cb, start, &last, done_bytes, total, &abort);
+    if (abort) {
+      out = res(ERR_USER_ABORT, 0);
+      break;
+    }
+  }
+  out.bytes = done_bytes;
+  out.crc32 = crc;
+done:
   fileXioClose(fd);
   fileXioUmount("hdl0:");
-  return res(e, e ? r : 0);
+  return out;
 }

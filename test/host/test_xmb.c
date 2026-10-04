@@ -24,7 +24,7 @@ TEST(system_cnf_exact_bytes) {
   CHECK_STR(XMB_SYSTEM_CNF, "BOOT2 = pfs:/EXECUTE.KELF\nVER = 1.00\n"
                             "VMODE = NTSC\nHDDUNITPOWER = NICHDD\n");
   uint8_t fx[256];
-  size_t n = load("system.cnf", fx, sizeof(fx));
+  size_t n = load("system_cnf.bin", fx, sizeof(fx));
   CHECK_EQ_INT(n, strlen(XMB_SYSTEM_CNF));
   CHECK(memcmp(fx, XMB_SYSTEM_CNF, n) == 0);
 }
@@ -57,6 +57,27 @@ TEST(info_sys_game_template) {
             "violence_flag = 0\r\n"
             "content_type = 255\r\n"
             "content_subtype = 0\r\n");
+}
+
+TEST(info_sys_matches_crlf_fixture) {
+  /* Byte fixture: CRLF line endings, as PSX-XMB-Manager writes info.sys. */
+  char buf[2048];
+  uint8_t fx[2048];
+  size_t n = xmb_game_info_sys(buf, sizeof(buf), "Gran Turismo 4", "SLUS_203.12");
+  size_t f = load("info_sys_gt4.bin", fx, sizeof(fx));
+  CHECK_EQ_INT(n, f);
+  CHECK(f > 0 && memcmp(buf, fx, f) == 0);
+  /* Every line ends in CRLF; there is no bare LF. */
+  for (size_t i = 0; i < f; i++)
+    if (fx[i] == '\n')
+      CHECK(i > 0 && fx[i - 1] == '\r');
+}
+
+TEST(system_cnf_fixture_is_lf_only) {
+  uint8_t fx[256];
+  size_t n = load("system_cnf.bin", fx, sizeof(fx));
+  CHECK(n > 0);
+  CHECK(memchr(fx, '\r', n) == NULL);
 }
 
 TEST(info_sys_unknown_region_still_renders) {

@@ -6,4 +6,7 @@
 *.kelf binary
 *.ps1 text eol=crlf
 *.bat text eol=crlf
-test/fixtures/system.cnf binary
+# Byte-exact fixtures: never normalize line endings (info.sys is CRLF,
+# system.cnf is LF on purpose).
+test/fixtures/** binary
+vendor/** binary

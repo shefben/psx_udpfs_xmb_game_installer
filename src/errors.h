@@ -34,6 +34,7 @@ typedef enum {
   ERR_JOURNAL,
   ERR_PARTITION_DELETE,
   ERR_INTERNAL,
+  ERR_HDL_PLAN,
   ERR__COUNT
 } inst_err_t;
 

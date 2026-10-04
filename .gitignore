@@ -2,6 +2,7 @@
 # reference/REVISIONS.txt, and never committed.
 /reference/*
 !/reference/REVISIONS.txt
+/reference/ps2sdk/
 
 /build/
 /dist/

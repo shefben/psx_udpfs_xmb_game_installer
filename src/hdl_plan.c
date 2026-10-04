@@ -11,7 +11,7 @@ static const struct {
     {"1G", 1024},  {"2G", 2048},  {"4G", 4096},
 };
 #define NBUCKETS (sizeof(BUCKETS) / sizeof(BUCKETS[0]))
-#define MB (1024ull * 1024ull)
+#define S2K_PER_MB 512u
 
 const char *apa_size_str(uint32_t mb) {
   for (unsigned i = 0; i < NBUCKETS; i++)
@@ -20,46 +20,73 @@ const char *apa_size_str(uint32_t mb) {
   return NULL;
 }
 
-/* Smallest bucket with at least `need_mb`; the largest if none. */
-static unsigned pick(uint64_t need_mb) {
-  for (unsigned i = 0; i < NBUCKETS; i++)
-    if (BUCKETS[i].mb >= need_mb)
-      return i;
-  return NBUCKETS - 1;
+/* Usable CD sectors in a partition of `mb` with `reserve` CD sectors. */
+static uint64_t usable(uint32_t mb, uint32_t reserve) {
+  return (uint64_t)mb * S2K_PER_MB - reserve;
 }
 
-static uint64_t ceil_mb(uint64_t bytes) { return (bytes + MB - 1) / MB; }
+/* Smallest allowed bucket holding `need` CD sectors, else the largest
+ * allowed one. `n_allowed` buckets (BUCKETS[0..n_allowed-1]) are allowed. */
+static unsigned pick(uint64_t need, uint32_t reserve, unsigned n_allowed) {
+  for (unsigned i = 0; i < n_allowed; i++)
+    if (usable(BUCKETS[i].mb, reserve) >= need)
+      return i;
+  return n_allowed - 1;
+}
 
-inst_err_t hdl_plan_alloc(uint64_t data_bytes, hdl_alloc_t *out) {
+inst_err_t hdl_plan_alloc(uint64_t data_bytes, uint32_t max_part_mb,
+                          hdl_alloc_t *out) {
   memset(out, 0, sizeof(*out));
-  if (data_bytes == 0)
+  if (data_bytes == 0 || data_bytes % 2048)
     return ERR_INVALID_ARG;
+  if (max_part_mb > HDL_MAX_PART_MB)
+    max_part_mb = HDL_MAX_PART_MB;
+  unsigned allowed = 0;
+  while (allowed < NBUCKETS && BUCKETS[allowed].mb <= max_part_mb)
+    allowed++;
+  if (allowed == 0)
+    return ERR_HDL_PLAN;
 
-  uint64_t need = ceil_mb(data_bytes);
-  unsigned b = pick(need + HDL_MAIN_RESERVE_MB);
+  uint64_t remaining = data_bytes / 2048;
+  unsigned b = pick(remaining, HDL_MAIN_RESERVE_2K, allowed);
   out->main_mb = BUCKETS[b].mb;
   out->main_size_str = BUCKETS[b].str;
   out->total_mb = out->main_mb;
+  uint64_t cap = usable(out->main_mb, HDL_MAIN_RESERVE_2K);
+  remaining = remaining > cap ? remaining - cap : 0;
 
-  uint64_t main_data = out->main_mb - HDL_MAIN_RESERVE_MB;
-  uint64_t remaining = need > main_data ? need - main_data : 0;
   while (remaining > 0) {
-    if (out->subs >= HDL_MAX_SUBS)
-      return ERR_INVALID_ARG;
-    unsigned sb = pick(remaining + HDL_SUB_RESERVE_MB);
-    uint64_t data = BUCKETS[sb].mb - HDL_SUB_RESERVE_MB;
-    out->sub_mb[out->subs] = BUCKETS[sb].mb;
-    out->sub_size_str[out->subs] = BUCKETS[sb].str;
+    if (out->subs >= HDL_MAX_SUBS) {
+      memset(out, 0, sizeof(*out));
+      return ERR_HDL_PLAN;
+    }
+    b = pick(remaining, HDL_SUB_RESERVE_2K, allowed);
+    out->sub_mb[out->subs] = BUCKETS[b].mb;
+    out->sub_size_str[out->subs] = BUCKETS[b].str;
     out->subs++;
-    out->total_mb += BUCKETS[sb].mb;
-    remaining = remaining > data ? remaining - data : 0;
+    out->total_mb += BUCKETS[b].mb;
+    cap = usable(BUCKETS[b].mb, HDL_SUB_RESERVE_2K);
+    remaining = remaining > cap ? remaining - cap : 0;
   }
   return ERR_OK;
 }
 
 uint64_t hdl_alloc_capacity(const hdl_alloc_t *a) {
-  uint64_t mb = a->main_mb - HDL_MAIN_RESERVE_MB;
+  uint64_t s = usable(a->main_mb, HDL_MAIN_RESERVE_2K);
   for (int i = 0; i < a->subs; i++)
-    mb += a->sub_mb[i] - HDL_SUB_RESERVE_MB;
-  return mb * MB;
+    s += usable(a->sub_mb[i], HDL_SUB_RESERVE_2K);
+  return s * 2048;
+}
+
+int hdl_plan_fill(const hdl_alloc_t *a, uint64_t data_bytes,
+                  uint32_t sectors[HDL_MAX_SUBS + 1]) {
+  uint64_t remaining = data_bytes / 2048;
+  for (int i = 0; i <= a->subs; i++) {
+    uint64_t cap = i == 0 ? usable(a->main_mb, HDL_MAIN_RESERVE_2K)
+                          : usable(a->sub_mb[i - 1], HDL_SUB_RESERVE_2K);
+    uint64_t take = remaining < cap ? remaining : cap;
+    sectors[i] = (uint32_t)take;
+    remaining -= take;
+  }
+  return 1 + a->subs;
 }

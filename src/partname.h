@@ -66,11 +66,18 @@ int partition_partner(const char *name, char out[APA_NAME_MAX + 1]);
  * not a game partition. */
 int part_id_from_partition(const char *name, char out[16]);
 
-/* Whether the installer may remove partition `name`: game channels,
- * hidden game partitions and PP.UDPFS-INSTALLER only. Never system
- * "__xxx" partitions, never names containing ',' (the APA driver would
- * parse the rest as a password and act on a different partition). */
-int partition_remove_allowed(const char *name);
+#define INSTALLER_PARTITION_NAME "PP.UDPFS-INSTALLER"
+#define TEST_PARTITION_NAME "PP.UDPFS-TEST"
+#define APA_TYPE_PFS_ID 0x0100
+#define APA_TYPE_HDL_ID 0x1337
+
+/* Whether the installer may remove partition `name` whose APA type is
+ * `apa_type`: a hidden game partition of type HDL, a visible game
+ * channel of type PFS, or the installer's own PFS partitions
+ * (PP.UDPFS-INSTALLER, PP.UDPFS-TEST). Nothing else -- in particular no
+ * system "__xxx" partition and no name containing ',' (the APA driver
+ * would parse the rest as a password and act on another partition). */
+int partition_remove_allowed(const char *name, unsigned apa_type);
 
 /* An hdd0: dirent is a main partition (not free space, not a
  * sub-partition entry, which carry APA_FLAG_SUB in attr). */
