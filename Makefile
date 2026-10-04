@@ -198,6 +198,7 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN)
 	cp $(UDPFSD_BIN) $(OPL_KELF) docs/udpfsd-example/udpfsd.cfg $(DIST)/udpfsd/
 	cp docs/udpfsd-example/* $(DIST)/udpfsd-example/
 	cp docs/INSTALL.md docs/HARDWARE_TEST_CHECKLIST.md $(DIST)/docs/
+	cp docs/QUICKSTART.md $(DIST)/
 	cp KNOWN_LIMITATIONS.md $(DIST)/
 	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF) $(BUILD)/.kelf-mode
 
