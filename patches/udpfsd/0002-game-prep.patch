@@ -1548,3 +1548,212 @@ index 0000000..f57098f
 +}
 +
 +const cnfOK = "BOOT2 = cdrom0:\\SLUS_203.12;1\r\nVER = 1.00\r\nVMODE = NTSC\r\n"
+diff --git a/internal/prep/titles.go b/internal/prep/titles.go
+new file mode 100644
+index 0000000..ba2b4d9
+--- /dev/null
++++ b/internal/prep/titles.go
+@@ -0,0 +1,111 @@
++package prep
++
++import (
++	"bufio"
++	"os"
++	"path/filepath"
++	"regexp"
++	"strings"
++	"unicode/utf8"
++)
++
++// LoadGameList reads ID -> name from GameListPS2.txt-style files: any line
++// containing a BOOT-form ID token; the name is the text after that token
++// ("^!" is the batch-file escape for "!").
++func LoadGameList(path string) (map[string]string, error) {
++	f, err := os.Open(path)
++	if err != nil {
++		return nil, err
++	}
++	defer f.Close()
++	m := map[string]string{}
++	sc := bufio.NewScanner(f)
++	for sc.Scan() {
++		line := strings.TrimRight(sc.Text(), "\r")
++		for _, tok := range strings.Fields(line) {
++			if !ValidID(tok) {
++				continue
++			}
++			i := strings.Index(line, tok) + len(tok)
++			name := strings.ReplaceAll(strings.TrimSpace(line[i:]), "^!", "!")
++			if _, dup := m[tok]; name != "" && !dup {
++				m[tok] = name
++			}
++			break
++		}
++	}
++	return m, sc.Err()
++}
++
++// CFGTitle returns Title= from <cfgDir>/<id>.cfg (OPL per-game config).
++func CFGTitle(cfgDir, id string) (string, bool) {
++	if cfgDir == "" {
++		return "", false
++	}
++	data, err := os.ReadFile(filepath.Join(cfgDir, id+".cfg"))
++	if err != nil {
++		return "", false
++	}
++	for _, line := range strings.Split(string(data), "\n") {
++		if v, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), "Title="); ok && strings.TrimSpace(v) != "" {
++			return strings.TrimSpace(v), true
++		}
++	}
++	return "", false
++}
++
++var trailingGroup = regexp.MustCompile(`\s*[\(\[][^\)\]]*[\)\]]\s*$`)
++
++// FileTitle derives a title from an image file name: no extension, no
++// trailing "(USA)"/"[!]"-style groups.
++func FileTitle(path string) string {
++	name := filepath.Base(strings.ReplaceAll(path, "\\", "/"))
++	for _, ext := range []string{".iso", ".zso"} {
++		if strings.HasSuffix(strings.ToLower(name), ext) {
++			name = name[:len(name)-len(ext)]
++		}
++	}
++	for {
++		stripped := trailingGroup.ReplaceAllString(name, "")
++		if stripped == name || strings.TrimSpace(stripped) == "" {
++			break
++		}
++		name = stripped
++	}
++	return strings.TrimSpace(name)
++}
++
++// Title picks cfg Title= > game list > file name.
++func Title(id, cfgDir string, list map[string]string, path string) string {
++	if t, ok := CFGTitle(cfgDir, id); ok {
++		return t
++	}
++	if t := list[id]; t != "" {
++		return t
++	}
++	return FileTitle(path)
++}
++
++// Sanitize removes control characters (tabs and line breaks become one
++// space), collapses spaces and truncates to max bytes at a rune boundary.
++func Sanitize(s string, max int) string {
++	var b strings.Builder
++	space := false
++	for _, r := range s {
++		if r < 0x20 || r == 0x7f || r == ' ' || r == utf8.RuneError {
++			space = true
++			continue
++		}
++		if space && b.Len() > 0 {
++			b.WriteByte(' ')
++		}
++		space = false
++		b.WriteRune(r)
++	}
++	out := b.String()
++	for len(out) > max {
++		_, size := utf8.DecodeLastRuneInString(out)
++		out = out[:len(out)-size]
++	}
++	return strings.TrimSpace(out)
++}
+diff --git a/internal/prep/titles_test.go b/internal/prep/titles_test.go
+new file mode 100644
+index 0000000..767fb35
+--- /dev/null
++++ b/internal/prep/titles_test.go
+@@ -0,0 +1,86 @@
++package prep
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"unicode/utf8"
++)
++
++func TestLoadGameListBothFormats(t *testing.T) {
++	p := filepath.Join(t.TempDir(), "GameListPS2.txt")
++	os.WriteFile(p, []byte("type     size flags           dma startup      name\n"+
++		"DVD  666094KB               0 *u4 SLUS_210.90  Alien Homind\n"+
++		"CD   525382KB               0 *u4 SLUS_201.47  Aliens vs Predator: Extinction\r\n"+
++		"SLES_546.04 ^!Qu? pasa Neng^! El videojuego\n"+
++		"garbage line\n"), 0644)
++	m, err := LoadGameList(p)
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := map[string]string{"SLUS_210.90": "Alien Homind",
++		"SLUS_201.47": "Aliens vs Predator: Extinction", "SLES_546.04": "!Qu? pasa Neng! El videojuego"}
++	if len(m) != len(want) {
++		t.Fatalf("%v", m)
++	}
++	for k, v := range want {
++		if m[k] != v {
++			t.Fatalf("%s = %q", k, m[k])
++		}
++	}
++}
++
++func TestCFGTitle(t *testing.T) {
++	dir := t.TempDir()
++	os.WriteFile(filepath.Join(dir, "SCUS_971.01.cfg"), []byte("Title=Twisted Metal: Black\r\nSerial=SCUS-97101\r\n"), 0644)
++	if got, ok := CFGTitle(dir, "SCUS_971.01"); !ok || got != "Twisted Metal: Black" {
++		t.Fatalf("%q %v", got, ok)
++	}
++	if _, ok := CFGTitle(dir, "SLUS_203.12"); ok {
++		t.Fatal("missing cfg found")
++	}
++	if _, ok := CFGTitle("", "SCUS_971.01"); ok {
++		t.Fatal("no cfg dir")
++	}
++}
++
++func TestFileTitle(t *testing.T) {
++	cases := map[string]string{
++		"/x/Grand Theft Auto - San Andreas (USA) (v3.00).zso": "Grand Theft Auto - San Andreas",
++		"HALF LIFE.zso":        "HALF LIFE",
++		"Game [!] (En,Fr).iso": "Game",
++		"(Only Parens).iso":    "(Only Parens)",
++	}
++	for in, want := range cases {
++		if got := FileTitle(in); got != want {
++			t.Fatalf("%q -> %q want %q", in, got, want)
++		}
++	}
++}
++
++func TestTitlePrecedence(t *testing.T) {
++	dir := t.TempDir()
++	os.WriteFile(filepath.Join(dir, "SLUS_203.12.cfg"), []byte("Title=From Cfg\n"), 0644)
++	list := map[string]string{"SLUS_203.12": "From List", "SLUS_203.13": "Listed"}
++	if got := Title("SLUS_203.12", dir, list, "f.iso"); got != "From Cfg" {
++		t.Fatal(got)
++	}
++	if got := Title("SLUS_203.13", dir, list, "f.iso"); got != "Listed" {
++		t.Fatal(got)
++	}
++	if got := Title("SLUS_203.14", dir, list, "/a/Name (USA).iso"); got != "Name" {
++		t.Fatal(got)
++	}
++}
++
++func TestSanitize(t *testing.T) {
++	if got := Sanitize("a\tb\r\nc\x01d  ", 63); got != "a b c d" {
++		t.Fatalf("%q", got)
++	}
++	long := strings.Repeat("é", 40) // 80 bytes
++	got := Sanitize(long, 63)
++	if len(got) > 63 || !utf8.ValidString(got) {
++		t.Fatalf("len %d valid %v", len(got), utf8.ValidString(got))
++	}
++}
