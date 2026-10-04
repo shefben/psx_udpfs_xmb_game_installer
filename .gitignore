@@ -1,0 +1,21 @@
+# Upstream sources are fetched by tools/fetch-references.sh, pinned in
+# reference/REVISIONS.txt, and never committed.
+/reference/*
+!/reference/REVISIONS.txt
+
+/build/
+/dist/
+/test/host/build/
+/vendor/irx/neutrino/
+/vendor/opl-launcher/*.ELF
+/vendor/opl-launcher/*.elf
+
+# Signing material must never be committed.
+*.dat
+*.DAT
+/keys/
+
+# Local agent/tool state
+/.headroom/
+/.superpowers/
+/.serena/
