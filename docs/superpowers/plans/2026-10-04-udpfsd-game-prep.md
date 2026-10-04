@@ -1946,7 +1946,7 @@ func TestRunFullScan(t *testing.T) {
 	os.WriteFile(filepath.Join(dvd, "Gran Turismo 4 (USA).iso"), img, 0644)
 	writeZSO(t, filepath.Join(dvd, "Gran Turismo 4 (USA).zso"), img) // same game twice
 	other := buildISO("X", 1000, 1000, strings.Replace(cnfOK, "SLUS_203.12", "SLUS_210.90", 1), false)
-	os.WriteFile(filepath.Join(dvd, "Alien\tHominid.iso"), other, 0644)
+	os.WriteFile(filepath.Join(dvd, "Alien Hominid.iso"), other, 0644)
 	os.WriteFile(filepath.Join(dvd, "broken.iso"), make([]byte, 40*2048), 0644)
 	os.WriteFile(filepath.Join(dvd, "readme.txt"), []byte("x"), 0644)
 	os.WriteFile(filepath.Join(cfg, "SLUS_203.12.cfg"), []byte("Title=Gran Turismo 4\n$Compatibility=3\n"), 0644)
@@ -1989,17 +1989,12 @@ func TestRunFullScan(t *testing.T) {
 		"/DVD/Gran Turismo 4 (USA).iso\tok\tSLUS_203.12\tGran Turismo 4\t2048000\tDVD\t0\tjkt/SLUS_203.12.png\t/CFG/SLUS_203.12.cfg",
 		"/DVD/Gran Turismo 4 (USA).zso.iso\tok\tSLUS_203.12\tGran Turismo 4\t2048000\tDVD\t0\tjkt/SLUS_203.12.png\t/CFG/SLUS_203.12.cfg",
 	}
-	// the tab in "Alien\tHominid.iso" is a real file name character: path keeps it,
-	// so compare everything except that entry's path column.
 	if len(lines) != 4 {
 		t.Fatalf("%d lines: %q", len(lines), lines)
 	}
-	if !strings.HasPrefix(lines[0], "/DVD/Alien") || strings.Count(lines[0], "\t") < 8 && false {
-		t.Fatal(lines[0])
-	}
-	for i, l := range lines[1:3] {
-		if l != want[i+1] {
-			t.Fatalf("line %d:\n%q\nwant\n%q", i+1, l, want[i+1])
+	for i, l := range lines[:3] {
+		if l != want[i] {
+			t.Fatalf("line %d:\n%q\nwant\n%q", i, l, want[i])
 		}
 	}
 	if !strings.HasPrefix(lines[3], "/DVD/broken.iso\tinvalid:") {
@@ -2364,17 +2359,6 @@ func fresh(dst, src string) bool {
 }
 ```
 
-Note for the test file: in `TestRunFullScan` the first manifest entry contains a literal tab in its file name; replace that fixture name with `"Alien Hominid.iso"` (space) and compare `lines[0]` to `want[0]` like the others — tabs in host file names are out of scope. Use this loop instead of the special-casing:
-
-```go
-	for i, l := range lines[:3] {
-		if l != want[i] {
-			t.Fatalf("line %d:\n%q\nwant\n%q", i, l, want[i])
-		}
-	}
-```
-
-(and write the fixture as `os.WriteFile(filepath.Join(dvd, "Alien Hominid.iso"), other, 0644)`).
 
 - [ ] **Step 4: Run tests** — Expected: `ok .../internal/prep`.
 
