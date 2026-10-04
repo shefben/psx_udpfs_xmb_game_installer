@@ -24,6 +24,7 @@ typedef enum {
   BATCH_EXISTS,        /* pair already on the HDD (any state) */
   BATCH_DUPLICATE,     /* same partition pair as an earlier entry */
   BATCH_TOO_BIG,       /* does not fit the drive's APA limits */
+  BATCH_NO_SPACE,      /* auto mode: does not fit the remaining free space */
 } batch_status_t;
 
 typedef enum {
@@ -72,6 +73,11 @@ int batch_count_selected(const batch_entry_t *e, int n);
 
 /* MiB the selected entries need on the HDD (data + 128 MiB channel each). */
 uint64_t batch_needed_mb(const batch_entry_t *e, int n);
+
+/* Auto mode: select eligible entries in list order while their total
+ * need (data + 128 MiB channel each) fits free_mb; eligible entries that
+ * do not fit become BATCH_NO_SPACE. Returns the number selected. */
+int batch_auto_select(batch_entry_t *e, int n, uint64_t free_mb);
 
 const char *batch_status_label(batch_status_t s);
 const char *batch_result_label(batch_result_t r);

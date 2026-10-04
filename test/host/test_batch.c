@@ -105,7 +105,7 @@ TEST(batch_rows_and_summary) {
 }
 
 TEST(batch_labels_nonempty) {
-  for (int s = BATCH_ELIGIBLE; s <= BATCH_TOO_BIG; s++)
+  for (int s = BATCH_ELIGIBLE; s <= BATCH_NO_SPACE; s++)
     CHECK(batch_status_label((batch_status_t)s)[0]);
   for (int r = BATCH_PENDING; r <= BATCH_SKIPPED; r++)
     CHECK(batch_result_label((batch_result_t)r)[0]);
@@ -147,4 +147,20 @@ TEST(batch_summary_mentions_opl_cfg_failure) {
   char sum[512];
   batch_summary(e, 1, sum, sizeof(sum));
   CHECK(strstr(sum, "OPL cfg not copied") != NULL);
+}
+
+TEST(batch_auto_select_fits_free_space_in_order) {
+  batch_entry_t e[4];
+  e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);
+  e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_NONE, 4096);
+  e[2] = ent("C.iso", ERR_OK, "__.SLUS-20314..C", PAIR_NONE, 512);
+  e[3] = ent("D.iso", ERR_OK, "__.SLUS-20315..D", PAIR_COMPLETE, 512);
+  batch_classify(e, 4);
+  /* 4096+128 fits, next 4224 does not, 512+128 still fits */
+  CHECK_EQ_INT(batch_auto_select(e, 4, 4224 + 640), 2);
+  CHECK(e[0].selected && !e[1].selected && e[2].selected && !e[3].selected);
+  CHECK_EQ_INT(e[1].status, BATCH_NO_SPACE);
+  CHECK_EQ_INT(e[3].status, BATCH_EXISTS);
+  CHECK(strcmp(batch_status_label(BATCH_NO_SPACE), "no space") == 0);
+  CHECK_EQ_INT(batch_auto_select(e, 4, 0), 0);
 }

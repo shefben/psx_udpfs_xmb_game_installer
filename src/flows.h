@@ -22,6 +22,12 @@ void flow_show_error(const char *what, const install_report_t *rep,
  * -install-dir), one after another, each through game_install(). */
 void flow_batch_install(void);
 
+/* Fully automatic install of every new game the server lists (udpfsd.cfg
+ * auto_install = yes): countdown (O cancels), first-run installer
+ * partition, every new game that fits, summary, then the system menu.
+ * Returns only when cancelled or stopped before installing. */
+void flow_auto_install(void);
+
 void flow_installed_games(void);
 void flow_repair(void);
 void flow_network_settings(void);

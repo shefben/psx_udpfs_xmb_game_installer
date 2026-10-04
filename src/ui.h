@@ -46,6 +46,9 @@ void ui_delay_ms(int ms);
 int ui_wait_button(void);
 /* Non-blocking poll for newly pressed buttons. */
 int ui_poll_button(void);
+/* Wait up to ms for a newly pressed button; returns its mask or 0. Without
+ * a pad it just waits, so nothing is ever accepted by default. */
+int ui_wait_button_timeout(int ms);
 /* Buttons currently held (no edge detection). */
 int ui_held_buttons(void);
 

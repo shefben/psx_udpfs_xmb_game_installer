@@ -69,6 +69,16 @@ int ui_poll_button(void) {
   return newly;
 }
 
+int ui_wait_button_timeout(int ms) {
+  for (int t = 0; t < ms; t += 50) {
+    int b = ui_poll_button();
+    if (b)
+      return b;
+    ui_delay_ms(50);
+  }
+  return 0;
+}
+
 int ui_wait_button(void) {
   if (!pad_open) {
     /* Without a pad, never "press" an accepting button: answering O

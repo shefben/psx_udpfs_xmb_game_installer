@@ -75,8 +75,31 @@ const char *batch_status_label(batch_status_t s) {
     return "duplicate";
   case BATCH_TOO_BIG:
     return "too big for APA";
+  case BATCH_NO_SPACE:
+    return "no space";
   }
   return "?";
+}
+
+int batch_auto_select(batch_entry_t *e, int n, uint64_t free_mb) {
+  uint64_t used = 0;
+  int count = 0;
+  for (int i = 0; i < n; i++) {
+    if (e[i].status == BATCH_NO_SPACE)
+      e[i].status = BATCH_ELIGIBLE;
+    e[i].selected = 0;
+    if (e[i].status != BATCH_ELIGIBLE)
+      continue;
+    uint64_t need = (uint64_t)e[i].alloc_mb + 128;
+    if (used + need > free_mb) {
+      e[i].status = BATCH_NO_SPACE;
+      continue;
+    }
+    used += need;
+    e[i].selected = 1;
+    count++;
+  }
+  return count;
 }
 
 const char *batch_result_label(batch_result_t r) {

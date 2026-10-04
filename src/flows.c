@@ -1,3 +1,4 @@
+#include <kernel.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -279,6 +280,38 @@ static int batch_load_entries(const char *title) {
   return n;
 }
 
+/* Install every selected entry with the unchanged single-game install
+ * (copy, CRC read-back, journal, channel). SELECT+O aborts a game. */
+static void batch_run_selected(int n, int allow_without_opl, const char *label) {
+  int idx = 0, total = batch_count_selected(batch, n), stop = 0;
+  for (int i = 0; i < n; i++) {
+    batch_entry_t *e = &batch[i];
+    if (!e->selected)
+      continue;
+    idx++;
+    if (stop) {
+      e->result = BATCH_SKIPPED;
+      continue;
+    }
+    char title[48];
+    snprintf(title, sizeof(title), "%s %d/%d", label, idx, total);
+    progress_ctx_t ctx = {&batch_plans[i], STAGE_PREPARING};
+    install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx};
+    install_report_t rep;
+    draw_install_static(&batch_plans[i], title);
+    ui_footer("Do not power off.");
+    game_install(&batch_plans[i], allow_without_opl, &ui, &rep);
+    e->err = rep.err;
+    e->stage = install_stage_name(rep.stage);
+    e->opl_cfg = rep.opl_cfg;
+    e->result = rep.err == ERR_OK              ? BATCH_DONE
+                : rep.data_installed_no_channel ? BATCH_DATA_ONLY
+                                                : BATCH_FAILED;
+    if (rep.err == ERR_USER_ABORT && idx < total)
+      stop = ui_confirm(label, "Game aborted. Stop the remaining games too?");
+  }
+}
+
 void flow_batch_install(void) {
   if (g_app.net != NETWORK_READY) {
     ui_message("Install All", "The network is not ready. See Network Settings.");
@@ -351,36 +384,105 @@ void flow_batch_install(void) {
   if (!ui_confirm("Install All Games", txt))
     return;
 
-  int idx = 0, total = batch_count_selected(batch, n), stop = 0;
-  for (int i = 0; i < n; i++) {
-    batch_entry_t *e = &batch[i];
-    if (!e->selected)
-      continue;
-    idx++;
-    if (stop) {
-      e->result = BATCH_SKIPPED;
-      continue;
-    }
-    char title[48];
-    snprintf(title, sizeof(title), "Install All %d/%d", idx, total);
-    progress_ctx_t ctx = {&batch_plans[i], STAGE_PREPARING};
-    install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx};
-    install_report_t rep;
-    draw_install_static(&batch_plans[i], title);
-    ui_footer("Do not power off.");
-    game_install(&batch_plans[i], allow_without_opl, &ui, &rep);
-    e->err = rep.err;
-    e->stage = install_stage_name(rep.stage);
-    e->opl_cfg = rep.opl_cfg;
-    e->result = rep.err == ERR_OK              ? BATCH_DONE
-                : rep.data_installed_no_channel ? BATCH_DATA_ONLY
-                                                : BATCH_FAILED;
-    if (rep.err == ERR_USER_ABORT && idx < total)
-      stop = ui_confirm("Install All Games", "Game aborted. Stop the remaining games too?");
-  }
+  batch_run_selected(n, allow_without_opl, "Install All");
   static char summary[4096];
   batch_summary(batch, n, summary, sizeof(summary));
   ui_text_view("Install All Games - summary", summary);
+}
+
+/* Show text for up to ms (any button continues); used where nobody may
+ * be at the console. */
+static void auto_show(const char *title, const char *text, int ms) {
+  ui_header(title, NULL);
+  int row = 3;
+  for (const char *p = text; *p && row < UI_ROWS - 2;) {
+    const char *nl = strchr(p, '\n');
+    int len = nl ? (int)(nl - p) : (int)strlen(p);
+    ui_at(row++, " %.*s", len > UI_COLS - 2 ? UI_COLS - 2 : len, p);
+    p = nl ? nl + 1 : p + len;
+  }
+  ui_footer("[any button] continue");
+  ui_wait_button_timeout(ms);
+}
+
+static void exit_to_system_menu(void) {
+  app_unmount();
+  ui_pad_close();
+  LoadExecPS2("rom0:OSDSYS", 0, NULL);
+}
+
+void flow_auto_install(void) {
+  /* 1. The server's scan may still be running: wait (bounded) for it. */
+  for (int t = 0; !g_manifest_loaded && t < 12; t++) {
+    ui_header("Auto-install", "Waiting for the server's game list ... [O] cancel");
+    if (ui_wait_button_timeout(5000) & (UI_CIRCLE | UI_TRIANGLE))
+      return;
+    manifest_load();
+  }
+  if (!g_manifest_loaded || !g_manifest.auto_install)
+    return;
+
+  /* 2. Countdown: nothing has to be pressed, O/Triangle cancels. */
+  for (int s = 10; s > 0; s--) {
+    char st[80];
+    snprintf(st, sizeof(st), "Installing new games in %d s - [O] cancel", s);
+    ui_header("Auto-install", st);
+    ui_at(4, " The server lists %d game image(s).", g_manifest.n);
+    ui_at(6, " Every game not yet on the HDD is copied, read back and");
+    ui_at(7, " CRC-checked, then gets its own XMB channel. Nothing on the");
+    ui_at(8, " HDD is deleted or overwritten.");
+    if (ui_wait_button_timeout(1000) & (UI_CIRCLE | UI_TRIANGLE))
+      return;
+  }
+
+  /* 3. First run: the installer partition holds the install journals. */
+  if (!g_app.app_mounted) {
+    ui_header("Auto-install", "Creating " INSTALLER_PARTITION " ...");
+    selfinstall_report_t sr;
+    installer_app_install(&sr);
+    if (sr.err || !g_app.app_mounted) {
+      char msg[300];
+      snprintf(msg, sizeof(msg),
+               "Could not create %s:\n%s (%s), step: %s\n\n"
+               "Auto-install stopped; no game was installed.",
+               INSTALLER_PARTITION, err_text(sr.err), err_name(sr.err),
+               sr.detail ? sr.detail : "-");
+      auto_show("Auto-install", msg, 15000);
+      return;
+    }
+  }
+
+  /* 4. Never create channel-less games here: OPL must be present. */
+  opl_runtime_t opl;
+  int orc;
+  if (opl_check_runtime(&opl, &orc) != ERR_OK) {
+    char msg[400];
+    snprintf(msg, sizeof(msg),
+             "OPL runtime not found (looked for %s on hdd0:%s).\n\n"
+             "Auto-install did not install anything. Install OPL on the\n"
+             "HDD, then start the installer again.",
+             opl.elf_path, opl.partition);
+    auto_show("Auto-install", msg, 15000);
+    return;
+  }
+
+  /* 5. Every new game that fits, one after another. */
+  int n = batch_load_entries("Auto-install");
+  uint32_t free_mb = 0;
+  hdd_space_mb(NULL, &free_mb, NULL);
+  if (batch_auto_select(batch, n, free_mb) == 0) {
+    /* Nothing to do: stay in the menu (the app was probably opened on
+     * purpose, e.g. to manage installed games). */
+    auto_show("Auto-install", "No new games to install.", 3000);
+    return;
+  }
+  batch_run_selected(n, 0, "Auto-install");
+
+  /* 6. Summary, then back to the XMB where the new channels appear. */
+  static char summary[4096];
+  batch_summary(batch, n, summary, sizeof(summary));
+  auto_show("Auto-install finished", summary, 15000);
+  exit_to_system_menu();
 }
 
 void flow_install_game(game_plan_t *p) {

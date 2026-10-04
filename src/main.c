@@ -6,6 +6,7 @@
 #include "browser.h"
 #include "diagnostics.h"
 #include "flows.h"
+#include "manifest.h"
 #include "network.h"
 #include "transaction.h"
 #include "ui.h"
@@ -51,6 +52,10 @@ int main(int argc, char *argv[]) {
   ui_init();
   memset(&g_app, 0, sizeof(g_app));
   app_boot();
+  /* udpfsd.cfg auto_install = yes: no input needed from here on. */
+  if (g_app.iop.hdd_ok && g_app.hdd_state == ERR_OK && g_app.net == NETWORK_READY &&
+      g_manifest_loaded && g_manifest.auto_install)
+    flow_auto_install();
   startup_notices();
 
   static char rows[8][UI_ROW_LEN] = {
