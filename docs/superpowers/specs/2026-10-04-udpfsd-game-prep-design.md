@@ -43,6 +43,8 @@ art        = F:\ps2\PFS-BatchKit-Manager\ART
 gamelist   = GameListPS2.txt         # reference ID -> name list
 cache      = udpfsd-cache            # prepared jackets + scan cache
 download_covers = yes                # fetch missing covers (section 3)
+opl_launcher = opl-launcher-EXECUTE.KELF   # section 5a
+auto_install = yes                   # section 5b
 fsroot     =                         # optional legacy root served as /
 read_only  = yes
 port       = 62966
@@ -161,6 +163,58 @@ licensing of downloaded covers.
   `$VMC_*` entries are copied unchanged; whether OPL tolerates a VMC
   name that does not exist yet on the HDD is a hardware check (below).
 
+## 5a. OPL-Launcher next to the server
+
+* `dist/udpfsd/` ships `opl-launcher-EXECUTE.KELF` beside the udpfsd
+  binaries; `udpfsd.cfg` key `opl_launcher` (default: that file next to
+  the binary) points to it. The server serves it read-only as
+  `udpfs:/.udpfsd/EXECUTE.KELF` and lists its size and SHA-256 in the
+  manifest header line: `udpfsd-manifest 1 launcher=<sha256>:<bytes>`.
+* The PS2 uses the server copy for every new game channel when it is
+  present, passes `kelf_looks_valid()`, and its downloaded bytes match the
+  manifest hash; otherwise the KELF embedded in the installer. The
+  per-game copy rule is unchanged (each channel gets its own physical
+  `EXECUTE.KELF`). The source used (`server <sha>` / `embedded`) is
+  recorded in the journal and shown in Diagnostics.
+* An install never fails only because the server copy is missing or
+  bad: the embedded copy is the fallback, so the plan's rule that a
+  normal install must not depend on the server still holds.
+
+## 5b. Auto-install (no human intervention)
+
+`udpfsd.cfg`: `auto_install = yes` (default `no`), published in the
+manifest header (`auto=1`). When the PS2 app starts and:
+
+1. the HDD and all HDD modules are OK,
+2. the network is `NETWORK_READY` and the manifest has `auto=1`,
+
+it shows a 10-second countdown ("Auto-installing N new games — O to
+cancel"; O or Triangle cancels into the normal menu, no button press is
+needed to proceed) and then, without further prompts:
+
+1. **First run:** if `PP.UDPFS-INSTALLER` does not exist, creates and
+   verifies it exactly like *Install/Repair Installer XMB App*
+   (user decision: the installer also appears as an XMB app). If that
+   fails, auto mode stops and reports.
+2. Resolves the OPL runtime. If OPL is missing, **no game is installed**
+   (no channel-less copies); the reason is shown and the app stays in
+   the menu.
+3. Installs every manifest game whose state is *new* (not on the HDD,
+   not a duplicate, fits APA and free space — games that do not fit in
+   the remaining space are skipped), one after another, each through
+   the unchanged `game_install()` (copy, full CRC read-back, journal,
+   channel), then copies the OPL cfg (5.).
+4. Never deletes, repairs or overwrites anything. Existing,
+   UNVERIFIED or failed games are left for the manual menus; a failed
+   game is reported and is retried on the next run only if its
+   partitions were cleaned up (otherwise it is *already on HDD*).
+5. Shows the summary for 15 seconds (any button skips) and exits to the
+   system menu (XMB), where the new games appear.
+
+Without a pad, auto mode still runs (it needs no input); the existing
+"no pad never accepts a prompt" rule is unaffected because auto mode
+asks nothing.
+
 ## 6. Error handling
 
 * Bad `udpfsd.cfg` (unknown key, missing folder, unreadable gamelist):
@@ -182,12 +236,22 @@ Go (`make test-udpfsd`):
 * Download via a local `httptest` server (no internet), timeouts, 404.
 * Manifest output, sanitizing, atomic write, scan cache invalidation.
 
-C (`make test`): manifest parser; title/jacket selection from manifest
-entries; OPL cfg copy decision (exists / missing / no cfg).
+C (`make test`): manifest parser (incl. header `launcher=`/`auto=`);
+title/jacket selection from manifest entries; OPL cfg copy decision
+(exists / missing / no cfg); launcher source selection (valid server
+copy / hash mismatch / missing -> embedded); auto-install planning
+(which games are queued, skipped for space, OPL-missing stop).
 
 Hardware checklist additions: manifest-driven Install All (N10);
 jackets from `ART` appear in the XMB (D19); OPL cfg copied and its
-compatibility modes take effect, VMC entry behaviour (D20).
+compatibility modes take effect, VMC entry behaviour (D20); server
+OPL-Launcher used for channels (D21); full auto run from a fresh console
+— no installer partition, two games (ISO + ZSO) on the server — to
+both games booting from the XMB with no input after starting the ELF
+(D22).
+
+"Flawless" is the target, not a claim: it is proven only when D22 passes
+on a real DESR.
 
 ## 8. Out of scope
 
