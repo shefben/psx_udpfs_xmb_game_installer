@@ -279,3 +279,834 @@ index 0000000..4da73c1
 +		t.Fatal("games folder not detected")
 +	}
 +}
+diff --git a/internal/fs/backend.go b/internal/fs/backend.go
+index 480e2b6..10ba86a 100644
+--- a/internal/fs/backend.go
++++ b/internal/fs/backend.go
+@@ -25,7 +25,7 @@ type Backend struct {
+ 
+ 	// Device data
+ 	fsRoot               string
+-	installDir           string // served read-only as /INSTALL
++	mounts               []mount // read-only top-level mounts
+ 	blockDevice          string
+ 	sectorSize           int
+ 	compressionCacheSize int
+@@ -114,7 +114,7 @@ func NewBackend(opts ...BackendOptFunc) (*Backend, error) {
+ 		}
+ 		s.fsRoot = abs
+ 	}
+-	if err := s.initInstallDir(); err != nil {
++	if err := s.initMounts(); err != nil {
+ 		return nil, err
+ 	}
+ 	if s.blockDevice != "" {
+diff --git a/internal/fs/fileops.go b/internal/fs/fileops.go
+index d0620bd..e3fb54f 100644
+--- a/internal/fs/fileops.go
++++ b/internal/fs/fileops.go
+@@ -25,8 +25,8 @@ func (s *Backend) Open(path string, flag int, isDir bool) (handle int32, stat ud
+ 	openForWriting := open && !fileReadOnly
+ 
+ 	modifies := (flag & (os.O_WRONLY | os.O_RDWR | os.O_CREATE | os.O_TRUNC)) != 0
+-	if modifies && (s.inInstallDir(fullPath) || fullPath == virtualRoot) {
+-		log.Printf("fs: refusing to open %s for writing: install directory is read-only", fullPath)
++	if modifies && (s.inMount(fullPath) || fullPath == virtualRoot) {
++		log.Printf("fs: refusing to open %s for writing: mounted directory is read-only", fullPath)
+ 		return 0, udpfs.StatInfo{}, os.ErrPermission
+ 	}
+ 	if wantWrite && (s.readOnly || open) {
+@@ -45,7 +45,7 @@ func (s *Backend) Open(path string, flag int, isDir bool) (handle int32, stat ud
+ 	if isDir {
+ 		var entries []os.DirEntry
+ 		var err error
+-		if s.installDir != "" && s.isRootDir(fullPath) {
++		if len(s.mounts) > 0 && s.isRootDir(fullPath) {
+ 			entries, err = s.rootEntries(fullPath)
+ 		} else {
+ 			entries, err = os.ReadDir(fullPath)
+@@ -59,7 +59,7 @@ func (s *Backend) Open(path string, flag int, isDir bool) (handle int32, stat ud
+ 		}
+ 		statPath := fullPath
+ 		if fullPath == virtualRoot {
+-			statPath = s.installDir
++			statPath = s.mounts[0].dir
+ 		}
+ 		st, _ := os.Stat(statPath)
+ 		return handle, udpfs.StatInfoFromFile(st), nil
+@@ -311,7 +311,7 @@ func (s *Backend) Mkdir(path string) error {
+ 		return os.ErrPermission
+ 	}
+ 	resolved, ok := s.resolvePath(path)
+-	if !ok || s.inInstallDir(resolved) || resolved == virtualRoot {
++	if !ok || s.inMount(resolved) || resolved == virtualRoot {
+ 		return os.ErrPermission
+ 	}
+ 	if err := os.Mkdir(resolved, 0755); err != nil && !errors.Is(err, os.ErrExist) {
+@@ -325,7 +325,7 @@ func (s *Backend) Remove(path string) error {
+ 		return os.ErrPermission
+ 	}
+ 	resolved, ok := s.resolvePath(path)
+-	if !ok || s.inInstallDir(resolved) || resolved == virtualRoot {
++	if !ok || s.inMount(resolved) || resolved == virtualRoot {
+ 		return os.ErrPermission
+ 	}
+ 	return os.Remove(resolved)
+@@ -336,7 +336,7 @@ func (s *Backend) Rmdir(path string) error {
+ 		return os.ErrPermission
+ 	}
+ 	resolved, ok := s.resolvePath(path)
+-	if !ok || s.inInstallDir(resolved) || resolved == virtualRoot {
++	if !ok || s.inMount(resolved) || resolved == virtualRoot {
+ 		return os.ErrPermission
+ 	}
+ 	return os.Remove(resolved)
+diff --git a/internal/fs/installdir.go b/internal/fs/installdir.go
+deleted file mode 100644
+index 784722e..0000000
+--- a/internal/fs/installdir.go
++++ /dev/null
+@@ -1,131 +0,0 @@
+-package fs
+-
+-import (
+-	"fmt"
+-	"io/fs"
+-	"log"
+-	"os"
+-	"path/filepath"
+-	"strings"
+-)
+-
+-// InstallDirName is the virtual directory under which the -install-dir
+-// folder appears to clients (udpfs:/INSTALL). The PSX DESR installer
+-// installs every game found there in one batch.
+-const InstallDirName = "INSTALL"
+-
+-// virtualRoot stands for "/" when only -install-dir is served (no
+-// -fsroot): the root then contains nothing but the INSTALL directory.
+-const virtualRoot = "\x00udpfsd-virtual-root"
+-
+-// WithInstallDir serves path read-only as /INSTALL.
+-func WithInstallDir(path string) func(s *Backend) {
+-	return func(s *Backend) {
+-		if path != "" {
+-			s.installDir = path
+-		}
+-	}
+-}
+-
+-func (s *Backend) initInstallDir() error {
+-	if s.installDir == "" {
+-		return nil
+-	}
+-	abs, err := filepath.Abs(s.installDir)
+-	if err != nil {
+-		return err
+-	}
+-	info, err := os.Stat(abs)
+-	if err != nil || !info.IsDir() {
+-		return fmt.Errorf("install dir %s is not a directory", s.installDir)
+-	}
+-	s.installDir = abs
+-	if s.fsRoot != "" {
+-		if st, err := os.Stat(filepath.Join(s.fsRoot, InstallDirName)); err == nil && st.IsDir() {
+-			log.Printf("fs: warning: %s/%s is hidden by -install-dir", s.fsRoot, InstallDirName)
+-		}
+-	}
+-	return nil
+-}
+-
+-// splitInstallPath reports whether a normalized client path (no leading
+-// separator) addresses the install directory, and returns the remainder.
+-func splitInstallPath(clientPath string) (rest string, ok bool) {
+-	if clientPath == InstallDirName {
+-		return "", true
+-	}
+-	prefix := InstallDirName + string(os.PathSeparator)
+-	if strings.HasPrefix(clientPath, prefix) {
+-		return strings.TrimPrefix(clientPath, prefix), true
+-	}
+-	return "", false
+-}
+-
+-// underRoot joins rel to root and checks the result stays inside root.
+-func underRoot(root, rel string) (string, bool) {
+-	resolved, err := filepath.Abs(filepath.Join(root, rel))
+-	if err != nil {
+-		return "", false
+-	}
+-	cleanRoot := filepath.Clean(root)
+-	comparableRoot := strings.TrimSuffix(cleanRoot, string(os.PathSeparator))
+-	if !strings.HasPrefix(resolved, comparableRoot+string(os.PathSeparator)) && resolved != cleanRoot {
+-		return "", false
+-	}
+-	return resolved, true
+-}
+-
+-// inInstallDir reports whether a resolved host path lies in the install dir.
+-func (s *Backend) inInstallDir(resolved string) bool {
+-	if s.installDir == "" || resolved == "" || resolved == virtualRoot {
+-		return false
+-	}
+-	return resolved == s.installDir ||
+-		strings.HasPrefix(resolved, s.installDir+string(os.PathSeparator))
+-}
+-
+-// isRootDir reports whether a resolved host path is the client's "/".
+-func (s *Backend) isRootDir(resolved string) bool {
+-	if resolved == virtualRoot {
+-		return true
+-	}
+-	return s.fsRoot != "" && resolved == filepath.Clean(s.fsRoot)
+-}
+-
+-// renamedEntry presents the install directory as "INSTALL" in "/".
+-type renamedEntry struct {
+-	fs.DirEntry
+-	name string
+-}
+-
+-func (e renamedEntry) Name() string { return e.name }
+-
+-func (s *Backend) installDirEntry() (fs.DirEntry, error) {
+-	info, err := os.Stat(s.installDir)
+-	if err != nil {
+-		return nil, err
+-	}
+-	return renamedEntry{fs.FileInfoToDirEntry(info), InstallDirName}, nil
+-}
+-
+-// rootEntries lists "/" with the INSTALL directory added (and a real
+-// fsroot/INSTALL, if any, hidden).
+-func (s *Backend) rootEntries(resolved string) ([]os.DirEntry, error) {
+-	var entries []os.DirEntry
+-	if resolved != virtualRoot {
+-		real, err := os.ReadDir(resolved)
+-		if err != nil {
+-			return nil, err
+-		}
+-		for _, e := range real {
+-			if e.Name() != InstallDirName {
+-				entries = append(entries, e)
+-			}
+-		}
+-	}
+-	e, err := s.installDirEntry()
+-	if err != nil {
+-		return nil, err
+-	}
+-	return append(entries, e), nil
+-}
+diff --git a/internal/fs/installdir_test.go b/internal/fs/installdir_test.go
+deleted file mode 100644
+index 165b8aa..0000000
+--- a/internal/fs/installdir_test.go
++++ /dev/null
+@@ -1,193 +0,0 @@
+-package fs
+-
+-import (
+-	"os"
+-	"path/filepath"
+-	"sort"
+-	"testing"
+-)
+-
+-func mkfile(t *testing.T, path string, data string) {
+-	t.Helper()
+-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+-		t.Fatal(err)
+-	}
+-	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+-		t.Fatal(err)
+-	}
+-}
+-
+-func listDir(t *testing.T, b *Backend, path string) []string {
+-	t.Helper()
+-	h, _, err := b.Open(path, os.O_RDONLY, true)
+-	if err != nil || h < 0 {
+-		t.Fatalf("open dir %q: handle %d err %v", path, h, err)
+-	}
+-	defer b.Close(h)
+-	var names []string
+-	for {
+-		ok, name, _, err := b.Dread(h)
+-		if err != nil {
+-			t.Fatalf("dread %q: %v", path, err)
+-		}
+-		if !ok {
+-			break
+-		}
+-		names = append(names, name)
+-	}
+-	sort.Strings(names)
+-	return names
+-}
+-
+-func readAll(t *testing.T, b *Backend, path string) (string, error) {
+-	t.Helper()
+-	h, _, err := b.Open(path, os.O_RDONLY, false)
+-	if err != nil {
+-		return "", err
+-	}
+-	defer b.Close(h)
+-	buf := make([]byte, 4096)
+-	n, data, err := b.Read(h, uint32(len(buf)), buf)
+-	if err != nil {
+-		return "", err
+-	}
+-	return string(data[:n]), nil
+-}
+-
+-func eq(a, b []string) bool {
+-	if len(a) != len(b) {
+-		return false
+-	}
+-	for i := range a {
+-		if a[i] != b[i] {
+-			return false
+-		}
+-	}
+-	return true
+-}
+-
+-func setup(t *testing.T, withRoot bool, readOnly bool) (*Backend, string, string) {
+-	t.Helper()
+-	base := t.TempDir()
+-	root := filepath.Join(base, "root")
+-	inst := filepath.Join(base, "queue")
+-	mkfile(t, filepath.Join(root, "DVD", "A.iso"), "root-a")
+-	mkfile(t, filepath.Join(root, "INSTALL", "shadowed.iso"), "shadowed")
+-	mkfile(t, filepath.Join(inst, "B.iso"), "queue-b")
+-	mkfile(t, filepath.Join(inst, "DVD", "C.iso"), "queue-c")
+-	mkfile(t, filepath.Join(base, "secret.txt"), "secret")
+-	opts := []BackendOptFunc{WithInstallDir(inst)}
+-	if withRoot {
+-		opts = append(opts, WithFSRoot(root))
+-	}
+-	if readOnly {
+-		opts = append(opts, WithReadOnly())
+-	}
+-	b, err := NewBackend(opts...)
+-	if err != nil {
+-		t.Fatal(err)
+-	}
+-	return b, root, inst
+-}
+-
+-func TestInstallDirListedInRoot(t *testing.T) {
+-	b, _, _ := setup(t, true, true)
+-	if got := listDir(t, b, "/"); !eq(got, []string{"DVD", "INSTALL"}) {
+-		t.Fatalf("root listing %v", got)
+-	}
+-	// The real fsroot/INSTALL is hidden by the install dir.
+-	if got := listDir(t, b, "/INSTALL"); !eq(got, []string{"B.iso", "DVD"}) {
+-		t.Fatalf("/INSTALL listing %v", got)
+-	}
+-	if got := listDir(t, b, "/INSTALL/DVD"); !eq(got, []string{"C.iso"}) {
+-		t.Fatalf("/INSTALL/DVD listing %v", got)
+-	}
+-}
+-
+-func TestInstallDirFilesReadable(t *testing.T) {
+-	b, _, _ := setup(t, true, true)
+-	for path, want := range map[string]string{
+-		"/INSTALL/B.iso":        "queue-b",
+-		"INSTALL/DVD/C.iso":     "queue-c",
+-		"\\INSTALL\\B.iso":      "queue-b",
+-		"/DVD/A.iso":            "root-a",
+-		"/INSTALL/../DVD/A.iso": "root-a", // Clean() first: an fsroot path
+-	} {
+-		got, err := readAll(t, b, path)
+-		if err != nil || got != want {
+-			t.Fatalf("read %q = %q, %v; want %q", path, got, err, want)
+-		}
+-	}
+-}
+-
+-func TestInstallDirNoEscape(t *testing.T) {
+-	b, _, _ := setup(t, true, true)
+-	for _, path := range []string{"/INSTALL/../../secret.txt", "/../secret.txt", "/../queue/B.iso", "/INSTALL/../../queue/B.iso"} {
+-		if _, err := readAll(t, b, path); err == nil {
+-			t.Fatalf("read %q succeeded", path)
+-		}
+-	}
+-}
+-
+-func TestInstallDirIsReadOnlyEvenWithoutRO(t *testing.T) {
+-	b, _, inst := setup(t, true, false)
+-	if _, _, err := b.Open("/INSTALL/new.iso", os.O_RDWR|os.O_CREATE, false); err == nil {
+-		t.Fatal("create in install dir succeeded")
+-	}
+-	if _, _, err := b.Open("/INSTALL/B.iso", os.O_WRONLY, false); err == nil {
+-		t.Fatal("open for write in install dir succeeded")
+-	}
+-	if err := b.Remove("/INSTALL/B.iso"); err == nil {
+-		t.Fatal("remove in install dir succeeded")
+-	}
+-	if err := b.Mkdir("/INSTALL/x"); err == nil {
+-		t.Fatal("mkdir in install dir succeeded")
+-	}
+-	if err := b.Rmdir("/INSTALL/DVD"); err == nil {
+-		t.Fatal("rmdir in install dir succeeded")
+-	}
+-	if _, err := os.Stat(filepath.Join(inst, "B.iso")); err != nil {
+-		t.Fatal("install dir file was modified")
+-	}
+-	// fsroot stays writable without -ro.
+-	if err := b.Mkdir("/newdir"); err != nil {
+-		t.Fatalf("mkdir in fsroot: %v", err)
+-	}
+-}
+-
+-func TestInstallDirOnlyMode(t *testing.T) {
+-	b, _, _ := setup(t, false, true)
+-	if got := listDir(t, b, "/"); !eq(got, []string{"INSTALL"}) {
+-		t.Fatalf("root listing %v", got)
+-	}
+-	if got, err := readAll(t, b, "/INSTALL/B.iso"); err != nil || got != "queue-b" {
+-		t.Fatalf("read = %q, %v", got, err)
+-	}
+-	if _, err := readAll(t, b, "/DVD/A.iso"); err == nil {
+-		t.Fatal("fsroot path served without -fsroot")
+-	}
+-	if _, _, err := b.Open("/", os.O_RDONLY, false); err == nil {
+-		t.Fatal("opened virtual root as a file")
+-	}
+-}
+-
+-func TestNoInstallDirUnchanged(t *testing.T) {
+-	base := t.TempDir()
+-	mkfile(t, filepath.Join(base, "INSTALL", "x.iso"), "x")
+-	b, err := NewBackend(WithFSRoot(base), WithReadOnly())
+-	if err != nil {
+-		t.Fatal(err)
+-	}
+-	if got := listDir(t, b, "/"); !eq(got, []string{"INSTALL"}) {
+-		t.Fatalf("root listing %v", got)
+-	}
+-	if got, err := readAll(t, b, "/INSTALL/x.iso"); err != nil || got != "x" {
+-		t.Fatalf("read = %q, %v", got, err)
+-	}
+-}
+-
+-func TestInstallDirMustExist(t *testing.T) {
+-	if _, err := NewBackend(WithInstallDir(filepath.Join(t.TempDir(), "missing"))); err == nil {
+-		t.Fatal("missing install dir accepted")
+-	}
+-}
+diff --git a/internal/fs/mounts.go b/internal/fs/mounts.go
+new file mode 100644
+index 0000000..c8ef490
+--- /dev/null
++++ b/internal/fs/mounts.go
+@@ -0,0 +1,147 @@
++package fs
++
++import (
++	"fmt"
++	"io/fs"
++	"log"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++)
++
++// InstallDirName is the batch-install mount (udpfsd.cfg "install",
++// -install-dir). The PSX DESR installer installs every game found there.
++const InstallDirName = "INSTALL"
++
++// PrepMountName is where prepared data (manifest, jackets, launcher) is
++// served to the PSX DESR installer.
++const PrepMountName = ".udpfsd"
++
++// virtualRoot stands for "/" when only mounts are served (no -fsroot):
++// the root then contains nothing but the mount directories.
++const virtualRoot = "\x00udpfsd-virtual-root"
++
++type mount struct {
++	name string // client-visible top-level name
++	dir  string // absolute host directory
++}
++
++// WithMount serves hostPath read-only as /<name>.
++func WithMount(name, hostPath string) func(s *Backend) {
++	return func(s *Backend) {
++		if hostPath != "" {
++			s.mounts = append(s.mounts, mount{name: name, dir: hostPath})
++		}
++	}
++}
++
++// WithInstallDir serves path read-only as /INSTALL.
++func WithInstallDir(path string) func(s *Backend) { return WithMount(InstallDirName, path) }
++
++func (s *Backend) initMounts() error {
++	for i := range s.mounts {
++		abs, err := filepath.Abs(s.mounts[i].dir)
++		if err != nil {
++			return err
++		}
++		if st, err := os.Stat(abs); err != nil || !st.IsDir() {
++			return fmt.Errorf("mount /%s: %s is not a directory", s.mounts[i].name, s.mounts[i].dir)
++		}
++		s.mounts[i].dir = abs
++		if s.fsRoot != "" {
++			if st, err := os.Stat(filepath.Join(s.fsRoot, s.mounts[i].name)); err == nil && st.IsDir() {
++				log.Printf("fs: warning: %s/%s is hidden by a mount", s.fsRoot, s.mounts[i].name)
++			}
++		}
++	}
++	return nil
++}
++
++// resolveMount maps a cleaned client path (no leading separator) to a
++// mount. isMount reports whether the path addresses a mount at all.
++func (s *Backend) resolveMount(clientPath string) (resolved string, ok bool, isMount bool) {
++	for _, m := range s.mounts {
++		if clientPath == m.name {
++			return m.dir, true, true
++		}
++		if rest, found := strings.CutPrefix(clientPath, m.name+string(os.PathSeparator)); found {
++			p, ok := underRoot(m.dir, rest)
++			return p, ok, true
++		}
++	}
++	return "", false, false
++}
++
++// underRoot joins rel to root and checks the result stays inside root.
++func underRoot(root, rel string) (string, bool) {
++	resolved, err := filepath.Abs(filepath.Join(root, rel))
++	if err != nil {
++		return "", false
++	}
++	cleanRoot := filepath.Clean(root)
++	comparableRoot := strings.TrimSuffix(cleanRoot, string(os.PathSeparator))
++	if !strings.HasPrefix(resolved, comparableRoot+string(os.PathSeparator)) && resolved != cleanRoot {
++		return "", false
++	}
++	return resolved, true
++}
++
++// inMount reports whether a resolved host path lies in any mount.
++func (s *Backend) inMount(resolved string) bool {
++	if resolved == "" || resolved == virtualRoot {
++		return false
++	}
++	for _, m := range s.mounts {
++		if resolved == m.dir || strings.HasPrefix(resolved, m.dir+string(os.PathSeparator)) {
++			return true
++		}
++	}
++	return false
++}
++
++// isRootDir reports whether a resolved host path is the client's "/".
++func (s *Backend) isRootDir(resolved string) bool {
++	if resolved == virtualRoot {
++		return true
++	}
++	return s.fsRoot != "" && resolved == filepath.Clean(s.fsRoot)
++}
++
++// renamedEntry presents a mount directory under its mount name in "/".
++type renamedEntry struct {
++	fs.DirEntry
++	name string
++}
++
++func (e renamedEntry) Name() string { return e.name }
++
++// rootEntries lists "/" with every mount added; real fsroot folders of
++// the same names are hidden.
++func (s *Backend) rootEntries(resolved string) ([]os.DirEntry, error) {
++	hidden := map[string]bool{}
++	for _, m := range s.mounts {
++		hidden[m.name] = true
++	}
++	var entries []os.DirEntry
++	if resolved != virtualRoot {
++		real, err := os.ReadDir(resolved)
++		if err != nil {
++			return nil, err
++		}
++		for _, e := range real {
++			if !hidden[e.Name()] {
++				entries = append(entries, e)
++			}
++		}
++	}
++	for _, m := range s.mounts {
++		info, err := os.Stat(m.dir)
++		if err != nil {
++			return nil, err
++		}
++		entries = append(entries, renamedEntry{fs.FileInfoToDirEntry(info), m.name})
++	}
++	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
++	return entries, nil
++}
+diff --git a/internal/fs/mounts_test.go b/internal/fs/mounts_test.go
+new file mode 100644
+index 0000000..4cc6ab1
+--- /dev/null
++++ b/internal/fs/mounts_test.go
+@@ -0,0 +1,202 @@
++package fs
++
++import (
++	"os"
++	"path/filepath"
++	"sort"
++	"testing"
++)
++
++func mkfile(t *testing.T, path string, data string) {
++	t.Helper()
++	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func listDir(t *testing.T, b *Backend, path string) []string {
++	t.Helper()
++	h, _, err := b.Open(path, os.O_RDONLY, true)
++	if err != nil || h < 0 {
++		t.Fatalf("open dir %q: handle %d err %v", path, h, err)
++	}
++	defer b.Close(h)
++	var names []string
++	for {
++		ok, name, _, err := b.Dread(h)
++		if err != nil {
++			t.Fatalf("dread %q: %v", path, err)
++		}
++		if !ok {
++			break
++		}
++		names = append(names, name)
++	}
++	sort.Strings(names)
++	return names
++}
++
++func readAll(t *testing.T, b *Backend, path string) (string, error) {
++	t.Helper()
++	h, _, err := b.Open(path, os.O_RDONLY, false)
++	if err != nil {
++		return "", err
++	}
++	defer b.Close(h)
++	buf := make([]byte, 4096)
++	n, data, err := b.Read(h, uint32(len(buf)), buf)
++	if err != nil {
++		return "", err
++	}
++	return string(data[:n]), nil
++}
++
++func eq(a, b []string) bool {
++	if len(a) != len(b) {
++		return false
++	}
++	for i := range a {
++		if a[i] != b[i] {
++			return false
++		}
++	}
++	return true
++}
++
++type fixture struct {
++	base, root, dvd, cd, inst, prep string
++}
++
++func newFixture(t *testing.T) fixture {
++	t.Helper()
++	b := t.TempDir()
++	f := fixture{base: b, root: filepath.Join(b, "root"), dvd: filepath.Join(b, "dvd"),
++		cd: filepath.Join(b, "cd"), inst: filepath.Join(b, "queue"), prep: filepath.Join(b, "prep")}
++	mkfile(t, filepath.Join(f.root, "DVD", "shadowed.iso"), "shadowed")
++	mkfile(t, filepath.Join(f.root, "other.txt"), "root-other")
++	mkfile(t, filepath.Join(f.dvd, "A.iso"), "dvd-a")
++	mkfile(t, filepath.Join(f.cd, "C.iso"), "cd-c")
++	mkfile(t, filepath.Join(f.inst, "sub", "B.iso"), "queue-b")
++	mkfile(t, filepath.Join(f.prep, "manifest.txt"), "udpfsd-manifest 1\n")
++	mkfile(t, filepath.Join(b, "secret.txt"), "secret")
++	return f
++}
++
++func (f fixture) backend(t *testing.T, withRoot, readOnly bool) *Backend {
++	t.Helper()
++	opts := []BackendOptFunc{WithMount("DVD", f.dvd), WithMount("CD", f.cd),
++		WithInstallDir(f.inst), WithMount(PrepMountName, f.prep)}
++	if withRoot {
++		opts = append(opts, WithFSRoot(f.root))
++	}
++	if readOnly {
++		opts = append(opts, WithReadOnly())
++	}
++	b, err := NewBackend(opts...)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return b
++}
++
++func TestMountsListedInRoot(t *testing.T) {
++	f := newFixture(t)
++	b := f.backend(t, true, true)
++	if got := listDir(t, b, "/"); !eq(got, []string{".udpfsd", "CD", "DVD", "INSTALL", "other.txt"}) {
++		t.Fatalf("root %v", got)
++	}
++	if got := listDir(t, b, "/DVD"); !eq(got, []string{"A.iso"}) { // real root/DVD hidden
++		t.Fatalf("/DVD %v", got)
++	}
++	if got := listDir(t, b, "/INSTALL/sub"); !eq(got, []string{"B.iso"}) {
++		t.Fatalf("/INSTALL/sub %v", got)
++	}
++}
++
++func TestMountFilesReadable(t *testing.T) {
++	f := newFixture(t)
++	b := f.backend(t, true, true)
++	for path, want := range map[string]string{
++		"/DVD/A.iso":            "dvd-a",
++		"CD/C.iso":              "cd-c",
++		"\\INSTALL\\sub\\B.iso": "queue-b",
++		"/.udpfsd/manifest.txt": "udpfsd-manifest 1\n",
++		"/other.txt":            "root-other",
++		"/DVD/../other.txt":     "root-other",
++	} {
++		if got, err := readAll(t, b, path); err != nil || got != want {
++			t.Fatalf("read %q = %q, %v; want %q", path, got, err, want)
++		}
++	}
++}
++
++func TestMountNoEscape(t *testing.T) {
++	f := newFixture(t)
++	b := f.backend(t, true, true)
++	for _, p := range []string{"/DVD/../../secret.txt", "/../secret.txt", "/INSTALL/../../queue/sub/B.iso",
++		"/.udpfsd/../../secret.txt", "/DVD/shadowed.iso"} {
++		if _, err := readAll(t, b, p); err == nil {
++			t.Fatalf("read %q succeeded", p)
++		}
++	}
++}
++
++func TestMountsReadOnlyEvenWithoutRO(t *testing.T) {
++	f := newFixture(t)
++	b := f.backend(t, true, false)
++	for _, m := range []string{"/DVD", "/CD", "/INSTALL", "/.udpfsd"} {
++		if _, _, err := b.Open(m+"/new.iso", os.O_RDWR|os.O_CREATE, false); err == nil {
++			t.Fatalf("create in %s succeeded", m)
++		}
++		if err := b.Mkdir(m + "/x"); err == nil {
++			t.Fatalf("mkdir in %s succeeded", m)
++		}
++	}
++	if err := b.Remove("/DVD/A.iso"); err == nil {
++		t.Fatal("remove in mount succeeded")
++	}
++	if err := b.Rmdir("/INSTALL/sub"); err == nil {
++		t.Fatal("rmdir in mount succeeded")
++	}
++	if err := b.Mkdir("/newdir"); err != nil { // fsroot stays writable without -ro
++		t.Fatalf("mkdir in fsroot: %v", err)
++	}
++}
++
++func TestMountsOnlyMode(t *testing.T) {
++	f := newFixture(t)
++	b := f.backend(t, false, true)
++	if got := listDir(t, b, "/"); !eq(got, []string{".udpfsd", "CD", "DVD", "INSTALL"}) {
++		t.Fatalf("root %v", got)
++	}
++	if _, err := readAll(t, b, "/other.txt"); err == nil {
++		t.Fatal("fsroot file served without fsroot")
++	}
++	if _, _, err := b.Open("/", os.O_RDONLY, false); err == nil {
++		t.Fatal("opened virtual root as a file")
++	}
++}
++
++func TestNoMountsUnchanged(t *testing.T) {
++	base := t.TempDir()
++	mkfile(t, filepath.Join(base, "INSTALL", "x.iso"), "x")
++	b, err := NewBackend(WithFSRoot(base), WithReadOnly())
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := listDir(t, b, "/"); !eq(got, []string{"INSTALL"}) {
++		t.Fatalf("root %v", got)
++	}
++	if got, err := readAll(t, b, "/INSTALL/x.iso"); err != nil || got != "x" {
++		t.Fatalf("read = %q, %v", got, err)
++	}
++}
++
++func TestMountMustExist(t *testing.T) {
++	if _, err := NewBackend(WithMount("DVD", filepath.Join(t.TempDir(), "missing"))); err == nil {
++		t.Fatal("missing mount dir accepted")
++	}
++}
+diff --git a/internal/fs/utils.go b/internal/fs/utils.go
+index 7565f9e..803b401 100644
+--- a/internal/fs/utils.go
++++ b/internal/fs/utils.go
+@@ -16,8 +16,8 @@ func (s *Backend) PrintFSInfo() {
+ 	if s.fsRoot != "" {
+ 		log.Printf("fs: mounted root filesystem %s (read-only: %t)", s.fsRoot, s.readOnly)
+ 	}
+-	if s.installDir != "" {
+-		log.Printf("fs: mounted install directory %s as /%s (read-only)", s.installDir, InstallDirName)
++	for _, m := range s.mounts {
++		log.Printf("fs: mounted %s as /%s (read-only)", m.dir, m.name)
+ 	}
+ 	if s.bdHandle != nil {
+ 		log.Printf("fs: mounted block device %s, (sectors: %d, sector size: %d, read-only: %t)", s.blockDevice, s.bdHandle.totalSectorCount, s.sectorSize, s.readOnly)
+@@ -29,7 +29,7 @@ func (s *Backend) PrintFSInfo() {
+ }
+ 
+ func (s *Backend) resolvePath(clientPath string) (string, bool) {
+-	if s.fsRoot == "" && s.installDir == "" {
++	if s.fsRoot == "" && len(s.mounts) == 0 {
+ 		return "", false
+ 	}
+ 
+@@ -38,18 +38,16 @@ func (s *Backend) resolvePath(clientPath string) (string, bool) {
+ 	// Convert backslashes to forward slashes before FromSlash
+ 	clientPath = filepath.Clean(filepath.FromSlash(strings.ReplaceAll(clientPath, "\\", "/")))
+ 
+-	// /INSTALL/... maps into the install directory (after Clean, so
+-	// "INSTALL/../x" is an fsroot path and "INSTALL/../../x" is rejected).
+-	if s.installDir != "" {
+-		if rest, ok := splitInstallPath(clientPath); ok {
+-			return underRoot(s.installDir, rest)
+-		}
+-		if s.fsRoot == "" {
+-			if clientPath == "." {
+-				return virtualRoot, true
+-			}
+-			return "", false
++	// Mounts first (after Clean, so "DVD/../x" is an fsroot path and
++	// "DVD/../../x" is rejected).
++	if p, ok, isMount := s.resolveMount(clientPath); isMount {
++		return p, ok
++	}
++	if s.fsRoot == "" {
++		if clientPath == "." {
++			return virtualRoot, true
+ 		}
++		return "", false
+ 	}
+ 	joined := filepath.Join(s.fsRoot, clientPath)
+ 	resolved, err := filepath.Abs(joined)
