@@ -137,3 +137,14 @@ TEST(batch_from_manifest_duplicate_iso_and_zso) {
   CHECK_EQ_INT(e[2].status, BATCH_INVALID);
   CHECK_EQ_INT(batch_count_selected(e, 3), 1);
 }
+
+TEST(batch_summary_mentions_opl_cfg_failure) {
+  batch_entry_t e[1];
+  e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);
+  batch_classify(e, 1);
+  e[0].result = BATCH_DONE;
+  e[0].opl_cfg = "failed";
+  char sum[512];
+  batch_summary(e, 1, sum, sizeof(sum));
+  CHECK(strstr(sum, "OPL cfg not copied") != NULL);
+}

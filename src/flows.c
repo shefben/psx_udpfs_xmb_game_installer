@@ -129,16 +129,17 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
 
   if (rep.err == ERR_OK) {
     /* TX_COMPLETE reached: only now report success. */
-    char msg[700];
+    char msg[800];
     snprintf(msg, sizeof(msg),
              "%s installed (TX_COMPLETE).\n\n%s\n%s\n\n"
              "Bytes copied:     %llu\nBytes read back:  %llu\n"
-             "Source CRC-32:    %08lx\nInstalled CRC-32: %08lx\n\n"
+             "Source CRC-32:    %08lx\nInstalled CRC-32: %08lx\n"
+             "OPL settings:     %s\n\n"
              "The game appears as its own XMB channel\n"
              "after the XMB refreshes (return to the XMB or reboot).",
              p->title, p->visible, p->hidden, (unsigned long long)rep.bytes_written,
              (unsigned long long)rep.bytes_verified, (unsigned long)rep.source_crc32,
-             (unsigned long)rep.installed_crc32);
+             (unsigned long)rep.installed_crc32, rep.opl_cfg ? rep.opl_cfg : "none");
     ui_message("Finished", msg);
     return;
   }
@@ -370,6 +371,7 @@ void flow_batch_install(void) {
     game_install(&batch_plans[i], allow_without_opl, &ui, &rep);
     e->err = rep.err;
     e->stage = install_stage_name(rep.stage);
+    e->opl_cfg = rep.opl_cfg;
     e->result = rep.err == ERR_OK              ? BATCH_DONE
                 : rep.data_installed_no_channel ? BATCH_DATA_ONLY
                                                 : BATCH_FAILED;

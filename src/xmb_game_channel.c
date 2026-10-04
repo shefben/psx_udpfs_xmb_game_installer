@@ -2,6 +2,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#define NEWLIB_PORT_AWARE
+#include <fileXio_rpc.h>
+#include <io_common.h>
+
 #include "app_state.h"
 #include "hdd_partitions.h"
 #include "hdl_header.h"
@@ -10,6 +14,7 @@
 #include "opl_dependency.h"
 #include "opl_launcher_payload.h"
 #include "pfs_channel.h"
+#include "server_assets.h"
 #include "source_udpfs.h"
 #include "transaction.h"
 #include "util.h"
@@ -215,6 +220,62 @@ static void finish_report(install_report_t *rep, const char *visible,
   rep->visible_exists = hdd_exists(visible) > 0;
 }
 
+/* Copy udpfsd's CFG/<ID>.cfg (OPL per-game settings) to the OPL
+ * partition's CFG folder, where OPL reads it when OPL-Launcher boots the
+ * game - only if OPL has none yet. Best effort: written as .tmp, read
+ * back, renamed. Returns "copied" | "kept" | "failed" | "none". */
+static const char *copy_opl_cfg(const char *boot_id) {
+  const manifest_entry_t *me = g_manifest_loaded ? manifest_find_id(&g_manifest, boot_id) : NULL;
+  if (g_app.net != NETWORK_READY || !me || !me->cfg[0])
+    return "none";
+  opl_runtime_t opl;
+  int rc;
+  if (opl_check_runtime(&opl, &rc) != ERR_OK)
+    return "failed";
+  char src[SOURCE_PATH_MAX];
+  snprintf(src, sizeof(src), "udpfs:%s", me->cfg);
+  void *data = NULL;
+  int n = file_load(src, &data, 64 * 1024);
+  if (n <= 0) {
+    free(data);
+    return "failed";
+  }
+  const char *result = "failed";
+  if (pfs_mount(PFS_WORK, opl.partition, FIO_MT_RDWR) == 0) {
+    const char *dir = opl_cfg_dir(opl.partition); /* "pfs1:CFG/" or "pfs1:OPL/CFG/" */
+    char dst[64], tmp[72], d[32];
+    snprintf(dst, sizeof(dst), "%s%s.cfg", dir, boot_id);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", dst);
+    switch (opl_cfg_decide(1, file_size(dst) >= 0)) {
+    case OPL_CFG_KEEP:
+      result = "kept";
+      break;
+    case OPL_CFG_COPY: {
+      if (opl.partition[0] != '+')
+        fileXioMkdir(PFS_WORK "OPL", 0777);
+      snprintf(d, sizeof(d), "%.*s", (int)strlen(dir) - 1, dir);
+      fileXioMkdir(d, 0777);
+      void *back = NULL;
+      fileXioRemove(tmp);
+      if (file_write_all(tmp, data, (uint32_t)n) == 0 &&
+          file_load(tmp, &back, (uint32_t)n + 1) == n && !memcmp(back, data, (size_t)n) &&
+          fileXioRename(tmp, dst) >= 0)
+        result = "copied";
+      else
+        fileXioRemove(tmp);
+      free(back);
+      break;
+    }
+    case OPL_CFG_NONE:
+      result = "none";
+      break;
+    }
+    pfs_umount(PFS_WORK);
+  }
+  free(data);
+  return result;
+}
+
 /* Build the channel for a verified hidden game. The journal is at
  * TX_HDL_VERIFIED and saved; `kelf` was loaded by the caller before
  * anything was removed, and is released here. */
@@ -262,6 +323,10 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
     }
   } else {
     rep->err = ERR_OK;
+    /* The game is complete; its OPL settings are a best-effort extra. */
+    rep->opl_cfg = copy_opl_cfg(j->startup_id);
+    str_copy(j->opl_cfg, rep->opl_cfg, sizeof(j->opl_cfg));
+    persist(j);
   }
   free(jkt_owned);
   payload_release(kelf);

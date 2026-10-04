@@ -52,6 +52,7 @@ typedef struct {
   batch_result_t result;
   inst_err_t err;
   const char *stage;
+  const char *opl_cfg;    /* install_report_t.opl_cfg */
 } batch_entry_t;
 
 /* Classify entries (probe results and pair states already filled):
