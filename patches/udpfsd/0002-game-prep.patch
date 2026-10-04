@@ -1110,6 +1110,371 @@ index 7565f9e..803b401 100644
  	}
  	joined := filepath.Join(s.fsRoot, clientPath)
  	resolved, err := filepath.Abs(joined)
+diff --git a/internal/prep/art.go b/internal/prep/art.go
+new file mode 100644
+index 0000000..c8497e0
+--- /dev/null
++++ b/internal/prep/art.go
+@@ -0,0 +1,105 @@
++package prep
++
++import (
++	"fmt"
++	"image"
++	_ "image/gif"  // jacket sources
++	_ "image/jpeg" // jacket sources
++	"image/png"
++	"os"
++	"path/filepath"
++	"strings"
++)
++
++// JacketW/JacketH is the DESR XMB jacket size (as PSX-XMB-Manager writes).
++const (
++	JacketW = 74
++	JacketH = 108
++)
++
++var artExts = []string{".png", ".jpg", ".jpeg", ".gif"}
++
++func firstExisting(base string) string {
++	for _, e := range artExts {
++		for _, ext := range []string{e, strings.ToUpper(e)} {
++			if st, err := os.Stat(base + ext); err == nil && !st.IsDir() {
++				return base + ext
++			}
++		}
++	}
++	return ""
++}
++
++// FindArt returns the best local jacket source or "": OPL ART cover
++// (<ID>_COV, <ID>_COV2), <ID>.*, then an image named like the game file.
++func FindArt(artDir, id, imagePath string) string {
++	if artDir != "" {
++		for _, n := range []string{id + "_COV", id + "_COV2", id} {
++			if p := firstExisting(filepath.Join(artDir, n)); p != "" {
++				return p
++			}
++		}
++	}
++	if imagePath != "" {
++		base := imagePath[:len(imagePath)-len(filepath.Ext(imagePath))]
++		if p := firstExisting(base); p != "" {
++			return p
++		}
++	}
++	return ""
++}
++
++// MakeJacket decodes src (PNG/JPEG/GIF), box-filters it to 74x108 and
++// writes an opaque, non-interlaced PNG to dst (temp file + rename).
++func MakeJacket(src, dst string) error {
++	f, err := os.Open(src)
++	if err != nil {
++		return err
++	}
++	img, _, err := image.Decode(f)
++	f.Close()
++	if err != nil {
++		return fmt.Errorf("%s: %w", src, err)
++	}
++	b := img.Bounds()
++	if b.Dx() == 0 || b.Dy() == 0 {
++		return fmt.Errorf("%s: empty image", src)
++	}
++	out := image.NewRGBA(image.Rect(0, 0, JacketW, JacketH))
++	for y := 0; y < JacketH; y++ {
++		y0 := b.Min.Y + y*b.Dy()/JacketH
++		y1 := max(y0+1, b.Min.Y+(y+1)*b.Dy()/JacketH)
++		for x := 0; x < JacketW; x++ {
++			x0 := b.Min.X + x*b.Dx()/JacketW
++			x1 := max(x0+1, b.Min.X+(x+1)*b.Dx()/JacketW)
++			var r, g, bl, n uint64
++			for sy := y0; sy < y1; sy++ {
++				for sx := x0; sx < x1; sx++ {
++					cr, cg, cb, _ := img.At(sx, sy).RGBA()
++					r, g, bl, n = r+uint64(cr), g+uint64(cg), bl+uint64(cb), n+1
++				}
++			}
++			i := out.PixOffset(x, y)
++			out.Pix[i], out.Pix[i+1], out.Pix[i+2], out.Pix[i+3] =
++				uint8(r/n>>8), uint8(g/n>>8), uint8(bl/n>>8), 255
++		}
++	}
++	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
++		return err
++	}
++	tmp := dst + ".tmp"
++	w, err := os.Create(tmp)
++	if err != nil {
++		return err
++	}
++	if err := png.Encode(w, out); err != nil {
++		w.Close()
++		os.Remove(tmp)
++		return err
++	}
++	if err := w.Close(); err != nil {
++		os.Remove(tmp)
++		return err
++	}
++	return os.Rename(tmp, dst)
++}
+diff --git a/internal/prep/art_test.go b/internal/prep/art_test.go
+new file mode 100644
+index 0000000..143855a
+--- /dev/null
++++ b/internal/prep/art_test.go
+@@ -0,0 +1,88 @@
++package prep
++
++import (
++	"image"
++	"image/color"
++	"image/jpeg"
++	"image/png"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func writeImg(t *testing.T, path string, w, h int, jpg bool) {
++	t.Helper()
++	img := image.NewRGBA(image.Rect(0, 0, w, h))
++	for y := 0; y < h; y++ {
++		for x := 0; x < w; x++ {
++			img.Set(x, y, color.RGBA{uint8(x), uint8(y), 200, 255})
++		}
++	}
++	f, err := os.Create(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer f.Close()
++	if jpg {
++		jpeg.Encode(f, img, nil)
++	} else {
++		png.Encode(f, img)
++	}
++}
++
++func TestFindArtOrder(t *testing.T) {
++	art := t.TempDir()
++	games := t.TempDir()
++	game := filepath.Join(games, "Game (USA).zso")
++	if FindArt(art, "SLUS_203.12", game) != "" {
++		t.Fatal("found art in empty dirs")
++	}
++	writeImg(t, filepath.Join(games, "Game (USA).jpg"), 8, 8, true)
++	if got := FindArt(art, "SLUS_203.12", game); filepath.Base(got) != "Game (USA).jpg" {
++		t.Fatal(got)
++	}
++	writeImg(t, filepath.Join(art, "SLUS_203.12.png"), 8, 8, false)
++	if got := FindArt(art, "SLUS_203.12", game); filepath.Base(got) != "SLUS_203.12.png" {
++		t.Fatal(got)
++	}
++	writeImg(t, filepath.Join(art, "SLUS_203.12_COV2.jpg"), 8, 8, true)
++	if got := FindArt(art, "SLUS_203.12", game); filepath.Base(got) != "SLUS_203.12_COV2.jpg" {
++		t.Fatal(got)
++	}
++	writeImg(t, filepath.Join(art, "SLUS_203.12_COV.jpg"), 8, 8, true)
++	if got := FindArt(art, "SLUS_203.12", game); filepath.Base(got) != "SLUS_203.12_COV.jpg" {
++		t.Fatal(got)
++	}
++	writeImg(t, filepath.Join(art, "SLUS_203.12_ICO.png"), 8, 8, false) // never used
++	if got := FindArt(art, "SLUS_203.12", game); filepath.Base(got) != "SLUS_203.12_COV.jpg" {
++		t.Fatal(got)
++	}
++}
++
++func TestMakeJacket(t *testing.T) {
++	dir := t.TempDir()
++	for _, jpg := range []bool{false, true} {
++		src := filepath.Join(dir, "src")
++		writeImg(t, src, 512, 736, jpg)
++		dst := filepath.Join(dir, "jkt", "out.png")
++		if err := MakeJacket(src, dst); err != nil {
++			t.Fatal(err)
++		}
++		f, _ := os.Open(dst)
++		cfg, format, err := image.DecodeConfig(f)
++		f.Close()
++		if err != nil || format != "png" || cfg.Width != JacketW || cfg.Height != JacketH {
++			t.Fatalf("%v %s %+v", err, format, cfg)
++		}
++		if cfg.ColorModel != color.RGBAModel && cfg.ColorModel != color.NRGBAModel {
++			t.Fatalf("model %v", cfg.ColorModel)
++		}
++	}
++	os.WriteFile(filepath.Join(dir, "bad"), []byte("not an image"), 0644)
++	if err := MakeJacket(filepath.Join(dir, "bad"), filepath.Join(dir, "x.png")); err == nil {
++		t.Fatal("bad image accepted")
++	}
++	if _, err := os.Stat(filepath.Join(dir, "x.png")); err == nil {
++		t.Fatal("output written for a bad image")
++	}
++}
+diff --git a/internal/prep/download.go b/internal/prep/download.go
+new file mode 100644
+index 0000000..24c8495
+--- /dev/null
++++ b/internal/prep/download.go
+@@ -0,0 +1,95 @@
++package prep
++
++import (
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"time"
++)
++
++// CoverURL is the public PS2 cover repository (files named XXXX-NNNNN.jpg).
++const CoverURL = "https://raw.githubusercontent.com/xlenore/ps2-covers/main/covers/default"
++
++// ErrNotFound means the repository has no cover for the ID.
++var ErrNotFound = errors.New("cover not found")
++
++// Downloader fetches covers once per ID per session and caches them.
++type Downloader struct {
++	BaseURL  string
++	Client   *http.Client
++	CacheDir string
++
++	mu      sync.Mutex
++	missing map[string]bool
++	offline bool
++}
++
++func serial(id string) string { // SLUS_203.12 -> SLUS-20312
++	return strings.Replace(strings.Replace(id, "_", "-", 1), ".", "", 1)
++}
++
++// Fetch returns the cached cover path for id, downloading it if needed.
++// A 404 is remembered per ID and a transport error disables downloads for
++// the rest of the session, so an offline server never waits repeatedly.
++func (d *Downloader) Fetch(id string) (string, error) {
++	dst := filepath.Join(d.CacheDir, "covers", id+".jpg")
++	if st, err := os.Stat(dst); err == nil && st.Size() > 0 {
++		return dst, nil
++	}
++	d.mu.Lock()
++	if d.missing == nil {
++		d.missing = map[string]bool{}
++	}
++	offline, missing := d.offline, d.missing[id]
++	d.mu.Unlock()
++	if offline {
++		return "", errors.New("cover download disabled: offline")
++	}
++	if missing {
++		return "", ErrNotFound
++	}
++
++	client := d.Client
++	if client == nil {
++		client = &http.Client{Timeout: 10 * time.Second}
++	}
++	resp, err := client.Get(d.BaseURL + "/" + serial(id) + ".jpg")
++	if err != nil {
++		d.mu.Lock()
++		d.offline = true
++		d.mu.Unlock()
++		return "", err
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode == http.StatusNotFound {
++		d.mu.Lock()
++		d.missing[id] = true
++		d.mu.Unlock()
++		return "", ErrNotFound
++	}
++	if resp.StatusCode != http.StatusOK {
++		return "", fmt.Errorf("cover %s: HTTP %d", id, resp.StatusCode)
++	}
++	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
++		return "", err
++	}
++	tmp := dst + ".tmp"
++	f, err := os.Create(tmp)
++	if err != nil {
++		return "", err
++	}
++	_, err = io.Copy(f, io.LimitReader(resp.Body, 8<<20))
++	if cerr := f.Close(); err == nil {
++		err = cerr
++	}
++	if err != nil {
++		os.Remove(tmp)
++		return "", err
++	}
++	return dst, os.Rename(tmp, dst)
++}
+diff --git a/internal/prep/download_test.go b/internal/prep/download_test.go
+new file mode 100644
+index 0000000..35185fa
+--- /dev/null
++++ b/internal/prep/download_test.go
+@@ -0,0 +1,53 @@
++package prep
++
++import (
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"testing"
++	"time"
++)
++
++func TestDownloadFetch(t *testing.T) {
++	var asked []string
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		asked = append(asked, r.URL.Path)
++		if r.URL.Path == "/SLUS-20312.jpg" {
++			w.Write([]byte("jpegdata"))
++			return
++		}
++		http.NotFound(w, r)
++	}))
++	defer srv.Close()
++	d := &Downloader{BaseURL: srv.URL, Client: srv.Client(), CacheDir: t.TempDir()}
++	p, err := d.Fetch("SLUS_203.12")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if b, _ := os.ReadFile(p); string(b) != "jpegdata" {
++		t.Fatalf("%q", b)
++	}
++	if _, err := d.Fetch("SLUS_999.99"); !errors.Is(err, ErrNotFound) {
++		t.Fatalf("404: %v", err)
++	}
++	n := len(asked)
++	if _, err := d.Fetch("SLUS_999.99"); !errors.Is(err, ErrNotFound) || len(asked) != n {
++		t.Fatal("404 not remembered for the session")
++	}
++	if p2, _ := d.Fetch("SLUS_203.12"); p2 != p || len(asked) != n {
++		t.Fatal("cached cover re-downloaded")
++	}
++}
++
++func TestDownloadOfflineIsFastAndSticky(t *testing.T) {
++	d := &Downloader{BaseURL: "http://127.0.0.1:1", CacheDir: t.TempDir(),
++		Client: &http.Client{Timeout: 2 * time.Second}}
++	if _, err := d.Fetch("SLUS_203.12"); err == nil {
++		t.Fatal("offline fetch succeeded")
++	}
++	start := time.Now()
++	if _, err := d.Fetch("SLUS_203.13"); err == nil || time.Since(start) > 100*time.Millisecond {
++		t.Fatal("offline not remembered")
++	}
++}
 diff --git a/internal/prep/iso.go b/internal/prep/iso.go
 new file mode 100644
 index 0000000..f359609
