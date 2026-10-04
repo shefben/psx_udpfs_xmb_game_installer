@@ -1,0 +1,281 @@
+diff --git a/internal/config/config.go b/internal/config/config.go
+new file mode 100644
+index 0000000..9268349
+--- /dev/null
++++ b/internal/config/config.go
+@@ -0,0 +1,150 @@
++// Package config reads udpfsd.cfg: "key = value" lines, '#' comments.
++package config
++
++import (
++	"bufio"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strconv"
++	"strings"
++)
++
++// Config holds every udpfsd.cfg setting. Paths are absolute after Load/Set.
++type Config struct {
++	DVD, CD, Games, Install, CFG, ART     string
++	Gamelist, Cache, OPLLauncher, FSRoot  string
++	DownloadCovers, AutoInstall, ReadOnly bool
++	Port                                  int
++	Bind                                  string
++	// OPLLauncherSet reports that opl_launcher was given explicitly
++	// (then a missing file is an error; the default is optional).
++	OPLLauncherSet bool
++}
++
++// Keys lists every accepted key.
++var Keys = []string{"dvd", "cd", "games", "install", "cfg", "art", "gamelist", "cache",
++	"download_covers", "opl_launcher", "auto_install", "fsroot", "read_only", "port", "bind"}
++
++// Defaults returns the built-in defaults (relative paths not yet resolved).
++func Defaults() Config {
++	return Config{Cache: "udpfsd-cache", OPLLauncher: "opl-launcher-EXECUTE.KELF",
++		DownloadCovers: true, Port: 62966}
++}
++
++// HasGameFolders reports whether any game folder is configured.
++func (c *Config) HasGameFolders() bool {
++	return c.DVD != "" || c.CD != "" || c.Games != "" || c.Install != ""
++}
++
++func resolve(v, baseDir string) string {
++	if v == "" || filepath.IsAbs(v) || (len(v) > 1 && v[1] == ':') {
++		return v
++	}
++	return filepath.Join(baseDir, v)
++}
++
++func parseBool(v string) (bool, error) {
++	switch strings.ToLower(v) {
++	case "yes", "true", "1", "on":
++		return true, nil
++	case "no", "false", "0", "off":
++		return false, nil
++	}
++	return false, fmt.Errorf("%q is not yes/no", v)
++}
++
++func mustDir(p string) error {
++	if st, err := os.Stat(p); err != nil || !st.IsDir() {
++		return fmt.Errorf("%s is not a directory", p)
++	}
++	return nil
++}
++
++// Set applies one key (used by Load and for flag/env overrides).
++func (c *Config) Set(key, value, baseDir string) error {
++	v := strings.TrimSpace(value)
++	dir := func(dst *string) error {
++		*dst = resolve(v, baseDir)
++		if *dst == "" {
++			return nil
++		}
++		return mustDir(*dst)
++	}
++	var err error
++	switch key {
++	case "dvd":
++		return dir(&c.DVD)
++	case "cd":
++		return dir(&c.CD)
++	case "games":
++		return dir(&c.Games)
++	case "install":
++		return dir(&c.Install)
++	case "cfg":
++		return dir(&c.CFG)
++	case "art":
++		return dir(&c.ART)
++	case "fsroot":
++		return dir(&c.FSRoot)
++	case "gamelist":
++		c.Gamelist = resolve(v, baseDir)
++		if c.Gamelist != "" {
++			if _, err := os.Stat(c.Gamelist); err != nil {
++				return fmt.Errorf("gamelist %s: %w", c.Gamelist, err)
++			}
++		}
++	case "cache":
++		c.Cache = resolve(v, baseDir)
++	case "opl_launcher":
++		c.OPLLauncher = resolve(v, baseDir)
++		c.OPLLauncherSet = true
++		if _, err := os.Stat(c.OPLLauncher); err != nil {
++			return fmt.Errorf("opl_launcher %s: %w", c.OPLLauncher, err)
++		}
++	case "download_covers":
++		c.DownloadCovers, err = parseBool(v)
++	case "auto_install":
++		c.AutoInstall, err = parseBool(v)
++	case "read_only":
++		c.ReadOnly, err = parseBool(v)
++	case "port":
++		c.Port, err = strconv.Atoi(v)
++	case "bind":
++		c.Bind = v
++	default:
++		return fmt.Errorf("unknown key %q", key)
++	}
++	return err
++}
++
++// Load reads path; relative values resolve against baseDir.
++func Load(path, baseDir string) (Config, error) {
++	c := Defaults()
++	c.Cache = resolve(c.Cache, baseDir)
++	c.OPLLauncher = resolve(c.OPLLauncher, baseDir)
++	f, err := os.Open(path)
++	if err != nil {
++		return c, err
++	}
++	defer f.Close()
++	sc := bufio.NewScanner(f)
++	for n := 1; sc.Scan(); n++ {
++		line := sc.Text()
++		if i := strings.Index(line, "#"); i >= 0 {
++			line = line[:i]
++		}
++		line = strings.TrimSpace(line)
++		if line == "" {
++			continue
++		}
++		k, v, ok := strings.Cut(line, "=")
++		if !ok {
++			return c, fmt.Errorf("%s line %d: expected key = value", path, n)
++		}
++		if err := c.Set(strings.ToLower(strings.TrimSpace(k)), v, baseDir); err != nil {
++			return c, fmt.Errorf("%s line %d: %v", path, n, err)
++		}
++	}
++	return c, sc.Err()
++}
+diff --git a/internal/config/config_test.go b/internal/config/config_test.go
+new file mode 100644
+index 0000000..4da73c1
+--- /dev/null
++++ b/internal/config/config_test.go
+@@ -0,0 +1,119 @@
++package config
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func write(t *testing.T, dir, name, body string) string {
++	t.Helper()
++	p := filepath.Join(dir, name)
++	if err := os.WriteFile(p, []byte(body), 0644); err != nil {
++		t.Fatal(err)
++	}
++	return p
++}
++
++func TestLoadFullFile(t *testing.T) {
++	base := t.TempDir()
++	for _, d := range []string{"DVD", "CD", "ART", "CFG"} {
++		os.Mkdir(filepath.Join(base, d), 0755)
++	}
++	write(t, base, "GameListPS2.txt", "x\n")
++	p := write(t, base, "udpfsd.cfg", strings.Join([]string{
++		"# comment",
++		"dvd = DVD",
++		"cd=CD   # trailing comment",
++		"art = " + filepath.Join(base, "ART"),
++		"cfg = CFG",
++		"gamelist = GameListPS2.txt",
++		"download_covers = no",
++		"auto_install = yes",
++		"read_only = true",
++		"port = 1234",
++		"bind = 10.0.0.5",
++		"",
++	}, "\r\n"))
++	c, err := Load(p, base)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if c.DVD != filepath.Join(base, "DVD") || c.CD != filepath.Join(base, "CD") {
++		t.Fatalf("relative dirs not resolved: %+v", c)
++	}
++	if c.ART != filepath.Join(base, "ART") || c.CFG != filepath.Join(base, "CFG") {
++		t.Fatalf("art/cfg: %+v", c)
++	}
++	if c.Gamelist != filepath.Join(base, "GameListPS2.txt") {
++		t.Fatalf("gamelist: %q", c.Gamelist)
++	}
++	if c.DownloadCovers || !c.AutoInstall || !c.ReadOnly || c.Port != 1234 || c.Bind != "10.0.0.5" {
++		t.Fatalf("scalars: %+v", c)
++	}
++	if c.Cache != filepath.Join(base, "udpfsd-cache") {
++		t.Fatalf("default cache: %q", c.Cache)
++	}
++}
++
++func TestDefaults(t *testing.T) {
++	c := Defaults()
++	if !c.DownloadCovers || c.AutoInstall || c.Port != 62966 || c.Cache != "udpfsd-cache" {
++		t.Fatalf("%+v", c)
++	}
++}
++
++func TestUnknownKeyNamesLine(t *testing.T) {
++	base := t.TempDir()
++	p := write(t, base, "udpfsd.cfg", "port = 1\ndvdd = x\n")
++	_, err := Load(p, base)
++	if err == nil || !strings.Contains(err.Error(), "line 2") || !strings.Contains(err.Error(), "dvdd") {
++		t.Fatalf("err = %v", err)
++	}
++}
++
++func TestMissingFolderIsError(t *testing.T) {
++	base := t.TempDir()
++	p := write(t, base, "udpfsd.cfg", "dvd = nope\n")
++	if _, err := Load(p, base); err == nil || !strings.Contains(err.Error(), "line 1") {
++		t.Fatalf("err = %v", err)
++	}
++	p = write(t, base, "udpfsd.cfg", "gamelist = missing.txt\n")
++	if _, err := Load(p, base); err == nil {
++		t.Fatal("missing gamelist accepted")
++	}
++}
++
++func TestBadValues(t *testing.T) {
++	base := t.TempDir()
++	for _, body := range []string{"port = abc\n", "auto_install = maybe\n", "novalue\n"} {
++		p := write(t, base, "udpfsd.cfg", body)
++		if _, err := Load(p, base); err == nil {
++			t.Fatalf("accepted %q", body)
++		}
++	}
++}
++
++func TestSetUsedForOverrides(t *testing.T) {
++	base := t.TempDir()
++	os.Mkdir(filepath.Join(base, "q"), 0755)
++	c := Defaults()
++	if err := c.Set("install", "q", base); err != nil || c.Install != filepath.Join(base, "q") {
++		t.Fatalf("%v %q", err, c.Install)
++	}
++	if err := c.Set("read_only", "1", base); err != nil || !c.ReadOnly {
++		t.Fatal("read_only")
++	}
++}
++
++func TestHasGameFolders(t *testing.T) {
++	c := Defaults()
++	if c.HasGameFolders() {
++		t.Fatal("empty config has folders")
++	}
++	c.Games = "/x"
++	if !c.HasGameFolders() {
++		t.Fatal("games folder not detected")
++	}
++}

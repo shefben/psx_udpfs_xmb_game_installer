@@ -4,8 +4,8 @@
 #   tools/build-udpfsd.sh <out dir> [test]
 #
 # Copies reference/udpfsd (pinned in reference/REVISIONS.txt) to
-# build/udpfsd-src, applies patches/udpfsd/*.patch, runs the Go tests of
-# the patched packages, and builds Windows and Linux x86-64 binaries
+# build/udpfsd-src, applies patches/udpfsd/*.patch, runs go vet and the Go
+# tests of every package except chd (needs CGO), and builds Windows and Linux x86-64 binaries
 # (CGO off: ISO/CSO/ZSO only, like upstream's release binaries).
 # Uses a local `go` >= 1.25 if present, otherwise the pinned Docker image.
 set -euo pipefail
@@ -26,8 +26,9 @@ VERSION="$(git -C "$ROOT/reference/udpfsd" rev-parse --short=12 HEAD)+install-di
 
 SCRIPT='set -e
 export CGO_ENABLED=0 GOFLAGS=-buildvcs=false
-go vet ./internal/fs/ ./cmd/...
-go test ./internal/fs/ ./internal/fs/compression/zso/ ./internal/fs/compression/cso/
+P=$(go list ./... | grep -v /chd)
+go vet $P
+go test $P
 if [ "$MODE" = build ]; then
   GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-w -s -X main.Version=$VERSION" -o out/udpfsd-windows-amd64.exe ./cmd/udpfsd
   GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-w -s -X main.Version=$VERSION" -o out/udpfsd-linux-amd64 ./cmd/udpfsd
