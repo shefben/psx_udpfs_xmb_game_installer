@@ -32,8 +32,8 @@ or pfsshell) so the disk can be restored.
 | P12 | Signed release in canonical `KELF_MODE=mbr` | needs a kelftool fork with `encrypt mbr` | NOT RUN |
 | P13 | udpfsd mounts (`-install-dir` / `udpfsd.cfg` folders): listing, always read-only, no path escape, mounts-only mode | Go tests in `patches/udpfsd/0002` (`make test-udpfsd`) | PASS |
 | P14 | Batch selection/summary logic | `test_batch.c` | PASS |
-| P15 | udpfsd.cfg parsing/precedence; game prep: ISO/ZSO probe, titles (CFG > game list > file name), art lookup + 74x108 PNG, cover download (local test server), manifest format/atomic write, scan cache | Go tests in `patches/udpfsd/0002` (`make test-udpfsd`) | PENDING |
-| P16 | PS2 manifest parser, server-launcher check (hash/size/KELF), OPL cfg decision, auto-install selection, journal fields | `test_manifest.c`, `test_server_assets.c`, `test_batch.c`, `test_state.c` | PENDING |
+| P15 | udpfsd.cfg parsing/precedence; game prep: ISO/ZSO probe, titles (CFG > game list > file name), art lookup + 74x108 PNG, cover download (local test server), manifest format/atomic write, scan cache | Go tests in `patches/udpfsd/0002` (`make test-udpfsd`) | PASS |
+| P16 | PS2 manifest parser, server-launcher check (hash/size/KELF), OPL cfg decision, auto-install selection, journal fields | `test_manifest.c`, `test_server_assets.c`, `test_batch.c`, `test_state.c` | PASS |
 
 ## Level 2 - DESR NON-DESTRUCTIVE VERIFIED
 
