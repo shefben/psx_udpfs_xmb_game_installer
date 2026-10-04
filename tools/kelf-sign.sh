@@ -69,7 +69,16 @@ TMPHOME=$(mktemp -d)
 ln -s "$PS2KEYS" "$TMPHOME/PS2KEYS.dat"
 mkdir -p "$(dirname "$OUT")"
 
-HOME=$TMPHOME "$KELFTOOL" "${ENC_ARGS[@]}" "$IN" "$TMP" >/dev/null || die "kelftool encrypt failed"
+if ! HOME=$TMPHOME "$KELFTOOL" "${ENC_ARGS[@]}" "$IN" "$TMP" >/dev/null 2>&1; then
+  if [ "$MODE" = "mbr" ]; then
+    die "kelftool encrypt mbr failed.
+If your kelftool does not take a mode argument (e.g. xfwcfw/kelftool,
+whose CLI is 'encrypt <in> <out>' and which always writes a PSX/DESR
+header), the canonical mbr mode is not available with it; build with
+KELF_MODE=none explicitly, or use a fork that supports 'encrypt mbr'."
+  fi
+  die "kelftool encrypt failed"
+fi
 
 [ -s "$TMP" ] || die "kelftool produced no output"
 [ "$(head -c4 "$TMP" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ] || die "output is a plain ELF"

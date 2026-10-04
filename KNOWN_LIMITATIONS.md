@@ -8,9 +8,11 @@ level unless stated otherwise.
   jacket PNGs, CRLF `info.sys`, OPL-Launcher hand-off, the patched HDD
   driver and the KELF format accepted by the DESR are all unobserved.
 * **Signing is external.** `kelftool` and `PS2KEYS.dat` are build
-  prerequisites, never shipped. Whether the DESR accepts the canonical
-  `kelftool encrypt mbr` KELF from `pfs:/EXECUTE.KELF` is the first thing
-  D1/D2 prove; `KELF_MODE=none` is an untested fallback.
+  prerequisites, never shipped. The first signed build used
+  xfwcfw/kelftool, which only supports `KELF_MODE=none` (PSX/DESR
+  header). Whether the DESR XMB accepts that KELF from
+  `pfs:/EXECUTE.KELF` is the first thing D1/D2 prove; no `mbr`-mode
+  build exists yet.
 * **KELF sizes.** The app KELF embeds the OPL-Launcher KELF, so it is
   roughly app + 1.6 MB. No size limit of the DESR loader is known to be
   exceeded, but none has been tested.

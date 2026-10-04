@@ -52,6 +52,10 @@ for mode in fail-encrypt empty plain-elf tiny fail-decrypt bad-decrypt; do
   [ $rc -ne 0 ] && no_outputs; check "failure_${mode//-/_}" $?
 done
 
+# 10b. mbr on a fork without a mode argument: clear hint, nothing left
+run PS2KEYS=$W/PS2KEYS.dat FAKE_KELF=no-mode-arg; rc=$?
+[ $rc -ne 0 ] && grep -q "does not take a mode argument" "$W/stderr" && no_outputs; check mbr_on_modeless_fork_hint $?
+
 # 11. input must be an ELF
 env PS2KEYS=$W/PS2KEYS.dat bash "$SIGN" "$W/notelf.bin" "$W/out.KELF" >/dev/null 2>&1; rc=$?
 [ $rc -ne 0 ] && no_outputs; check input_not_elf $?

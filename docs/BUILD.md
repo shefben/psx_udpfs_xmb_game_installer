@@ -80,6 +80,16 @@ PS2KEYS=/absolute/path/to/PS2KEYS.dat make kelfs     # or make dist
   the form OPL-Launcher documents.
 * `KELF_MODE=none` (experimental fallback, only if a DESR rejects the
   canonical KELF): `kelftool encrypt <in> <out>`. Any other value fails.
+* Which mode a kelftool supports depends on the fork.
+  [xfwcfw/kelftool](https://github.com/xfwcfw/kelftool) (6b9b471, the
+  one used for the first signed build) has no mode argument: its
+  `encrypt <in> <out>` always writes a PSX/DESR header (UserDefined
+  `01 03 00 04 ...`, SystemType 1 = PSX, ApplicationType 1 = xosdmain,
+  Flags 0x22C, MG zone 1 = Japan) and needs `KELF_MODE=none`; with
+  `mbr` it fails and `kelf-sign.sh` says so. The canonical `mbr` mode
+  needs the FMCB-compatible fork OPL-Launcher's README links to.
+  Build xfwcfw/kelftool with `make` (needs `libssl-dev`), install
+  `build/kelftool.elf` as `kelftool`.
   The mode is a build input (`build/.kelf-mode`): switching it re-signs
   both KELFs and rebuilds the bootstrap; `BUILD-MANIFEST.txt` records
   the mode the shipped KELFs were actually signed with.

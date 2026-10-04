@@ -9,6 +9,8 @@ echo "$*" >> "${FAKE_KELF_LOG:-/dev/null}"
 cmd=$1; shift
 case "$cmd" in
   encrypt)
+    # xfwcfw-style fork: no mode argument, crashes when given one.
+    [ "${FAKE_KELF:-ok}" = "no-mode-arg" ] && [ $# -eq 3 ] && exit 139
     [ $# -eq 3 ] && shift  # drop mode
     in=$1 out=$2
     case "${FAKE_KELF:-ok}" in

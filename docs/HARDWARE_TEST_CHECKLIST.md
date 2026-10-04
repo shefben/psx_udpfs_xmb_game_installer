@@ -28,7 +28,8 @@ or pfsshell) so the disk can be restored.
 | P8 | HDD driver: unmodified source rebuild == vendored IRX; shipped hash pinned | `make driver`, `test_driver.py` | PASS |
 | P9 | KELF signing transactional, explicit keys, mode validation | `test_kelf_sign.sh` | PASS |
 | P10 | Release build graph order / embedding / no spurious re-sign | `make test-graph` (fake kelftool) | PASS |
-| P11 | Signed release built with real kelftool + PS2KEYS | `PS2KEYS=... make dist` | NOT RUN |
+| P11 | Signed release built with real kelftool + PS2KEYS | `PS2KEYS=... KELF_MODE=none make dist` with xfwcfw kelftool 6b9b471; both KELFs pass `kelftool decrypt` (all signatures) and decrypt to the exact input ELF | PASS (mode none) |
+| P12 | Signed release in canonical `KELF_MODE=mbr` | needs a kelftool fork with `encrypt mbr` | NOT RUN |
 
 ## Level 2 - DESR NON-DESTRUCTIVE VERIFIED
 
