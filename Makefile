@@ -75,7 +75,7 @@ test:
 test-graph:
 	bash test/host/test_build_graph.sh
 
-# ---- udpfsd server (pinned upstream + patches/udpfsd, adds -install-dir) --
+# ---- udpfsd server (pinned upstream + patches/udpfsd: udpfsd.cfg, mounts, game prep)
 # Needs Go >= 1.25 or Docker. `make test-udpfsd` runs only its Go tests.
 UDPFSD_BIN := $(BUILD)/udpfsd/udpfsd-windows-amd64.exe $(BUILD)/udpfsd/udpfsd-linux-amd64
 
@@ -195,7 +195,7 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN)
 	rm -rf $(DIST)
 	mkdir -p $(DIST)/udpfsd-example $(DIST)/docs $(DIST)/udpfsd
 	cp $(BOOT_ELF) $(APP_ELF) $(APP_KELF) $(OPL_KELF) $(DIST)/
-	cp $(UDPFSD_BIN) $(DIST)/udpfsd/
+	cp $(UDPFSD_BIN) $(OPL_KELF) docs/udpfsd-example/udpfsd.cfg $(DIST)/udpfsd/
 	cp docs/udpfsd-example/* $(DIST)/udpfsd-example/
 	cp docs/INSTALL.md docs/HARDWARE_TEST_CHECKLIST.md $(DIST)/docs/
 	cp KNOWN_LIMITATIONS.md $(DIST)/

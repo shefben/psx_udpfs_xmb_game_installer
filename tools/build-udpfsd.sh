@@ -22,7 +22,7 @@ git -C "$ROOT/reference/udpfsd" archive HEAD | tar -x -C "$SRC"
 for p in $(ls "$ROOT"/patches/udpfsd/*.patch | sort); do
   patch -d "$SRC" -p1 --forward --no-backup-if-mismatch < "$p" >/dev/null
 done
-VERSION="$(git -C "$ROOT/reference/udpfsd" rev-parse --short=12 HEAD)+install-dir"
+VERSION="$(git -C "$ROOT/reference/udpfsd" rev-parse --short=12 HEAD)+game-prep"
 
 SCRIPT='set -e
 export CGO_ENABLED=0 GOFLAGS=-buildvcs=false

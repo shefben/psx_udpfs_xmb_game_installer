@@ -1,3 +1,244 @@
+diff --git a/cmd/udpfsd/main.go b/cmd/udpfsd/main.go
+index c6bda9c..e7983f2 100644
+--- a/cmd/udpfsd/main.go
++++ b/cmd/udpfsd/main.go
+@@ -5,6 +5,7 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"os/signal"
++	"path/filepath"
+ 	"strconv"
+ 	"strings"
+ 	"syscall"
+@@ -12,8 +13,10 @@ import (
+ 
+ 	"log"
+ 
++	"github.com/pcm720/udpfsd/internal/config"
+ 	"github.com/pcm720/udpfsd/internal/fs"
+ 	"github.com/pcm720/udpfsd/internal/fs/compression"
++	"github.com/pcm720/udpfsd/internal/prep"
+ 	"github.com/pcm720/udpfsd/internal/udpfsd"
+ 	"github.com/pcm720/udpfsd/udprdma"
+ )
+@@ -37,6 +40,9 @@ var (
+ 	disableCompression   = flag.Bool("no-compression", false, fmt.Sprintf("Disable transparent decompression for %s\nEnvironment variable: NO_COMPRESSION", strings.Join(compression.GetSupportedFormats(), ", ")))
+ 	compressionCacheSize = flag.Int("compression-cache-size", 32, "Number of decompressed blocks to cache per file\nEnvironment variable: COMPRESSION_CACHE_SIZE")
+ 	peerTimeout          = flag.String("peer-timeout", "", "Time before inactive peer gets removed in Go time.Duration format\nEnvironment variable: PEER_TIMEOUT (default 1h = 1 hour)")
++	configPath           = flag.String("config", "", "Configuration file (default: udpfsd.cfg next to the udpfsd binary)\nEnvironment variable: CONFIG")
++	noPrep               = flag.Bool("no-prep", false, "Do not prepare game titles, jackets and the manifest at startup\nEnvironment variable: NO_PREP")
++	noDownload           = flag.Bool("no-download", false, "Do not download missing covers\nEnvironment variable: NO_DOWNLOAD")
+ )
+ 
+ func main() {
+@@ -44,23 +50,54 @@ func main() {
+ 		fmt.Fprintf(os.Stderr, "udpfsd - UDPFS and UDPRDMA server\nVersion: %s\n\n", Version)
+ 		fmt.Fprintf(os.Stderr, "Usage:\n")
+ 		flag.PrintDefaults()
+-		fmt.Fprintf(os.Stderr, "\nAt least one of -fsroot, -install-dir or -bdpath is required.\n")
++		fmt.Fprintf(os.Stderr, "\nGame folders and other settings can be set in udpfsd.cfg next to the binary;\n"+
++			"flags and environment variables override it. Without udpfsd.cfg, -fsroot,\n"+
++			"-install-dir or -bdpath, %s is served.\n", defaultFsRoot)
+ 	}
+ 	flag.Parse()
++	set := map[string]bool{}
++	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
+ 	loadEnvironment()
++	cfg := loadConfig()
+ 
+-	if *path == "" && *root == "" && *installDir == "" {
++	// flag > environment (already applied by loadEnvironment) > udpfsd.cfg
++	*root = pick(set["fsroot"], *root, os.Getenv("FSROOT"), cfg.FSRoot)
++	cfg.Install = pick(set["install-dir"], *installDir, os.Getenv("INSTALL_DIR"), cfg.Install)
++	*bindIP = pick(set["bind"], *bindIP, os.Getenv("BIND"), cfg.Bind)
++	if !set["port"] && os.Getenv("PORT") == "" {
++		*port = cfg.Port
++	}
++	if !set["ro"] && os.Getenv("RO") == "" {
++		*readOnly = cfg.ReadOnly
++	}
++
++	if *path == "" && *root == "" && !cfg.HasGameFolders() {
+ 		*root = defaultFsRoot
+ 	}
+ 
+ 	// Build FS backend options
+ 	fsopts := []fs.BackendOptFunc{
+ 		fs.WithFSRoot(*root),
+-		fs.WithInstallDir(*installDir),
+ 		fs.WithBlockDevice(*path),
+ 		fs.WithSectorSize(*sectorSize),
+ 		fs.WithCompressionCacheSize(*compressionCacheSize),
+ 	}
++	for _, f := range gameFolders(cfg) {
++		fsopts = append(fsopts, fs.WithMount(f.Mount, f.Dir))
++	}
++	if cfg.ART != "" {
++		fsopts = append(fsopts, fs.WithMount("ART", cfg.ART))
++	}
++	if cfg.CFG != "" {
++		fsopts = append(fsopts, fs.WithMount("CFG", cfg.CFG))
++	}
++	prepOn := !*noPrep && len(gameFolders(cfg)) > 0
++	if prepOn {
++		if err := os.MkdirAll(prep.ServedDir(cfg.Cache), 0755); err != nil {
++			log.Fatalf("prep: cache %s: %v", cfg.Cache, err)
++		}
++		fsopts = append(fsopts, fs.WithMount(fs.PrepMountName, prep.ServedDir(cfg.Cache)))
++	}
+ 	if *readOnly {
+ 		fsopts = append(fsopts, fs.WithReadOnly())
+ 	}
+@@ -74,6 +111,9 @@ func main() {
+ 		flag.Usage()
+ 		os.Exit(1)
+ 	}
++	if prepOn {
++		startPrep(cfg)
++	}
+ 
+ 	var metricsPeriod time.Duration
+ 	if *logMetricsPeriod != "" {
+@@ -172,6 +212,104 @@ func loadEnvironment() {
+ 	if value := envVarLookup("peer-timeout", ""); value != "" {
+ 		*peerTimeout = value
+ 	}
++	if value := envVarLookup("config", *configPath); value != "" {
++		*configPath = value
++	}
++	if value := envVarLookup("no-prep", ""); value != "" {
++		if v, err := strconv.ParseBool(value); err == nil {
++			*noPrep = v
++		}
++	}
++	if value := envVarLookup("no-download", ""); value != "" {
++		if v, err := strconv.ParseBool(value); err == nil {
++			*noDownload = v
++		}
++	}
++}
++
++// pick applies flag > environment > udpfsd.cfg > default precedence.
++func pick(flagSet bool, flagVal, envVal, cfgVal string) string {
++	switch {
++	case flagSet:
++		return flagVal
++	case envVal != "":
++		return envVal
++	case cfgVal != "":
++		return cfgVal
++	}
++	return flagVal
++}
++
++// gameFolders lists the configured game folders with their mount names.
++func gameFolders(c config.Config) []prep.Folder {
++	var out []prep.Folder
++	for _, f := range []prep.Folder{{Mount: "DVD", Dir: c.DVD}, {Mount: "CD", Dir: c.CD},
++		{Mount: "GAMES", Dir: c.Games}, {Mount: fs.InstallDirName, Dir: c.Install}} {
++		if f.Dir != "" {
++			out = append(out, f)
++		}
++	}
++	return out
++}
++
++func exeDir() string {
++	p, err := os.Executable()
++	if err != nil {
++		return "."
++	}
++	if r, err := filepath.EvalSymlinks(p); err == nil {
++		p = r
++	}
++	return filepath.Dir(p)
++}
++
++// loadConfig reads udpfsd.cfg (-config / CONFIG, else next to the binary).
++// An explicitly named file must exist; a bad file stops the server.
++func loadConfig() config.Config {
++	base := exeDir()
++	path := *configPath
++	explicit := path != ""
++	if !explicit {
++		path = filepath.Join(base, "udpfsd.cfg")
++	}
++	if _, err := os.Stat(path); err != nil {
++		if explicit {
++			log.Fatalf("config: %v", err)
++		}
++		c := config.Defaults()
++		c.Cache = filepath.Join(base, c.Cache)
++		c.OPLLauncher = filepath.Join(base, c.OPLLauncher)
++		return c
++	}
++	c, err := config.Load(path, filepath.Dir(path))
++	if err != nil {
++		log.Fatalf("config: %v", err)
++	}
++	log.Printf("config: loaded %s", path)
++	return c
++}
++
++// startPrep prepares titles, jackets and the manifest in the background;
++// the server answers discovery meanwhile.
++func startPrep(cfg config.Config) {
++	launcher := cfg.OPLLauncher
++	if _, err := os.Stat(launcher); err != nil {
++		log.Printf("prep: no OPL-Launcher at %s; the PS2 will use its embedded copy", launcher)
++		launcher = ""
++	}
++	o := prep.Options{Folders: gameFolders(cfg), CFGDir: cfg.CFG, ARTDir: cfg.ART,
++		Gamelist: cfg.Gamelist, CacheDir: cfg.Cache, Launcher: launcher, Auto: cfg.AutoInstall,
++		Download:   cfg.DownloadCovers && !*noDownload,
++		Downloader: &prep.Downloader{BaseURL: prep.CoverURL, CacheDir: cfg.Cache}}
++	go func() {
++		log.Printf("prep: scanning %d game folder(s)", len(o.Folders))
++		res, err := prep.Run(o)
++		if err != nil {
++			log.Printf("prep: %v", err)
++			return
++		}
++		log.Printf("prep: %d games ready, %d invalid images; manifest in %s", res.Games, res.Invalid, prep.ServedDir(cfg.Cache))
++	}()
+ }
+ 
+ func envVarLookup(key string, defaultValue string) string {
+diff --git a/cmd/udpfsd/main_test.go b/cmd/udpfsd/main_test.go
+new file mode 100644
+index 0000000..00c2160
+--- /dev/null
++++ b/cmd/udpfsd/main_test.go
+@@ -0,0 +1,29 @@
++package main
++
++import (
++	"testing"
++
++	"github.com/pcm720/udpfsd/internal/config"
++)
++
++func TestGameFoldersFromConfig(t *testing.T) {
++	c := config.Defaults()
++	c.DVD, c.CD, c.Games, c.Install = "/d", "/c", "", "/i"
++	got := gameFolders(c)
++	want := []string{"DVD=/d", "CD=/c", "INSTALL=/i"}
++	if len(got) != len(want) {
++		t.Fatalf("%v", got)
++	}
++	for i, f := range got {
++		if f.Mount+"="+f.Dir != want[i] {
++			t.Fatalf("%v", got)
++		}
++	}
++}
++
++func TestPick(t *testing.T) {
++	if pick(true, "flag", "env", "cfg") != "flag" || pick(false, "", "env", "cfg") != "env" ||
++		pick(false, "", "", "cfg") != "cfg" || pick(false, "def", "", "") != "def" {
++		t.Fatal("precedence")
++	}
++}
 diff --git a/internal/config/config.go b/internal/config/config.go
 new file mode 100644
 index 0000000..9268349

@@ -42,7 +42,8 @@ contains "$B/bootstrap/desr-udpfs-installer-bootstrap.elf" "$ROOT/vendor/irx/ps2
 
 for f in desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf installer-EXECUTE.KELF \
          opl-launcher-EXECUTE.KELF SHA256SUMS BUILD-MANIFEST.txt \
-         udpfsd/udpfsd-windows-amd64.exe udpfsd/udpfsd-linux-amd64; do
+         udpfsd/udpfsd-windows-amd64.exe udpfsd/udpfsd-linux-amd64 \
+         udpfsd/opl-launcher-EXECUTE.KELF udpfsd/udpfsd.cfg; do
   [ -s "$D/$f" ] || { echo "missing $f"; false; }
 done; check dist_contents $?
 (cd "$D" && sha256sum -c SHA256SUMS >/dev/null); check dist_sha256sums $?
