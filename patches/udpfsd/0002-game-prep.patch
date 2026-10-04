@@ -1817,6 +1817,457 @@ index 0000000..99c47c6
 +		t.Fatal("ValidID")
 +	}
 +}
+diff --git a/internal/prep/scan.go b/internal/prep/scan.go
+new file mode 100644
+index 0000000..946eac1
+--- /dev/null
++++ b/internal/prep/scan.go
+@@ -0,0 +1,274 @@
++package prep
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"io"
++	"log"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++	"sync"
++)
++
++// Folder is a game folder served as /<Mount>.
++type Folder struct{ Mount, Dir string }
++
++// Options configures one preparation run.
++type Options struct {
++	Folders                                      []Folder
++	CFGDir, ARTDir, Gamelist, CacheDir, Launcher string
++	Download, Auto                               bool
++	Downloader                                   *Downloader
++}
++
++// Result summarizes a run.
++type Result struct{ Games, Invalid int }
++
++type entry struct {
++	Path    string // client path
++	Host    string
++	Size    int64
++	ModTime int64
++	Err     string
++	Info    DiscInfo
++	Title   string
++	Jacket  bool
++	CFG     bool
++}
++
++var probeHook func(path string) // test hook
++
++// ServedDir is the folder served as /.udpfsd.
++func ServedDir(cacheDir string) string { return filepath.Join(cacheDir, "served") }
++
++func writeAtomic(path string, data []byte) error {
++	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
++		return err
++	}
++	tmp := path + ".tmp"
++	if err := os.WriteFile(tmp, data, 0644); err != nil {
++		os.Remove(tmp)
++		return err
++	}
++	return os.Rename(tmp, path)
++}
++
++func clientPath(mount, rel string) string {
++	p := "/" + mount + "/" + filepath.ToSlash(rel)
++	if strings.EqualFold(filepath.Ext(p), ".zso") {
++		p += ".iso" // udpfsd's virtual decompressed name
++	}
++	return p
++}
++
++func (o *Options) collect() []entry {
++	var out []entry
++	for _, f := range o.Folders {
++		filepath.WalkDir(f.Dir, func(p string, d os.DirEntry, err error) error {
++			if err != nil || d.IsDir() {
++				return nil
++			}
++			ext := strings.ToLower(filepath.Ext(p))
++			if ext != ".iso" && ext != ".zso" {
++				return nil
++			}
++			st, err := d.Info()
++			if err != nil {
++				return nil
++			}
++			rel, _ := filepath.Rel(f.Dir, p)
++			out = append(out, entry{Path: clientPath(f.Mount, rel), Host: p,
++				Size: st.Size(), ModTime: st.ModTime().UnixNano()})
++			return nil
++		})
++	}
++	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
++	return out
++}
++
++func probe(e *entry) {
++	if probeHook != nil {
++		probeHook(e.Host)
++	}
++	r, size, c, err := OpenLogical(e.Host)
++	if err != nil {
++		e.Err = err.Error()
++		return
++	}
++	defer c.Close()
++	info, err := Probe(r, size, HintFromPath(e.Path))
++	if err != nil {
++		e.Err = err.Error()
++		return
++	}
++	e.Info = info
++}
++
++func copyLauncher(src, served string) (string, error) {
++	in, err := os.Open(src)
++	if err != nil {
++		return "", err
++	}
++	defer in.Close()
++	h := sha256.New()
++	tmp := filepath.Join(served, "EXECUTE.KELF.tmp")
++	out, err := os.Create(tmp)
++	if err != nil {
++		return "", err
++	}
++	n, err := io.Copy(io.MultiWriter(out, h), in)
++	if cerr := out.Close(); err == nil {
++		err = cerr
++	}
++	if err != nil {
++		os.Remove(tmp)
++		return "", err
++	}
++	if err := os.Rename(tmp, filepath.Join(served, "EXECUTE.KELF")); err != nil {
++		return "", err
++	}
++	return fmt.Sprintf(" launcher=%s:%d", hex.EncodeToString(h.Sum(nil)), n), nil
++}
++
++func (o *Options) manifest(entries []entry, launcher string) []byte {
++	var b strings.Builder
++	auto := 0
++	if o.Auto {
++		auto = 1
++	}
++	fmt.Fprintf(&b, "udpfsd-manifest 1%s auto=%d\n", launcher, auto)
++	for _, e := range entries {
++		if e.Err != "" {
++			fmt.Fprintf(&b, "%s\tinvalid:%s\t-\t-\t%d\t-\t0\t-\t-\n", e.Path, Sanitize(e.Err, 40), e.Size)
++			continue
++		}
++		disc, jkt, cfg := "CD", "-", "-"
++		if e.Info.DVD {
++			disc = "DVD"
++		}
++		if e.Jacket {
++			jkt = "jkt/" + e.Info.ID + ".png"
++		}
++		if e.CFG {
++			cfg = "/CFG/" + e.Info.ID + ".cfg"
++		}
++		fmt.Fprintf(&b, "%s\tok\t%s\t%s\t%d\t%s\t%d\t%s\t%s\n", e.Path, e.Info.ID,
++			Sanitize(e.Title, 63), e.Info.Bytes, disc, e.Info.Layer1, jkt, cfg)
++	}
++	return []byte(b.String())
++}
++
++// Run scans, prepares jackets, copies the launcher and writes the
++// manifest (once after probing, again after downloads).
++func Run(o Options) (Result, error) {
++	served := ServedDir(o.CacheDir)
++	if err := os.MkdirAll(filepath.Join(served, "jkt"), 0755); err != nil {
++		return Result{}, err
++	}
++	var list map[string]string
++	if o.Gamelist != "" {
++		var err error
++		if list, err = LoadGameList(o.Gamelist); err != nil {
++			return Result{}, err
++		}
++	}
++	cacheFile := filepath.Join(o.CacheDir, "scan.json")
++	cached := map[string]entry{}
++	if b, err := os.ReadFile(cacheFile); err == nil {
++		json.Unmarshal(b, &cached)
++	}
++	entries := o.collect()
++	res := Result{}
++	for i := range entries {
++		e := &entries[i]
++		if c, ok := cached[e.Host]; ok && c.Size == e.Size && c.ModTime == e.ModTime {
++			e.Err, e.Info = c.Err, c.Info
++		} else {
++			probe(e)
++		}
++		if e.Err != "" {
++			res.Invalid++
++			continue
++		}
++		res.Games++
++		e.Title = Title(e.Info.ID, o.CFGDir, list, e.Host)
++		if o.CFGDir != "" {
++			if _, err := os.Stat(filepath.Join(o.CFGDir, e.Info.ID+".cfg")); err == nil {
++				e.CFG = true
++			}
++		}
++		jkt := filepath.Join(served, "jkt", e.Info.ID+".png")
++		if src := FindArt(o.ARTDir, e.Info.ID, e.Host); src != "" {
++			if fresh(jkt, src) || MakeJacket(src, jkt) == nil {
++				e.Jacket = true
++			} else {
++				log.Printf("prep: jacket for %s from %s failed", e.Info.ID, src)
++			}
++		} else if _, err := os.Stat(jkt); err == nil {
++			e.Jacket = true // downloaded earlier
++		}
++	}
++	newCache := map[string]entry{}
++	for _, e := range entries {
++		newCache[e.Host] = entry{Size: e.Size, ModTime: e.ModTime, Err: e.Err, Info: e.Info}
++	}
++	if b, err := json.Marshal(newCache); err == nil {
++		writeAtomic(cacheFile, b)
++	}
++	launcher := ""
++	if o.Launcher != "" {
++		if l, err := copyLauncher(o.Launcher, served); err == nil {
++			launcher = l
++		} else {
++			log.Printf("prep: OPL-Launcher not served: %v", err)
++		}
++	}
++	if err := writeAtomic(filepath.Join(served, "manifest.txt"), o.manifest(entries, launcher)); err != nil {
++		return res, err
++	}
++	if !o.Download || o.Downloader == nil {
++		return res, nil
++	}
++	// Phase 2: download missing covers, 4 at a time, then rewrite.
++	var wg sync.WaitGroup
++	sem := make(chan struct{}, 4)
++	done := map[string]bool{}
++	for i := range entries {
++		e := &entries[i]
++		if e.Err != "" || e.Jacket || done[e.Info.ID] {
++			continue
++		}
++		done[e.Info.ID] = true
++		wg.Add(1)
++		sem <- struct{}{}
++		go func(id string) {
++			defer func() { <-sem; wg.Done() }()
++			if src, err := o.Downloader.Fetch(id); err == nil {
++				if err := MakeJacket(src, filepath.Join(served, "jkt", id+".png")); err != nil {
++					log.Printf("prep: cover %s: %v", id, err)
++				}
++			}
++		}(e.Info.ID)
++	}
++	wg.Wait()
++	for i := range entries {
++		e := &entries[i]
++		if e.Err == "" && !e.Jacket {
++			if _, err := os.Stat(filepath.Join(served, "jkt", e.Info.ID+".png")); err == nil {
++				e.Jacket = true
++			}
++		}
++	}
++	return res, writeAtomic(filepath.Join(served, "manifest.txt"), o.manifest(entries, launcher))
++}
++
++// fresh reports whether dst exists and is newer than src.
++func fresh(dst, src string) bool {
++	d, err1 := os.Stat(dst)
++	s, err2 := os.Stat(src)
++	return err1 == nil && err2 == nil && d.ModTime().After(s.ModTime())
++}
+diff --git a/internal/prep/scan_test.go b/internal/prep/scan_test.go
+new file mode 100644
+index 0000000..de5e727
+--- /dev/null
++++ b/internal/prep/scan_test.go
+@@ -0,0 +1,165 @@
++package prep
++
++import (
++	"crypto/sha256"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func readManifest(t *testing.T, cache string) (string, []string) {
++	t.Helper()
++	b, err := os.ReadFile(filepath.Join(ServedDir(cache), "manifest.txt"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
++	return lines[0], lines[1:]
++}
++
++func TestRunFullScan(t *testing.T) {
++	base := t.TempDir()
++	dvd := filepath.Join(base, "DVD")
++	cfg := filepath.Join(base, "CFG")
++	art := filepath.Join(base, "ART")
++	for _, d := range []string{dvd, cfg, art} {
++		os.MkdirAll(d, 0755)
++	}
++	img := buildISO("GT4", 1000, 1000, cnfOK, true)
++	os.WriteFile(filepath.Join(dvd, "Gran Turismo 4 (USA).iso"), img, 0644)
++	writeZSO(t, filepath.Join(dvd, "Gran Turismo 4 (USA).zso"), img) // same game twice
++	other := buildISO("X", 1000, 1000, strings.Replace(cnfOK, "SLUS_203.12", "SLUS_210.90", 1), false)
++	os.WriteFile(filepath.Join(dvd, "Alien Hominid.iso"), other, 0644)
++	os.WriteFile(filepath.Join(dvd, "broken.iso"), make([]byte, 40*2048), 0644)
++	os.WriteFile(filepath.Join(dvd, "readme.txt"), []byte("x"), 0644)
++	os.WriteFile(filepath.Join(cfg, "SLUS_203.12.cfg"), []byte("Title=Gran Turismo 4\n$Compatibility=3\n"), 0644)
++	writeImg(t, filepath.Join(art, "SLUS_203.12_COV.jpg"), 300, 400, true)
++	gl := filepath.Join(base, "GameListPS2.txt")
++	os.WriteFile(gl, []byte("DVD 1KB 0 *u4 SLUS_210.90  Alien Hominid\n"), 0644)
++	launcher := filepath.Join(base, "opl-launcher-EXECUTE.KELF")
++	kelf := []byte(strings.Repeat("K", 4096))
++	os.WriteFile(launcher, kelf, 0644)
++
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path == "/SLUS-21090.jpg" {
++			f, _ := os.Open(filepath.Join(art, "SLUS_203.12_COV.jpg"))
++			defer f.Close()
++			b, _ := os.ReadFile(f.Name())
++			w.Write(b)
++			return
++		}
++		http.NotFound(w, r)
++	}))
++	defer srv.Close()
++	cache := filepath.Join(base, "cache")
++	o := Options{Folders: []Folder{{Mount: "DVD", Dir: dvd}}, CFGDir: cfg, ARTDir: art, Gamelist: gl,
++		CacheDir: cache, Launcher: launcher, Download: true, Auto: true,
++		Downloader: &Downloader{BaseURL: srv.URL, Client: srv.Client(), CacheDir: cache}}
++	res, err := Run(o)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if res.Games != 3 || res.Invalid != 1 {
++		t.Fatalf("%+v", res)
++	}
++	head, lines := readManifest(t, cache)
++	sum := sha256.Sum256(kelf)
++	if head != fmt.Sprintf("udpfsd-manifest 1 launcher=%x:%d auto=1", sum, len(kelf)) {
++		t.Fatalf("header %q", head)
++	}
++	want := []string{
++		"/DVD/Alien Hominid.iso\tok\tSLUS_210.90\tAlien Hominid\t2048000\tDVD\t0\tjkt/SLUS_210.90.png\t-",
++		"/DVD/Gran Turismo 4 (USA).iso\tok\tSLUS_203.12\tGran Turismo 4\t2048000\tDVD\t0\tjkt/SLUS_203.12.png\t/CFG/SLUS_203.12.cfg",
++		"/DVD/Gran Turismo 4 (USA).zso.iso\tok\tSLUS_203.12\tGran Turismo 4\t2048000\tDVD\t0\tjkt/SLUS_203.12.png\t/CFG/SLUS_203.12.cfg",
++	}
++	if len(lines) != 4 {
++		t.Fatalf("%d lines: %q", len(lines), lines)
++	}
++	for i, l := range lines[:3] {
++		if l != want[i] {
++			t.Fatalf("line %d:\n%q\nwant\n%q", i, l, want[i])
++		}
++	}
++	if !strings.HasPrefix(lines[3], "/DVD/broken.iso\tinvalid:") {
++		t.Fatalf("invalid line %q", lines[3])
++	}
++	for _, id := range []string{"SLUS_203.12", "SLUS_210.90"} {
++		if _, err := os.Stat(filepath.Join(ServedDir(cache), "jkt", id+".png")); err != nil {
++			t.Fatalf("jacket %s: %v", id, err)
++		}
++	}
++	if b, _ := os.ReadFile(filepath.Join(ServedDir(cache), "EXECUTE.KELF")); string(b) != string(kelf) {
++		t.Fatal("launcher not copied")
++	}
++	if _, err := os.Stat(filepath.Join(cache, "scan.json")); err != nil {
++		t.Fatal("no scan cache")
++	}
++}
++
++func TestManifestLinesNeverSplit(t *testing.T) {
++	base := t.TempDir()
++	dir := filepath.Join(base, "G")
++	os.MkdirAll(dir, 0755)
++	img := buildISO("X", 1000, 1000, cnfOK, false)
++	os.WriteFile(filepath.Join(dir, "a.iso"), img, 0644)
++	cfg := filepath.Join(base, "CFG")
++	os.MkdirAll(cfg, 0755)
++	os.WriteFile(filepath.Join(cfg, "SLUS_203.12.cfg"), []byte("Title=Bad\tTitle "+strings.Repeat("x", 100)+"\n"), 0644)
++	cache := filepath.Join(base, "c")
++	if _, err := Run(Options{Folders: []Folder{{"GAMES", dir}}, CFGDir: cfg, CacheDir: cache}); err != nil {
++		t.Fatal(err)
++	}
++	head, lines := readManifest(t, cache)
++	if head != "udpfsd-manifest 1 auto=0" || len(lines) != 1 {
++		t.Fatalf("%q %q", head, lines)
++	}
++	cols := strings.Split(lines[0], "\t")
++	if len(cols) != 9 || len(cols[3]) > 63 || strings.ContainsAny(cols[3], "\r\n") {
++		t.Fatalf("%q", cols)
++	}
++	if cols[7] != "-" { // no art, no downloads
++		t.Fatalf("jacket %q", cols[7])
++	}
++}
++
++func TestCacheSkipsUnchangedImages(t *testing.T) {
++	base := t.TempDir()
++	dir := filepath.Join(base, "G")
++	os.MkdirAll(dir, 0755)
++	p := filepath.Join(dir, "a.iso")
++	os.WriteFile(p, buildISO("X", 1000, 1000, cnfOK, false), 0644)
++	cache := filepath.Join(base, "c")
++	o := Options{Folders: []Folder{{"GAMES", dir}}, CacheDir: cache}
++	if _, err := Run(o); err != nil {
++		t.Fatal(err)
++	}
++	probes := 0
++	probeHook = func(string) { probes++ }
++	defer func() { probeHook = nil }()
++	if _, err := Run(o); err != nil || probes != 0 {
++		t.Fatalf("unchanged image re-probed (%d) %v", probes, err)
++	}
++	os.WriteFile(p, buildISO("Y", 1000, 1001, cnfOK, false), 0644)
++	if _, err := Run(o); err != nil || probes != 1 {
++		t.Fatalf("changed image not re-probed (%d)", probes)
++	}
++}
++
++func TestManifestWriteIsAtomic(t *testing.T) {
++	cache := t.TempDir()
++	served := ServedDir(cache)
++	os.MkdirAll(served, 0755)
++	if err := writeAtomic(filepath.Join(served, "manifest.txt"), []byte("udpfsd-manifest 1 auto=0\n")); err != nil {
++		t.Fatal(err)
++	}
++	ents, _ := os.ReadDir(served)
++	for _, e := range ents {
++		if strings.HasSuffix(e.Name(), ".tmp") {
++			t.Fatal("temp file left behind")
++		}
++	}
++}
 diff --git a/internal/prep/testiso_test.go b/internal/prep/testiso_test.go
 new file mode 100644
 index 0000000..f57098f
