@@ -139,6 +139,20 @@ int partition_partner(const char *name, char out[APA_NAME_MAX + 1]) {
   return 0;
 }
 
+int part_id_from_partition(const char *name, char out[16]) {
+  out[0] = 0;
+  if (!partition_is_game_channel(name) && !partition_is_hidden_game(name))
+    return -1;
+  /* "xx.SLUS-20312.." -> "SLUS_203.12" */
+  memcpy(out, name + 3, 4);
+  out[4] = '_';
+  memcpy(out + 5, name + 8, 3);
+  out[8] = '.';
+  memcpy(out + 9, name + 11, 2);
+  out[11] = 0;
+  return boot_id_is_valid(out) ? 0 : -1;
+}
+
 const char *region_label(const char *id) {
   static const struct {
     const char *prefix;

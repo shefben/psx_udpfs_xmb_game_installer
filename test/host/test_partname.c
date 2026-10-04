@@ -76,6 +76,16 @@ TEST(boot_id_to_part_id_forms) {
   CHECK_EQ_INT(boot_id_to_part_id("SLUS_203.1", out), -1);
 }
 
+TEST(part_id_to_boot_id_forms) {
+  char out[16];
+  CHECK_EQ_INT(part_id_from_partition("__.SLUS-20312..GRAN_TURISMO_4", out), 0);
+  CHECK_STR(out, "SLUS_203.12");
+  CHECK_EQ_INT(part_id_from_partition("PP.SCES-50362..X", out), 0);
+  CHECK_STR(out, "SCES_503.62");
+  CHECK_EQ_INT(part_id_from_partition("PP.UDPFS-INSTALLER", out), -1);
+  CHECK_EQ_INT(part_id_from_partition("+OPL", out), -1);
+}
+
 TEST(partname_classify) {
   CHECK(partition_is_game_channel("PP.SLUS-20312..GRAN_TURISMO_4"));
   CHECK(!partition_is_game_channel("PP.UDPFS-INSTALLER"));

@@ -1,0 +1,47 @@
+diff -ruN a/iop/ministack/src/exports.tab b/iop/ministack/src/exports.tab
+--- a/iop/ministack/src/exports.tab	2026-10-04 13:09:58.362871647 -0500
++++ b/iop/ministack/src/exports.tab	2026-10-04 13:09:58.374871734 -0500
+@@ -1,4 +1,4 @@
+-void _retonly(){};
++void _retonly();
+ DECLARE_EXPORT_TABLE(mstack, 1, 0)
+     DECLARE_EXPORT(_retonly)
+     DECLARE_EXPORT(_retonly)
+@@ -8,3 +8,5 @@
+     DECLARE_EXPORT(udp_packet_init)
+     DECLARE_EXPORT(udp_packet_send_ll)
+ END_EXPORT_TABLE
++
++void _retonly(){}
+diff -ruN a/iop/smap/src/exports.tab b/iop/smap/src/exports.tab
+--- a/iop/smap/src/exports.tab	2026-10-04 13:09:58.354871590 -0500
++++ b/iop/smap/src/exports.tab	2026-10-04 13:09:58.374871734 -0500
+@@ -1,4 +1,4 @@
+-void _retonly(){};
++void _retonly();
+ DECLARE_EXPORT_TABLE(smap, 1, 0)
+     DECLARE_EXPORT(_retonly)
+     DECLARE_EXPORT(_retonly)
+@@ -9,3 +9,5 @@
+     DECLARE_EXPORT(smap_register_rx_callback)
+     DECLARE_EXPORT(smap_fifo_read)
+ END_EXPORT_TABLE
++
++void _retonly(){}
+diff -ruN a/iop/udpfs/src/exports.tab b/iop/udpfs/src/exports.tab
+--- a/iop/udpfs/src/exports.tab	2026-10-04 13:09:58.370871705 -0500
++++ b/iop/udpfs/src/exports.tab	2026-10-04 13:09:58.382871791 -0500
+@@ -1,5 +1,5 @@
+ #ifdef FEATURE_UDPFS_FHI
+-void _retonly(){};
++void _retonly();
+ DECLARE_EXPORT_TABLE(fhi, 1, 1)
+ 	DECLARE_EXPORT(_retonly)
+ 	DECLARE_EXPORT(_retonly)
+@@ -9,4 +9,6 @@
+ 	DECLARE_EXPORT(fhi_read)
+ 	DECLARE_EXPORT(fhi_write)
+ END_EXPORT_TABLE
++
++void _retonly(){}
+ #endif

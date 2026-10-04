@@ -216,7 +216,7 @@ int tx_scan_unfinished(const char *dir, tx_journal_t *out, int max) {
   while (n < max && fileXioDread(dd, &de) > 0) {
     if (strncmp(de.name, "install-", 8) != 0 || !str_ends_with_ci(de.name, ".ini"))
       continue;
-    char path[128];
+    char path[320];
     snprintf(path, sizeof(path), "%s/%s", dir, de.name);
     if (load_path(path, &out[n]) == ERR_OK && out[n].state != TX_COMPLETE)
       n++;

@@ -61,6 +61,11 @@ int partition_is_hidden_game(const char *name);
  * `name` has neither prefix. */
 int partition_partner(const char *name, char out[APA_NAME_MAX + 1]);
 
+/* Recover the BOOT form id from a game partition name:
+ * "__.SLUS-20312..X" -> "SLUS_203.12". Returns 0, or -1 if `name` is
+ * not a game partition. */
+int part_id_from_partition(const char *name, char out[16]);
+
 /* Region label for info.sys title_id (plan section 19). Never NULL. */
 const char *region_label(const char *startup_id);
 

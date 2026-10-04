@@ -165,7 +165,7 @@ inst_err_t iso_probe(GameSource *src, disc_hint_t hint, iso_info_t *out) {
   out->sectors = (uint32_t)(out->source_size / ISO_SECTOR);
 
   extent_t root = {get_u32le(&pvd[156 + 2]), get_u32le(&pvd[156 + 10])};
-  extent_t cnf_ext;
+  extent_t cnf_ext = {0, 0};
   int f = find_in_dir(src, root, "SYSTEM.CNF", &cnf_ext);
   if (f < 0)
     return (inst_err_t)(-f);
