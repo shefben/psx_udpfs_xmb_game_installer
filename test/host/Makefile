@@ -9,7 +9,8 @@ BUILD := build
 # Platform-neutral modules (no PS2SDK headers outside #ifdef _EE).
 LIB_SRCS := errors.c util.c partname.c source.c iso9660.c hdl_plan.c \
             xmb_text.c apa_osd_header.c transaction.c settings.c \
-            opl_dependency.c hdl_header.c game_pair.c crc32.c sha256.c batch.c
+            opl_dependency.c hdl_header.c game_pair.c crc32.c sha256.c batch.c \
+            manifest.c
 CFLAGS += -DFIXTURE_DIR=\"$(abspath ../fixtures)\"
 TEST_SRCS := $(wildcard test_*.c)
 
