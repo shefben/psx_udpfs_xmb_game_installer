@@ -1,4 +1,5 @@
 #include "../../src/batch.h"
+#include "../../src/manifest.h"
 #include "test.h"
 
 #define MB (1024ull * 1024ull)
@@ -108,4 +109,31 @@ TEST(batch_labels_nonempty) {
     CHECK(batch_status_label((batch_status_t)s)[0]);
   for (int r = BATCH_PENDING; r <= BATCH_SKIPPED; r++)
     CHECK(batch_result_label((batch_result_t)r)[0]);
+}
+
+TEST(batch_from_manifest_duplicate_iso_and_zso) {
+  static manifest_t m;
+  const char *t =
+      "udpfsd-manifest 1 auto=1\n"
+      "/DVD/GTA SA.iso\tok\tSLUS_209.46\tGrand Theft Auto: San Andreas\t4697620480\tDVD\t0\t-\t-\n"
+      "/DVD/GTA SA.zso.iso\tok\tSLUS_209.46\tGrand Theft Auto: San Andreas\t4697620480\tDVD\t0\t-\t-\n"
+      "/DVD/bad.iso\tinvalid:no SYSTEM.CNF\t-\t-\t81920\t-\t0\t-\t-\n";
+  CHECK_EQ_INT(manifest_parse(t, strlen(t), &m), 0);
+  batch_entry_t e[3];
+  for (int i = 0; i < 3; i++) {
+    batch_entry_from_manifest(&e[i], &m.e[i]);
+    if (m.e[i].ok)
+      snprintf(e[i].hidden, sizeof(e[i].hidden), "__.SLUS-20946..GRAND_THEFT_AUTO");
+  }
+  CHECK_STR(e[0].path, "udpfs:/DVD/GTA SA.iso");
+  CHECK_STR(e[1].name, "GTA SA.zso.iso");
+  CHECK_EQ_INT(e[1].type, SRC_TYPE_ZSO);
+  CHECK_STR(e[0].title, "Grand Theft Auto: San Andreas");
+  CHECK_EQ_U64(e[0].bytes, 4697620480ull);
+  CHECK_EQ_INT(e[2].probe_err, ERR_SOURCE_INVALID_ISO);
+  batch_classify(e, 3);
+  CHECK_EQ_INT(e[0].status, BATCH_ELIGIBLE);
+  CHECK_EQ_INT(e[1].status, BATCH_DUPLICATE);
+  CHECK_EQ_INT(e[2].status, BATCH_INVALID);
+  CHECK_EQ_INT(batch_count_selected(e, 3), 1);
 }

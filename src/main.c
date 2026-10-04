@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
 
   static char rows[8][UI_ROW_LEN] = {
       "Install Games from UDPFS",
-      "Install All Games from udpfs:/INSTALL",
+      "Install All Games from the server",
       "Installed Games",
       "Repair XMB Channels",
       "Network Settings",

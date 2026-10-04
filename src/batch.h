@@ -6,15 +6,17 @@
 
 #include "errors.h"
 #include "game_pair.h"
+#include "manifest.h"
 #include "partname.h"
 #include "source.h"
 
-/* Batch install of every game in udpfsd's -install-dir, which the
- * server exposes as udpfs:/INSTALL. Pure selection/summary logic; the
- * console flow is in batch_flow.c. */
+/* Batch install of every game udpfsd lists in its manifest (all game
+ * folders of udpfsd.cfg), or, with a server without a manifest, of every
+ * game in udpfs:/INSTALL. Pure selection/summary logic; the console flow
+ * is in flows.c. */
 
 #define BATCH_DIR "udpfs:/INSTALL"
-#define BATCH_MAX 64
+#define BATCH_MAX 256
 
 typedef enum {
   BATCH_ELIGIBLE = 0,  /* valid PS2 image, pair free */
@@ -56,6 +58,10 @@ typedef struct {
  * invalid -> EXISTS (pair present) -> DUPLICATE (same hidden name as an
  * earlier eligible entry) -> ELIGIBLE. Selects every eligible entry. */
 void batch_classify(batch_entry_t *e, int n);
+
+/* Fill an entry (path, name, type, size, ID, title, probe result) from a
+ * manifest entry; partition names and pair state are filled by the caller. */
+void batch_entry_from_manifest(batch_entry_t *e, const manifest_entry_t *m);
 
 /* Toggle selection; only eligible entries can be selected. Returns the
  * new selected state (0 for ineligible). */

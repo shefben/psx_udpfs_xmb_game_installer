@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include "app_state.h"
+#include "manifest.h"
 #include "network.h"
 #include "ui.h"
 
@@ -18,6 +19,10 @@ void network_start(void) {
     g_app.net = NETWORK_ERROR;
   else
     g_app.net = g_app.iop.udpfs_ok ? NETWORK_READY : NETWORK_ERROR;
+  if (g_app.net == NETWORK_READY)
+    manifest_load(); /* udpfsd's prepared game list, if it offers one */
+  else
+    g_manifest_loaded = 0;
 }
 
 void network_restart(void) { app_boot(); }

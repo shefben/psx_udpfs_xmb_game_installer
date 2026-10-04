@@ -7,6 +7,7 @@
 #include "game_pair.h"
 #include "hdl_plan.h"
 #include "iso9660.h"
+#include "manifest.h"
 #include "partname.h"
 #include "source.h"
 
@@ -61,6 +62,12 @@ inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out);
 
 /* Rebuild partition names after the title was edited. */
 inst_err_t game_plan_set_title(game_plan_t *p, const char *title);
+
+/* Plan from a udpfsd manifest entry without opening the image (size,
+ * disc type and title from the server). game_install() still re-probes
+ * the image, refuses a different game ID or size, and then uses the
+ * PS2's own probe result. */
+inst_err_t game_plan_from_manifest(const manifest_entry_t *m, game_plan_t *p);
 
 /* Gather on-disk facts for a pair (exists/valid/journal). */
 void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f);

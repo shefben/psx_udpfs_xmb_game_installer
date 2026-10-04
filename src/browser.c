@@ -34,7 +34,7 @@ static int list_dir(const char *dir, int *count) {
   iox_dirent_t de;
   int r, n = 0;
   while (n < MAX_ENTRIES && (r = fileXioDread(dd, &de)) > 0) {
-    if (!strcmp(de.name, ".") || !strcmp(de.name, ".."))
+    if (de.name[0] == '.') /* ".", "..", udpfsd's .udpfsd data */
       continue;
     int is_dir = (de.stat.mode & FIO_S_IFMT) == FIO_S_IFDIR;
     source_type_t t = is_dir ? SRC_TYPE_NONE : source_classify(de.name);

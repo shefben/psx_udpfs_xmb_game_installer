@@ -11,6 +11,7 @@
 #include "flows.h"
 #include "hdd_partitions.h"
 #include "hdl_install.h"
+#include "manifest.h"
 #include "network.h"
 #include "opl_dependency.h"
 #include "opl_launcher_payload.h"
@@ -168,7 +169,7 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Batch install of udpfs:/INSTALL (udpfsd -install-dir)               */
+/* Batch install of every game the server lists (manifest or /INSTALL) */
 
 static batch_entry_t batch[BATCH_MAX];
 static game_plan_t batch_plans[BATCH_MAX];
@@ -223,27 +224,58 @@ static void batch_collect(const char *dir, int depth, int *n) {
   }
 }
 
+/* Copy the plan's names/size into entry i and read its pair state. */
+static void batch_fill_from_plan(int i) {
+  batch_entry_t *e = &batch[i];
+  game_plan_t *p = &batch_plans[i];
+  e->bytes = p->iso.source_size;
+  str_copy(e->boot_id, p->iso.boot_id, sizeof(e->boot_id));
+  str_copy(e->title, p->title, sizeof(e->title));
+  str_copy(e->visible, p->visible, sizeof(e->visible));
+  str_copy(e->hidden, p->hidden, sizeof(e->hidden));
+  e->alloc_mb = p->alloc.total_mb;
+  e->pair = PAIR_NONE;
+  if (e->probe_err == ERR_OK) {
+    pair_facts_t f;
+    game_pair_facts(p->visible, p->hidden, &f);
+    e->pair = pair_classify(&f);
+  }
+}
+
 static void batch_probe(int n) {
   for (int i = 0; i < n; i++) {
-    batch_entry_t *e = &batch[i];
-    game_plan_t *p = &batch_plans[i];
-    ui_at(4, " Checking %d/%d: %.60s", i + 1, n, e->name);
+    ui_at(4, " Checking %d/%d: %.60s", i + 1, n, batch[i].name);
     int rc = 0;
-    e->probe_err = game_plan_build(e->path, p, &rc);
-    e->bytes = p->iso.source_size;
-    str_copy(e->boot_id, p->iso.boot_id, sizeof(e->boot_id));
-    str_copy(e->title, p->title, sizeof(e->title));
-    str_copy(e->visible, p->visible, sizeof(e->visible));
-    str_copy(e->hidden, p->hidden, sizeof(e->hidden));
-    e->alloc_mb = p->alloc.total_mb;
-    e->pair = PAIR_NONE;
-    if (e->probe_err == ERR_OK) {
-      pair_facts_t f;
-      game_pair_facts(p->visible, p->hidden, &f);
-      e->pair = pair_classify(&f);
-    }
+    batch[i].probe_err = game_plan_build(batch[i].path, &batch_plans[i], &rc);
+    batch_fill_from_plan(i);
   }
   batch_classify(batch, n);
+}
+
+/* Fill batch[] from udpfsd's manifest (every configured game folder, no
+ * image probing), else by probing udpfs:/INSTALL. Returns the count. */
+static int batch_load_entries(const char *title) {
+  int n = 0;
+  manifest_load();
+  if (!g_manifest_loaded) {
+    ui_header(title, "Reading " BATCH_DIR " ...");
+    batch_collect(BATCH_DIR, 1, &n);
+    ui_header(title, "Checking images (ISO9660 + SYSTEM.CNF) ...");
+    batch_probe(n);
+    return n;
+  }
+  ui_header(title, "Checking the server's game list against the HDD ...");
+  for (int i = 0; i < g_manifest.n && n < BATCH_MAX; i++, n++) {
+    batch_entry_from_manifest(&batch[n], &g_manifest.e[i]);
+    memset(&batch_plans[n], 0, sizeof(batch_plans[n]));
+    if (g_manifest.e[i].ok)
+      batch[n].probe_err = game_plan_from_manifest(&g_manifest.e[i], &batch_plans[n]);
+    ui_at(4, " %d/%d: %.60s", n + 1, g_manifest.n, batch[n].name);
+    if (batch[n].probe_err == ERR_OK)
+      batch_fill_from_plan(n);
+  }
+  batch_classify(batch, n);
+  return n;
 }
 
 void flow_batch_install(void) {
@@ -251,19 +283,14 @@ void flow_batch_install(void) {
     ui_message("Install All", "The network is not ready. See Network Settings.");
     return;
   }
-  ui_header("Install All Games", "Reading " BATCH_DIR " ...");
-  int n = 0;
-  batch_collect(BATCH_DIR, 1, &n);
+  int n = batch_load_entries("Install All Games");
   if (n == 0) {
     ui_message("Install All Games",
-               "No .iso/.zso games found in " BATCH_DIR ".\n\n"
-               "Start the server with the install folder, e.g.\n"
-               "  udpfsd -fsroot D:\\PS2 -install-dir D:\\PS2\\ToInstall -ro\n"
-               "(this udpfsd build is in dist/udpfsd/).");
+               "No .iso/.zso games found on the server.\n\n"
+               "Set the game folders (dvd, cd, games, install) in udpfsd.cfg\n"
+               "next to the udpfsd from dist/udpfsd/ and restart it.");
     return;
   }
-  ui_header("Install All Games", "Checking images (ISO9660 + SYSTEM.CNF) ...");
-  batch_probe(n);
 
   /* Selection: Square toggles, X starts, O backs out. */
   int sel = 0;

@@ -70,7 +70,8 @@ static int split_tabs(char *line, char **f, int max) {
 
 static int parse_entry(char *line, manifest_entry_t *e) {
   char *f[9];
-  if (split_tabs(line, f, 9) != 9 || f[0][0] != '/' || strlen(f[0]) >= sizeof(e->path))
+  /* room for the "udpfs:" prefix the installer adds */
+  if (split_tabs(line, f, 9) != 9 || f[0][0] != '/' || strlen(f[0]) + 6 >= sizeof(e->path))
     return -1;
   memset(e, 0, sizeof(*e));
   str_copy(e->path, f[0], sizeof(e->path));

@@ -2,6 +2,20 @@
 #include <string.h>
 
 #include "batch.h"
+#include "util.h"
+
+void batch_entry_from_manifest(batch_entry_t *e, const manifest_entry_t *m) {
+  memset(e, 0, sizeof(*e));
+  /* manifest_parse() rejects paths too long for the "udpfs:" prefix */
+  snprintf(e->path, sizeof(e->path), "udpfs:%.*s", (int)sizeof(e->path) - 7, m->path);
+  const char *slash = strrchr(m->path, '/');
+  str_copy(e->name, slash ? slash + 1 : m->path, sizeof(e->name));
+  e->type = source_classify(e->name);
+  e->bytes = m->bytes;
+  e->probe_err = m->ok ? ERR_OK : ERR_SOURCE_INVALID_ISO;
+  str_copy(e->boot_id, m->id, sizeof(e->boot_id));
+  str_copy(e->title, m->title, sizeof(e->title));
+}
 
 void batch_classify(batch_entry_t *e, int n) {
   for (int i = 0; i < n; i++) {

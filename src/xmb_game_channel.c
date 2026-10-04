@@ -6,6 +6,7 @@
 #include "hdd_partitions.h"
 #include "hdl_header.h"
 #include "hdl_install.h"
+#include "manifest.h"
 #include "opl_dependency.h"
 #include "opl_launcher_payload.h"
 #include "pfs_channel.h"
@@ -55,6 +56,10 @@ inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out) {
 
   char title[64];
   default_display_title(&p->iso, path, title, sizeof(title));
+  /* udpfsd's prepared title (CFG / game list), for the same game only */
+  const manifest_entry_t *me = g_manifest_loaded ? manifest_find_path(&g_manifest, path) : NULL;
+  if (me && me->ok && !strcmp(me->id, p->iso.boot_id) && me->title[0])
+    str_copy(title, me->title, sizeof(title));
   if (game_plan_set_title(p, title))
     return ERR_SOURCE_SYSTEM_CNF;
   /* Plan only with buckets this drive's APA driver accepts. */
@@ -62,6 +67,28 @@ inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out) {
   if (hdd_space_mb(NULL, NULL, &max_mb) < 0)
     return ERR_HDD_MISSING;
   return hdl_plan_alloc((uint64_t)p->iso.sectors * ISO_SECTOR, max_mb, &p->alloc);
+}
+
+inst_err_t game_plan_from_manifest(const manifest_entry_t *m, game_plan_t *p) {
+  memset(p, 0, sizeof(*p));
+  if (!m->ok || m->bytes == 0 || m->bytes % ISO_SECTOR || m->bytes / ISO_SECTOR > 0xFFFFFFFFull)
+    return ERR_SOURCE_INVALID_ISO;
+  snprintf(p->source_path, sizeof(p->source_path), "udpfs:%.*s",
+           (int)sizeof(p->source_path) - 7, m->path);
+  p->type = source_classify(p->source_path);
+  str_copy(p->iso.boot_id, m->id, sizeof(p->iso.boot_id));
+  if (boot_id_to_part_id(m->id, p->iso.part_id))
+    return ERR_SOURCE_SYSTEM_CNF;
+  p->iso.source_size = m->bytes;
+  p->iso.sectors = (uint32_t)(m->bytes / ISO_SECTOR);
+  p->iso.disc_type = m->dvd ? DISC_TYPE_DVD : DISC_TYPE_CD;
+  p->iso.layer1_start = m->layer1;
+  if (game_plan_set_title(p, m->title))
+    return ERR_INVALID_ARG;
+  uint32_t max_mb = 0;
+  if (hdd_space_mb(NULL, NULL, &max_mb) < 0)
+    return ERR_HDD_MISSING;
+  return hdl_plan_alloc(m->bytes, max_mb, &p->alloc);
 }
 
 inst_err_t game_plan_set_title(game_plan_t *p, const char *title) {
@@ -108,12 +135,26 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
     f->visible_valid = channel_quick_check(visible) == ERR_OK;
 }
 
-/* Jacket: udpfs:/ART/<BOOT_ID>.png, then <source>.png, then default. */
+/* Jacket: udpfsd's prepared jkt/<BOOT_ID>.png, then udpfs:/ART/<BOOT_ID>.png,
+ * then <source>.png, then the built-in default. */
 static void load_jacket(const char *boot_id, const char *source_path,
                         const uint8_t **data, uint32_t *size, void **owned) {
   char path[SOURCE_PATH_MAX + 8];
   *owned = NULL;
   if (g_app.net == NETWORK_READY) {
+    const manifest_entry_t *me = g_manifest_loaded ? manifest_find_id(&g_manifest, boot_id) : NULL;
+    if (me && me->jacket[0]) {
+      void *buf = NULL;
+      snprintf(path, sizeof(path), MANIFEST_DIR "/%s", me->jacket);
+      int n = file_load(path, &buf, JACKET_MAX);
+      if (n > 0 && png_basic_valid(buf, (uint32_t)n)) {
+        *data = buf;
+        *size = (uint32_t)n;
+        *owned = buf;
+        return;
+      }
+      free(buf);
+    }
     const char *cands[2] = {path, NULL};
     snprintf(path, sizeof(path), "udpfs:/ART/%s.png", boot_id);
     char alt[SOURCE_PATH_MAX + 8];
@@ -261,6 +302,10 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     rep->detail = "source changed since it was selected";
     goto out_src;
   }
+  /* The PS2's own probe is authoritative for everything the HDL header
+   * and the verification use (volume ID, PVD size, disc type, layer
+   * break); a plan from the server's manifest only chose the game. */
+  p->iso = again;
   /* 5. names are p->visible/p->hidden (one function, cannot drift) */
   if (!partition_pair_matches(p->visible, p->hidden)) {
     rep->err = ERR_INTERNAL;
