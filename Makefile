@@ -58,7 +58,7 @@ $(BUILD)/.refs-ok: reference/REVISIONS.txt FORCE
 	@bash tools/fetch-references.sh --check
 	$(call UPDATE_STAMP,$@,$(shell cat reference/REVISIONS.txt))
 
-.PHONY: all dev kelfs dist test test-graph test-udpfsd udpfsd references irx driver driver-check clean distclean FORCE
+.PHONY: all dev kelfs dist package test test-graph test-udpfsd udpfsd references irx driver driver-check clean distclean FORCE
 
 all: test dev
 
@@ -222,6 +222,11 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME)
 	cp docs/QUICKSTART.md $(DIST)/
 	cp KNOWN_LIMITATIONS.md $(DIST)/
 	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF) $(BUILD)/.kelf-mode
+
+# ---- 7. end-user zip (README, PS2 bootstrap ELF, PC/udpfsd folder) -----
+PACKAGE := $(ROOT)/PSX-UDPFS-Installer.zip
+package: dist
+	bash tools/make-package.sh $(DIST) $(PACKAGE)
 
 clean:
 	rm -rf $(BUILD)
