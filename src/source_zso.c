@@ -1,4 +1,5 @@
 #include <string.h>
+#include <strings.h>
 
 #include "lz4_block.h"
 #include "source_zso.h"
@@ -72,6 +73,13 @@ static int load_block(zso_src_t *z, uint32_t b) {
 
 static int z_open(GameSource *src, const char *path) {
   zso_src_t *z = src->priv;
+  char raw[SOURCE_PATH_MAX];
+  size_t n = strlen(path);
+  if (z->strip_iso && n > 8 && !strcasecmp(path + n - 8, ".zso.iso")) {
+    memcpy(raw, path, n - 4);
+    raw[n - 4] = 0;
+    path = raw;
+  }
   if (source_open(z->inner, path) != ERR_OK)
     return z->inner->last_rc ? z->inner->last_rc : -5;
   uint8_t h[24];
@@ -148,6 +156,7 @@ static const GameSourceOps ZSO_OPS = {z_open, z_close, z_read, z_seek, z_size};
 void source_zso_init(GameSource *src, zso_src_t *z, GameSource *inner) {
   memset(src, 0, sizeof(*src));
   z->inner = inner;
+  z->strip_iso = 0;
   z->idx_count = 0;
   z->chunk_len = 0;
   z->cur_block = -1;

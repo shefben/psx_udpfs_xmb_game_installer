@@ -42,22 +42,39 @@ const char *install_stage_name(install_stage_t s) {
   return "?";
 }
 
+int game_source_is_server(const char *path) { return !strncmp(path, "udpfs:", 6); }
+
 static GameSource g_src, g_inner;
 static udpfs_src_t g_usrc;
 static zso_src_t g_zso;
 
-/* udpfs: (server-side decompression) or any other fileXio device such
- * as mass0: (USB); a raw .zso file is decompressed here. */
-static void source_init_for(const char *path) {
-  if (source_is_raw_zso(path)) {
+/* Any fileXio device (udpfs:, mass0:). ZSO is decompressed here: a raw
+ * .zso (USB), and udpfsd's virtual "<x>.zso.iso" too - the raw .zso next
+ * to it is read instead, so only the compressed bytes cross the network.
+ * Same logical ISO bytes either way (CRC, resume, verify unchanged). */
+static void source_init_for(const char *path, int zso_on_ps2) {
+  int virt = zso_on_ps2 && game_source_is_server(path) && source_classify(path) == SRC_TYPE_ZSO;
+  if (source_is_raw_zso(path) || virt) {
     source_udpfs_init(&g_inner, &g_usrc);
     source_zso_init(&g_src, &g_zso, &g_inner);
+    g_zso.strip_iso = virt;
   } else {
     source_udpfs_init(&g_src, &g_usrc);
   }
 }
 
-int game_source_is_server(const char *path) { return !strncmp(path, "udpfs:", 6); }
+/* Open with PS2-side ZSO decompression; if that fails (a ZSO variant this
+ * reader does not support), fall back to udpfsd's decompression. */
+static inst_err_t game_source_open(const char *path) {
+  source_init_for(path, 1);
+  inst_err_t e = source_open(&g_src, path);
+  if (e && game_source_is_server(path) && source_classify(path) == SRC_TYPE_ZSO) {
+    source_init_for(path, 0);
+    e = source_open(&g_src, path);
+  }
+  return e;
+}
+
 
 inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out) {
   memset(p, 0, sizeof(*p));
@@ -65,8 +82,7 @@ inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out) {
   str_copy(p->source_path, path, sizeof(p->source_path));
   p->type = source_classify(path);
 
-  source_init_for(path);
-  inst_err_t e = source_open(&g_src, path);
+  inst_err_t e = game_source_open(path);
   if (!e)
     e = iso_probe(&g_src, iso_hint_from_path(path), &p->iso);
   *rc_out = g_src.last_rc;
@@ -472,8 +488,7 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     goto out;
   }
   /* 2-4. source still accessible, re-parse and compare with the plan */
-  source_init_for(p->source_path);
-  if ((rep->err = source_open(&g_src, p->source_path))) {
+  if ((rep->err = game_source_open(p->source_path))) {
     rep->rc = g_src.last_rc;
     goto out;
   }

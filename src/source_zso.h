@@ -14,6 +14,9 @@
 
 typedef struct {
   GameSource *inner;
+  /* Open "<x>.zso" for the path "<x>.zso.iso" (udpfsd's virtual name):
+   * the raw, still compressed file goes over the network. */
+  int strip_iso;
   uint64_t size;      /* uncompressed */
   uint32_t block_size;
   uint32_t num_blocks;

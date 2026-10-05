@@ -121,6 +121,41 @@ TEST(zso_source_reads_any_range_like_the_plain_image) {
   free(z);
 }
 
+/* Inner source that records the path it was opened with. */
+static char opened[SOURCE_PATH_MAX];
+static memsrc_t *rec_m;
+static int rec_open(GameSource *s, const char *path) {
+  (void)s;
+  snprintf(opened, sizeof(opened), "%s", path);
+  rec_m->pos = 0;
+  return 0;
+}
+
+TEST(zso_source_strip_iso_opens_the_raw_file) {
+  enum { BLOCKS = 3 };
+  static uint8_t expect[BLOCKS * 2048];
+  size_t zlen;
+  uint8_t *z = make_ziso(BLOCKS, &zlen, expect);
+  GameSource inner, src;
+  memsrc_t m;
+  memsrc_init(&inner, &m, zlen);
+  memsrc_add(&m, 0, z, (uint32_t)zlen);
+  GameSourceOps ops = *inner.ops;
+  ops.open = rec_open;
+  inner.ops = &ops;
+  rec_m = &m;
+  zso_src_t zs;
+  source_zso_init(&src, &zs, &inner);
+  zs.strip_iso = 1;
+  CHECK_EQ_INT(source_open(&src, "udpfs:/DVD/Game.zso.iso"), ERR_OK);
+  CHECK_STR(opened, "udpfs:/DVD/Game.zso");
+  CHECK_STR(src.path, "udpfs:/DVD/Game.zso.iso"); /* logical path unchanged */
+  uint8_t got[BLOCKS * 2048];
+  CHECK_EQ_INT(source_read_exact(&src, got, sizeof(got)), ERR_OK);
+  CHECK(memcmp(got, expect, sizeof(got)) == 0);
+  free(z);
+}
+
 TEST(zso_source_rejects_bad_header) {
   static const uint8_t junk[64] = "NOTZ";
   GameSource inner, src;
