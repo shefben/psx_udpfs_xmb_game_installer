@@ -80,32 +80,71 @@ int g_hdl_use_pump;
 #define PUMP_SLOT (128 * 1024)
 #define PUMP_SLOTS 4
 
+/* Checkpoint bookkeeping shared by both copy loops. `safe` is the last
+ * position known to be on the HDD with `seg` = CRC-32 of the source bytes
+ * since the previous checkpoint `cp` (whose cumulative CRC is cp_crc). */
+typedef struct {
+  const stream_cb_t *cb;
+  uint64_t cp, safe;
+  uint32_t cp_crc, seg;
+} cp_state_t;
+
+static uint32_t cum_crc(const cp_state_t *c) { return crc32_combine(c->cp_crc, c->seg, c->safe - c->cp); }
+
+/* Save a checkpoint at the safe position (HDD cache flushed first, so the
+ * journal never names data that is only in the drive's cache). 0 / -1. */
+static int save_checkpoint(cp_state_t *c) {
+  if (c->safe <= c->cp || !c->cb || !c->cb->checkpoint)
+    return 0;
+  fileXioDevctl("hdd0:", HDIOC_FLUSH, NULL, 0, NULL, 0);
+  uint32_t cum = cum_crc(c);
+  if (c->cb->checkpoint(c->cb->cp_ctx, c->safe, cum, c->seg))
+    return -1;
+  c->cp = c->safe;
+  c->cp_crc = cum;
+  c->seg = 0;
+  return 0;
+}
+
+/* On any stop, the checkpoint also moves to where the copy really got
+ * to, so a resume repeats as little as possible. */
+static void finish_stream(cp_state_t *c, hdl_result_t *out, uint64_t total) {
+  out->bytes = c->safe;
+  out->crc32 = cum_crc(c);
+  if (out->err == ERR_OK) {
+    if (c->safe != total)
+      out->err = ERR_HDL_WRITE;
+  } else {
+    save_checkpoint(c); /* best effort: the last periodic one stays */
+  }
+}
+
 /* Copy loop with hddpump.irx: the IOP writes block n on its own thread
  * while the EE reads block n+1 from the source (fileXio's IOP thread),
  * so network and HDD work at the same time. hdl0: is already mounted.
  * Returns 1 and fills *out when it ran, 0 if the pump is unavailable
  * (nothing written; the caller uses its own loop). */
-static int stream_pumped(GameSource *src, uint64_t total, uint64_t start, uint32_t start_crc,
-                         const stream_cb_t *cb, hdl_result_t *out) {
+static int stream_pumped(GameSource *src, uint64_t total, cp_state_t *c, hdl_result_t *out) {
   uint32_t slot = 0;
   if (!g_hdl_use_pump ||
-      pump_begin("hdl0:", (uint32_t)(start / ISO_SECTOR), PUMP_SLOT, PUMP_SLOTS, &slot) < 0)
+      pump_begin("hdl0:", (uint32_t)(c->safe / ISO_SECTOR), PUMP_SLOT, PUMP_SLOTS, &slot) < 0)
     return 0;
   if (slot > STREAM_BUF_SIZE)
     slot = STREAM_BUF_SIZE;
   *out = res(ERR_OK, 0);
+  uint64_t start = c->safe, queued = c->safe;
+  uint32_t qseg = c->seg; /* segment CRC including queued, unflushed blocks */
   if (src->ops->seek(src, (int64_t)start, SRC_SEEK_SET) != (int64_t)start) {
     out->err = ERR_SOURCE_READ;
     pump_end(NULL);
+    finish_stream(c, out, total);
     return 1;
   }
   time_t t_start = time(NULL), last = 0;
-  uint64_t done = start, next_cp = start + STREAM_CHECKPOINT;
-  uint32_t crc = start_crc;
   int abort = 0;
   memset(&g_stream_timing, 0, sizeof(g_stream_timing));
-  while (done < total) {
-    uint32_t want = total - done > slot ? slot : (uint32_t)(total - done);
+  while (queued < total) {
+    uint32_t want = total - queued > slot ? slot : (uint32_t)(total - queued);
     u64 t0 = GetTimerSystemTime();
     inst_err_t e = source_read_exact(src, stream_buf, want);
     if (e) {
@@ -114,7 +153,7 @@ static int stream_pumped(GameSource *src, uint64_t total, uint64_t start, uint32
       break;
     }
     u64 t1 = GetTimerSystemTime();
-    crc = crc32_update(crc, stream_buf, want);
+    uint32_t nseg = crc32_update(qseg, stream_buf, want);
     u64 t2 = GetTimerSystemTime();
     /* Waits only while every IOP buffer is still queued for the HDD. */
     int w = pump_put(stream_buf, want);
@@ -123,30 +162,37 @@ static int stream_pumped(GameSource *src, uint64_t total, uint64_t start, uint32
       out->rc = w;
       break;
     }
-    done += want;
+    queued += want;
+    qseg = nseg;
     g_stream_timing.read_ticks += t1 - t0;
     g_stream_timing.crc_ticks += t2 - t1;
     g_stream_timing.write_ticks += GetTimerSystemTime() - t2; /* HDD wait only */
-    g_stream_timing.bytes = done - start;
-    report(cb, t_start, &last, done, total, &abort);
-    if (done >= next_cp && done < total && cb && cb->checkpoint) {
-      next_cp = done + STREAM_CHECKPOINT;
-      /* A checkpoint may only cover bytes that are on the HDD. */
-      int f = pump_flush();
+    g_stream_timing.bytes = queued - start;
+    report(c->cb, t_start, &last, queued, total, &abort);
+    if (queued >= c->cp + STREAM_CHECKPOINT && queued < total) {
+      int f = pump_flush(); /* everything queued is now on the HDD */
       if (f < 0) {
         out->err = ERR_HDL_WRITE;
         out->rc = f;
         break;
       }
-      if (cb->checkpoint(cb->cp_ctx, done, crc)) {
+      c->safe = queued;
+      c->seg = qseg;
+      if (save_checkpoint(c) < 0) {
         out->err = ERR_JOURNAL;
         break;
       }
+      qseg = c->seg;
     }
     if (abort) {
       out->err = ERR_USER_ABORT;
       break;
     }
+  }
+  /* Whatever was queued is on the HDD once the flush succeeds. */
+  if (pump_flush() == 0) {
+    c->safe = queued;
+    c->seg = qseg;
   }
   uint64_t wrote = 0;
   int r = pump_end(&wrote);
@@ -154,11 +200,11 @@ static int stream_pumped(GameSource *src, uint64_t total, uint64_t start, uint32
     out->err = ERR_HDL_WRITE;
     out->rc = r;
   }
-  /* bytes = what is really on the HDD (from the start of the game). */
-  out->bytes = start + wrote;
-  out->crc32 = crc;
-  if (out->err == ERR_OK && out->bytes != total)
-    out->err = ERR_HDL_WRITE;
+  if (start + wrote < c->safe) { /* defensive: never claim unwritten bytes */
+    c->safe = c->cp;
+    c->seg = 0;
+  }
+  finish_stream(c, out, total);
   return 1;
 }
 
@@ -170,12 +216,13 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total, uin
 
   if (total == 0 || total % ISO_SECTOR || start >= total || start % ISO_SECTOR)
     return res(ERR_INVALID_ARG, 0);
+  cp_state_t c = {cb, start, start, start_crc, 0};
 
   fileXioUmount("hdl0:");
   int r = fileXioMount("hdl0:", dev, FIO_MT_RDWR);
   if (r < 0)
     return res(ERR_HDL_MOUNT, r);
-  if (stream_pumped(src, total, start, start_crc, cb, &out)) {
+  if (stream_pumped(src, total, &c, &out)) {
     fileXioUmount("hdl0:");
     return out;
   }
@@ -193,13 +240,11 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total, uin
   }
 
   time_t t_start = time(NULL), last = 0;
-  uint64_t written = start, next_cp = start + STREAM_CHECKPOINT;
-  uint32_t crc = start_crc;
   int abort = 0;
   memset(&g_stream_timing, 0, sizeof(g_stream_timing));
-  while (written < total) {
-    uint32_t want = total - written > STREAM_BUF_SIZE ? STREAM_BUF_SIZE
-                                                      : (uint32_t)(total - written);
+  while (c.safe < total) {
+    uint32_t want = total - c.safe > STREAM_BUF_SIZE ? STREAM_BUF_SIZE
+                                                     : (uint32_t)(total - c.safe);
     /* A short read before the expected end is a hard error. */
     u64 t0 = GetTimerSystemTime();
     inst_err_t e = source_read_exact(src, stream_buf, want);
@@ -216,8 +261,8 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total, uin
     fileXioSetBlockMode(FXIO_NOWAIT);
     int w = fileXioWrite(fd, stream_buf, (int)want);
     /* CRC over exactly the bytes received from UDPFS (for a ZSO source:
-     * the decompressed ISO stream). */
-    crc = crc32_update(crc, stream_buf, want);
+     * the decompressed ISO stream); kept only once the write succeeded. */
+    uint32_t nseg = crc32_update(c.seg, stream_buf, want);
     u64 t2 = GetTimerSystemTime();
     if (w >= 0)
       fileXioWaitAsync(FXIO_WAIT, &w);
@@ -227,36 +272,63 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total, uin
       out.rc = w;
       break;
     }
-    written += want;
+    c.safe += want;
+    c.seg = nseg;
     /* CRC and HDD write overlap: each is timed from t1 on its own, so the
      * time per block is network + the slower of the two. */
     g_stream_timing.read_ticks += t1 - t0;
     g_stream_timing.crc_ticks += t2 - t1;
     g_stream_timing.write_ticks += GetTimerSystemTime() - t1;
-    g_stream_timing.bytes = written - start;
-    report(cb, t_start, &last, written, total, &abort);
-    if (written >= next_cp && written < total && cb && cb->checkpoint) {
-      next_cp = written + STREAM_CHECKPOINT;
-      if (cb->checkpoint(cb->cp_ctx, written, crc)) {
-        out.err = ERR_JOURNAL;
-        break;
-      }
+    g_stream_timing.bytes = c.safe - start;
+    report(cb, t_start, &last, c.safe, total, &abort);
+    if (c.safe >= c.cp + STREAM_CHECKPOINT && c.safe < total && save_checkpoint(&c) < 0) {
+      out.err = ERR_JOURNAL;
+      break;
     }
     if (abort) {
       out.err = ERR_USER_ABORT;
       break;
     }
   }
-  out.bytes = written;
-  out.crc32 = crc;
-  if (out.err == ERR_OK && written != total)
-    out.err = ERR_HDL_WRITE;
+  finish_stream(&c, &out, total);
 
 done:
   if (fileXioClose(fd) < 0 && out.err == ERR_OK)
     out.err = ERR_HDL_WRITE;
   fileXioUmount("hdl0:");
   return out;
+}
+
+int hdl_crc_range(const char *hidden, uint64_t start, uint64_t end, uint32_t *crc) {
+  char dev[48];
+  if (end <= start || start % ISO_SECTOR || end % ISO_SECTOR)
+    return -22;
+  snprintf(dev, sizeof(dev), "hdd0:%s", hidden);
+  fileXioUmount("hdl0:");
+  int r = fileXioMount("hdl0:", dev, FIO_MT_RDONLY);
+  if (r < 0)
+    return r;
+  int fd = fileXioOpen("hdl0:", FIO_O_RDONLY);
+  if (fd < 0) {
+    fileXioUmount("hdl0:");
+    return fd;
+  }
+  uint32_t c = 0;
+  r = fileXioLseek(fd, (int)(start / ISO_SECTOR), FIO_SEEK_SET) == (int)(start / ISO_SECTOR) ? 0 : -5;
+  for (uint64_t pos = start; !r && pos < end;) {
+    uint32_t want = end - pos > STREAM_BUF_SIZE ? STREAM_BUF_SIZE : (uint32_t)(end - pos);
+    int n = fileXioRead(fd, stream_buf, (int)want);
+    if (n != (int)want) {
+      r = n < 0 ? n : -5;
+      break;
+    }
+    c = crc32_update(c, stream_buf, want);
+    pos += want;
+  }
+  fileXioClose(fd);
+  fileXioUmount("hdl0:");
+  *crc = c;
+  return r;
 }
 
 static uint8_t hdr[HDL_HEADER_SIZE] __attribute__((aligned(64)));

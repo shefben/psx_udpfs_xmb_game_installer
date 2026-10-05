@@ -33,6 +33,17 @@ TEST(crc32_matches_bitwise_reference_any_alignment_and_length) {
   CHECK_EQ_INT(crc32_update(0, buf + 3, 4096), crc32_bitwise(0, buf + 3, 4096));
 }
 
+TEST(crc32_combine_equals_concatenation) {
+  static uint8_t buf[5000];
+  for (size_t i = 0; i < sizeof(buf); i++)
+    buf[i] = (uint8_t)(i * 31 + 7);
+  for (size_t cut = 0; cut <= sizeof(buf); cut += 777) {
+    uint32_t a = crc32_update(0, buf, cut), b = crc32_update(0, buf + cut, sizeof(buf) - cut);
+    CHECK_EQ_INT(crc32_combine(a, b, sizeof(buf) - cut), crc32_update(0, buf, sizeof(buf)));
+  }
+  CHECK_EQ_INT(crc32_combine(0x12345678u, 0, 0), 0x12345678u);
+}
+
 TEST(crc32_incremental_equals_oneshot) {
   static uint8_t buf[100000];
   for (size_t i = 0; i < sizeof(buf); i++)

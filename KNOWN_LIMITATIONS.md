@@ -92,8 +92,12 @@ level unless stated otherwise.
 * **USB installs** read FAT32/exFAT drives on the first USB device
   (`mass0:`). Covers and OPL settings still come from udpfsd when it is
   running; without it the default cover is used.
-* **Resume copy** continues from the last 256 MiB checkpoint and always
-  reads the whole game back afterwards (START cannot skip that check).
+* **Resume copy / pause.** Checkpoints every 64 MiB and where a copy stops
+  (pause, network error, abort), each with the HDD cache flushed. A resume
+  reads back up to the 4 newest checkpoint parts and continues after the
+  newest one that is still correct (else from the start of the same
+  partition); the whole game is read back afterwards (START cannot skip
+  that check).
 * **Fast copy (iop/hddpump)** is new and untested on hardware. It writes
   through 4 IOP buffers of 128 KiB; if it cannot allocate two, or the
   module does not load, the previous copy loop is used. Network Settings >

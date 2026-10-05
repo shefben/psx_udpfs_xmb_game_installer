@@ -160,9 +160,13 @@ IF SOMETHING GOES WRONG
   Game shows a plain       Restart the server (it rebuilds the covers),
   "PS2 GAME" cover         then Installed Games > the game > Repair XMB
                            channel.
+  Pause a copy             Press START while a game is copying. It stops at
+                           once and keeps what is on the HDD.
   Copy failed / power cut  Installed Games > the game > Resume copy
                            continues where it stopped (the image must still
                            be at the same place); Install All resumes it too.
+                           The last copied part is read back first; a part
+                           that did not reach the disk is copied again.
   Install hangs or fails   Network Settings > Copy engine: basic (turns off
   with the fast copy       the overlapped network + HDD copy), Save.
   Anything else            Diagnostics on the DESR shows PASS / FAIL for

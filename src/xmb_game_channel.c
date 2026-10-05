@@ -28,6 +28,8 @@ const char *install_stage_name(install_stage_t s) {
   switch (s) {
   case STAGE_PREPARING:
     return "preparing";
+  case STAGE_CHECKING_RESUME:
+    return "checking the data already copied";
   case STAGE_CREATING_HDL:
     return "creating HDL";
   case STAGE_COPYING:
@@ -358,18 +360,58 @@ static void fail(tx_journal_t *j, install_report_t *rep, inst_err_t e, int rc,
 
 /* stream_cb_t.checkpoint: the first `bytes` are on the HDD; save where
  * a resumed copy would continue. */
-static int journal_checkpoint(void *cp_ctx, uint64_t bytes, uint32_t crc) {
+static seg_list_t g_segs;
+
+static int journal_checkpoint(void *cp_ctx, uint64_t bytes, uint32_t cum_crc, uint32_t seg_crc) {
   tx_journal_t *j = cp_ctx;
+  /* Segment list first: a journal never names a checkpoint whose
+   * segment cannot be re-checked. */
+  if (seg_add(&g_segs, bytes, cum_crc, seg_crc) < 0 ||
+      tx_seg_save(APP_STATE_DIR, j->hidden_partition, &g_segs) != ERR_OK)
+    return 1;
   j->bytes_written = bytes;
   j->has_resume_crc = 1;
-  j->resume_crc32 = crc;
+  j->resume_crc32 = cum_crc;
   return persist(j) != ERR_OK;
+}
+
+static const char *g_crc_hidden;
+static int crc_hdd(void *ctx, uint64_t start, uint64_t end, uint32_t *crc) {
+  (void)ctx;
+  return hdl_crc_range(g_crc_hidden, start, end, crc);
 }
 
 static void stage(const install_ui_t *ui, install_report_t *rep, install_stage_t s) {
   rep->stage = s;
   if (ui && ui->stage)
     ui->stage(ui->ctx, s);
+}
+
+/* Resume: read back the newest checkpoint segments from the HDD and keep
+ * the newest one that is still correct; everything after it is copied
+ * again. Without a segment list (older journal) the journal's checkpoint
+ * is used as it is. The full read-back after the copy checks the rest. */
+static void pick_resume_point(tx_journal_t *j, const install_ui_t *ui, install_report_t *rep) {
+  if (tx_seg_load(APP_STATE_DIR, j->hidden_partition, &g_segs) != ERR_OK || g_segs.n == 0)
+    return;
+  /* The list may run ahead of the journal (power cut between the two). */
+  while (g_segs.n && g_segs.s[g_segs.n - 1].bytes > j->bytes_written)
+    g_segs.n--;
+  stage(ui, rep, STAGE_CHECKING_RESUME);
+  g_crc_hidden = j->hidden_partition;
+  int checked = 0;
+  int k = seg_pick_resume(&g_segs, 4, crc_hdd, NULL, &checked);
+  rep->resume_checked = checked;
+  if (k < 0) { /* nothing re-checks: start the copy over (same partition) */
+    g_segs.n = 0;
+    j->bytes_written = 0;
+    j->resume_crc32 = 0;
+  } else {
+    g_segs.n = k + 1;
+    j->bytes_written = g_segs.s[k].bytes;
+    j->resume_crc32 = g_segs.s[k].cum_crc;
+  }
+  tx_seg_save(APP_STATE_DIR, j->hidden_partition, &g_segs);
 }
 
 static void finish_report(install_report_t *rep, const char *visible,
@@ -582,12 +624,16 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
 
   hdl_result_t hr;
   if (p->resume) {
+    pick_resume_point(&j, ui, rep);
     if (advance(&j, TX_STREAMING)) {
       rep->err = ERR_JOURNAL;
       goto out_src;
     }
     goto stream;
   }
+  /* A fresh copy: no checkpoints from an earlier attempt. */
+  memset(&g_segs, 0, sizeof(g_segs));
+  tx_seg_remove(APP_STATE_DIR, p->hidden);
   /* 9. journal: TX_PLANNED on disk before the first HDD write */
   str_copy(j.source_path, p->source_path, sizeof(j.source_path));
   j.source_size = p->iso.source_size;
@@ -638,6 +684,10 @@ stream:
     j.bytes_written = hr.bytes;
     j.has_resume_crc = 0;
     j.resume_crc32 = 0;
+    tx_seg_remove(APP_STATE_DIR, p->hidden); /* copy finished */
+  } else if (hr.err == ERR_USER_ABORT && ui && ui->paused && ui->paused(ui->ctx)) {
+    /* Paused: the stop point is already saved as a checkpoint. */
+    hr.err = ERR_PAUSED;
   }
   /* On failure bytes_written stays at the last checkpoint (resume point). */
   if (hr.err) {

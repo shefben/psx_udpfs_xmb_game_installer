@@ -20,14 +20,16 @@ typedef struct {
   /* Return non-zero to abort (polled with progress). */
   int (*should_abort)(void *ctx);
   void *ctx;
-  /* hdl_stream only, optional: called about every STREAM_CHECKPOINT
-   * bytes, after those bytes were written, with the CRC-32 of all bytes
-   * so far. Non-zero return stops the copy (journal not saved). */
-  int (*checkpoint)(void *cp_ctx, uint64_t bytes, uint32_t crc);
+  /* hdl_stream only, optional: a checkpoint - "bytes" are on the HDD
+   * (cache flushed), cum_crc = CRC-32 of source bytes [0, bytes),
+   * seg_crc = CRC-32 of the bytes since the previous checkpoint. Called
+   * every STREAM_CHECKPOINT bytes and once more where a copy stops early
+   * (error, abort, pause). Non-zero return stops the copy. */
+  int (*checkpoint)(void *cp_ctx, uint64_t bytes, uint32_t cum_crc, uint32_t seg_crc);
   void *cp_ctx;
 } stream_cb_t;
 
-#define STREAM_CHECKPOINT (256ull * 1024 * 1024)
+#define STREAM_CHECKPOINT (64ull * 1024 * 1024)
 
 /* Where the time of the running hdl_stream()/hdl_verify() goes, in EE
  * bus clock ticks (GetTimerSystemTime, STREAM_TIMER_HZ per second).
@@ -76,6 +78,9 @@ hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
  * their CRC-32: "Verify game data" for an install whose journal holds
  * the source CRC. */
 hdl_result_t hdl_read_back(const char *hidden, uint64_t total, const stream_cb_t *cb);
+
+/* CRC-32 of installed bytes [start, end) (2048-aligned), read-only. 0 / <0. */
+int hdl_crc_range(const char *hidden, uint64_t start, uint64_t end, uint32_t *crc);
 
 /* Header-only read for repair/manage scans. 0 or <0. */
 int hdl_read_header(const char *hidden, hdl_header_info_t *out);

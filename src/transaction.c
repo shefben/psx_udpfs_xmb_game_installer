@@ -365,10 +365,69 @@ inst_err_t tx_load(const char *dir, const char *partition, tx_journal_t *j) {
   return e;
 }
 
+static int seg_path(const char *dir, const char *partition, char *out, size_t sz) {
+  if (journal_path(dir, partition, out, sz) < 0)
+    return -1;
+  size_t n = strlen(out); /* ".ini" -> ".seg" */
+  if (n < 4)
+    return -1;
+  memcpy(out + n - 4, ".seg", 4);
+  return 0;
+}
+
+static char seg_buf[SEG_MAX * 40];
+
+inst_err_t tx_seg_save(const char *dir, const char *partition, const seg_list_t *l) {
+  char path[160], tmp[168];
+  if (seg_path(dir, partition, path, sizeof(path)) < 0)
+    return ERR_JOURNAL;
+  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+  size_t n = seg_serialize(l, seg_buf, sizeof(seg_buf));
+  if (l->n && !n)
+    return ERR_JOURNAL;
+  if (write_file(tmp, seg_buf, n) != ERR_OK)
+    return ERR_JOURNAL;
+  fileXioRemove(path);
+  return fileXioRename(tmp, path) < 0 ? ERR_JOURNAL : ERR_OK;
+}
+
+inst_err_t tx_seg_load(const char *dir, const char *partition, seg_list_t *l) {
+  char path[160];
+  memset(l, 0, sizeof(*l));
+  if (seg_path(dir, partition, path, sizeof(path)) < 0)
+    return ERR_JOURNAL;
+  int fd = fileXioOpen(path, FIO_O_RDONLY);
+  if (fd < 0) {
+    char tmp[168]; /* power cut between remove and rename */
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    fd = fileXioOpen(tmp, FIO_O_RDONLY);
+    if (fd < 0)
+      return ERR_OK;
+  }
+  int r = fileXioRead(fd, seg_buf, sizeof(seg_buf) - 1);
+  fileXioClose(fd);
+  if (r < 0)
+    return ERR_JOURNAL;
+  seg_buf[r] = 0;
+  seg_parse(seg_buf, l);
+  return ERR_OK;
+}
+
+inst_err_t tx_seg_remove(const char *dir, const char *partition) {
+  char path[160], tmp[168];
+  if (seg_path(dir, partition, path, sizeof(path)) < 0)
+    return ERR_JOURNAL;
+  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+  fileXioRemove(tmp);
+  fileXioRemove(path);
+  return ERR_OK;
+}
+
 inst_err_t tx_remove(const char *dir, const char *partition) {
   char path[160];
   if (journal_path(dir, partition, path, sizeof(path)) < 0)
     return ERR_JOURNAL;
+  tx_seg_remove(dir, partition);
   char tmp[168];
   snprintf(tmp, sizeof(tmp), "%s.tmp", path);
   fileXioRemove(tmp);

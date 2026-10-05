@@ -158,6 +158,8 @@ const char *batch_result_label(batch_result_t r) {
     return "FAILED";
   case BATCH_SKIPPED:
     return "skipped";
+  case BATCH_PAUSED:
+    return "paused";
   }
   return "?";
 }
@@ -173,23 +175,28 @@ void batch_format_row(const batch_entry_t *e, char *out, size_t outsz) {
 }
 
 size_t batch_summary(const batch_entry_t *e, int n, char *out, size_t outsz) {
-  int done = 0, data = 0, failed = 0, skipped = 0;
+  int done = 0, data = 0, failed = 0, paused = 0, skipped = 0;
   for (int i = 0; i < n; i++) {
     if (!e[i].selected)
       continue;
     done += e[i].result == BATCH_DONE;
     data += e[i].result == BATCH_DATA_ONLY;
     failed += e[i].result == BATCH_FAILED;
+    paused += e[i].result == BATCH_PAUSED;
     skipped += e[i].result == BATCH_SKIPPED || e[i].result == BATCH_PENDING;
   }
   int off = snprintf(out, outsz,
-                     "%d installed, %d data only (channel pending), %d failed, %d skipped\n\n",
-                     done, data, failed, skipped);
+                     "%d installed, %d data only (channel pending), %d failed, %d paused, "
+                     "%d skipped\n\n",
+                     done, data, failed, paused, skipped);
   for (int i = 0; i < n && off > 0 && (size_t)off < outsz; i++) {
     if (!e[i].selected)
       continue;
     off += snprintf(out + off, outsz - off, "%-9s %.40s\n", batch_result_label(e[i].result),
                     e[i].name);
+    if (e[i].result == BATCH_PAUSED && (size_t)off < outsz)
+      off += snprintf(out + off, outsz - off,
+                      "          Installed Games > Resume copy continues it\n");
     if (e[i].result == BATCH_FAILED && (size_t)off < outsz)
       off += snprintf(out + off, outsz - off, "          %s at %s\n", err_name(e[i].err),
                       e[i].stage ? e[i].stage : "-");

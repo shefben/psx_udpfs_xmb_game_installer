@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "errors.h"
+#include "resume_seg.h"
 
 /* Per-game install transaction (plan section 24). The journal for a
  * PP./__. pair is the authoritative record of whether its hidden game
@@ -118,6 +119,12 @@ int tx_parse(const char *text, tx_journal_t *out);
 inst_err_t tx_save(const char *dir, const tx_journal_t *j);
 inst_err_t tx_load(const char *dir, const char *partition, tx_journal_t *j);
 inst_err_t tx_remove(const char *dir, const char *partition);
+/* Copy checkpoints next to the journal (install-<name>.seg, resume_seg.h).
+ * tx_remove deletes them too. */
+inst_err_t tx_seg_save(const char *dir, const char *partition, const seg_list_t *l);
+/* Missing file: an empty list and ERR_OK. */
+inst_err_t tx_seg_load(const char *dir, const char *partition, seg_list_t *l);
+inst_err_t tx_seg_remove(const char *dir, const char *partition);
 /* Scan <dir> for journals not in TX_COMPLETE. Returns count (<= max). */
 int tx_scan_unfinished(const char *dir, tx_journal_t *out, int max);
 #endif

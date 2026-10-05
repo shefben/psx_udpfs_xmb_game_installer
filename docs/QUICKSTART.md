@@ -123,8 +123,11 @@ DESR. Back up the HDD partition table before the first run (e.g.
      `IOPRP252.IMG` (the last two are Sony files you supply); pick the
      `.VCD` in either browser.
    * In every list **L2** changes the order and **R2** searches by name.
-   * Hold **SELECT + O** to abort the game being copied. An interrupted
-     copy can be continued: **Installed Games > game > Resume copy**.
+   * Press **START** while a game copies to **pause** it; hold **SELECT + O**
+     to abort. A paused or interrupted copy continues with **Installed
+     Games > game > Resume copy** (or Install All): the last copied part is
+     read back and checked first, and only data after the last good part is
+     copied again.
    * **Installed Games > game > Rename** changes the title shown in the XMB.
 
 5. **Play.** Return to the XMB (or reboot). Each game has its own channel

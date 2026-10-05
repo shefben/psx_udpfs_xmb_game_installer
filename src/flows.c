@@ -43,6 +43,7 @@ typedef struct {
   install_stage_t stage;
   int no_skip;     /* START does not skip the read-back (Verify game data) */
   int skip_verify; /* START was pressed during the read-back */
+  int paused;      /* START was pressed while copying */
 } progress_ctx_t;
 
 #define ROW_STAGE 11
@@ -94,6 +95,8 @@ static void cb_progress(void *ctx, uint64_t done, uint64_t total, uint32_t el) {
           rd % 10, cr / 10, cr % 10, wr / 10, wr % 10);
   if (c && c->stage == STAGE_VALIDATING && !c->no_skip)
     ui_at(ROW_BAR + 4, " [START] skip verification    Hold [SELECT]+[O] to abort");
+  else if (c && c->stage == STAGE_COPYING && c->p)
+    ui_at(ROW_BAR + 4, " [START] pause (resume later)    Hold [SELECT]+[O] to abort");
   else
     ui_at(ROW_BAR + 4, " Hold [SELECT]+[O] to abort (no XMB channel will be created).");
 }
@@ -101,6 +104,13 @@ static void cb_progress(void *ctx, uint64_t done, uint64_t total, uint32_t el) {
 static int cb_abort(void *ctx) {
   progress_ctx_t *c = ctx;
   int b = ui_poll_button();
+  /* START while copying a game: pause (the copy stops at a checkpoint
+   * and Resume copy continues it later). */
+  if (c && c->stage == STAGE_COPYING && c->p && (b & UI_START)) {
+    c->paused = 1;
+    ui_at(ROW_BAR + 4, " Pausing: saving where the copy got to...");
+    return 1;
+  }
   /* START during the read-back: skip it, keep the install. */
   if (c && c->stage == STAGE_VALIDATING && !c->no_skip && (b & UI_START)) {
     c->skip_verify = 1;
@@ -108,6 +118,11 @@ static int cb_abort(void *ctx) {
   }
   /* Two buttons so a stray press cannot abort a long copy. */
   return (b & UI_CIRCLE) && (ui_held_buttons() & UI_SELECT);
+}
+
+static int cb_paused(void *ctx) {
+  const progress_ctx_t *c = ctx;
+  return c && c->paused;
 }
 
 static int cb_skip_verify(void *ctx) {
@@ -162,8 +177,8 @@ static const char *recovery_for(const install_report_t *rep) {
 
 static void run_install(game_plan_t *p, int allow_without_opl) {
   /* A resumed copy is always verified in full (no START skip). */
-  progress_ctx_t ctx = {p, STAGE_PREPARING, p->resume, 0};
-  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify};
+  progress_ctx_t ctx = {p, STAGE_PREPARING, p->resume, 0, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify, cb_paused};
   install_report_t rep;
   draw_install_static(p, "Installing");
   ui_footer("Do not power off.");
@@ -179,6 +194,9 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
     if (rep.resumed_from)
       snprintf(installed + strlen(installed), sizeof(installed) - strlen(installed),
                "  (resumed at %lu MiB)", (unsigned long)(rep.resumed_from >> 20));
+    else if (rep.resume_checked)
+      snprintf(installed + strlen(installed), sizeof(installed) - strlen(installed),
+               "  (copied again from the start)");
     snprintf(msg, sizeof(msg),
              "%s installed (TX_COMPLETE).\n\n%s\n%s\n\n"
              "Bytes copied:     %llu\nBytes read back:  %llu\n"
@@ -194,6 +212,18 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
                  ? "not found on server, default used"
                  : (rep.jacket ? rep.jacket : "none"));
     ui_message("Finished", msg);
+    return;
+  }
+  if (rep.err == ERR_PAUSED) {
+    char msg[400];
+    snprintf(msg, sizeof(msg),
+             "%s paused: %llu MiB of %llu MiB are on the HDD.\n\n"
+             "Continue later with Installed Games > the game > Resume copy\n"
+             "(Install All also lists it as 'resume copy'). The last copied\n"
+             "part is read back and checked before the copy goes on.",
+             p->title, (unsigned long long)(rep.bytes_written >> 20),
+             (unsigned long long)(((uint64_t)p->iso.sectors * ISO_SECTOR) >> 20));
+    ui_message("Paused", msg);
     return;
   }
   flow_show_error("Install did not complete.", &rep, recovery_for(&rep));
@@ -397,8 +427,8 @@ static void batch_run_selected(int n, int allow_without_opl, const char *label) 
     char title[48];
     snprintf(title, sizeof(title), "%s %d/%d", label, idx, total);
     batch_plans[i].resume = e->status == BATCH_RESUME;
-    progress_ctx_t ctx = {&batch_plans[i], STAGE_PREPARING, batch_plans[i].resume, 0};
-    install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify};
+    progress_ctx_t ctx = {&batch_plans[i], STAGE_PREPARING, batch_plans[i].resume, 0, 0};
+    install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify, cb_paused};
     install_report_t rep;
     draw_install_static(&batch_plans[i], title);
     ui_footer("Do not power off.");
@@ -408,11 +438,15 @@ static void batch_run_selected(int n, int allow_without_opl, const char *label) 
     e->opl_cfg = rep.opl_cfg;
     e->jacket = rep.jacket;
     e->verify_skipped = rep.verify_skipped;
-    e->result = rep.err == ERR_OK              ? BATCH_DONE
+    e->result = rep.err == ERR_PAUSED          ? BATCH_PAUSED
+                : rep.err == ERR_OK              ? BATCH_DONE
                 : rep.data_installed_no_channel ? BATCH_DATA_ONLY
                                                 : BATCH_FAILED;
     if (rep.err == ERR_USER_ABORT && idx < total)
       stop = ui_confirm(label, "Game aborted. Stop the remaining games too?");
+    if (rep.err == ERR_PAUSED)
+      stop = idx >= total || ui_confirm(label, "Game paused (Resume copy continues it later).\n"
+                                                 "Stop the remaining games too?");
   }
 }
 
@@ -774,8 +808,8 @@ static void do_delete(const char *visible, const char *hidden, int pp_only,
 }
 
 static void do_create_channel(const char *hidden) {
-  progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0};
-  install_ui_t ui = {cb_stage, NULL, NULL, &ctx, NULL};
+  progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0, 0};
+  install_ui_t ui = {cb_stage, NULL, NULL, &ctx, NULL, NULL};
   install_report_t rep;
   ensure_opl("Create/Repair XMB Channel", 0, NULL);
   ui_header("Create/Repair XMB Channel", hidden);
@@ -814,8 +848,8 @@ static void do_backup(const char *name, int ps1) {
            name + 3, USB_ROOT, ps1 ? "POPS" : "DVD or CD");
   if (!ui_confirm("Back up to USB", txt))
     return;
-  progress_ctx_t ctx = {NULL, STAGE_PREPARING, 0, 0};
-  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify};
+  progress_ctx_t ctx = {NULL, STAGE_PREPARING, 0, 0, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify, cb_paused};
   install_report_t rep;
   ui_header("Back up to USB", name);
   ui_footer("Do not unplug the USB drive.");
@@ -893,8 +927,8 @@ static void do_rename(const char *visible) {
 }
 
 static void do_verify(const char *visible, const char *hidden) {
-  progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0};
-  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, NULL};
+  progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, NULL, NULL};
   install_report_t rep;
   ui_header("Verify game data", hidden);
   ui_at(4, " Reading back all installed data and comparing its CRC-32 with the");
@@ -1058,8 +1092,8 @@ void flow_install_ps1(const char *path) {
     }
     break;
   }
-  progress_ctx_t ctx = {NULL, STAGE_PREPARING, 0, 0};
-  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify};
+  progress_ctx_t ctx = {NULL, STAGE_PREPARING, 0, 0, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify, cb_paused};
   install_report_t rep;
   ui_header("Installing PS1 game", plan.partition);
   ui_at(3, " Title       %.60s", plan.title);

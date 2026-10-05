@@ -172,6 +172,20 @@ TEST(batch_resumable_copy_is_selected_and_needs_only_the_channel) {
   CHECK(e[0].selected && !e[2].selected);
 }
 
+TEST(batch_summary_counts_paused) {
+  batch_entry_t e[2];
+  e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);
+  e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_NONE, 4096);
+  batch_classify(e, 2);
+  e[0].result = BATCH_PAUSED;
+  e[1].result = BATCH_SKIPPED;
+  char sum[512];
+  batch_summary(e, 2, sum, sizeof(sum));
+  CHECK(strncmp(sum, "0 installed, 0 data only (channel pending), 0 failed, 1 paused, 1 skipped\n", 74) == 0);
+  CHECK(strstr(sum, "paused    A.iso") != NULL);
+  CHECK(strstr(sum, "Resume copy") != NULL);
+}
+
 TEST(batch_summary_mentions_opl_cfg_failure) {
   batch_entry_t e[1];
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);

@@ -34,6 +34,7 @@ typedef enum {
   BATCH_DATA_ONLY, /* verified data, channel pending (OPL missing) */
   BATCH_FAILED,
   BATCH_SKIPPED,  /* not run (batch stopped) */
+  BATCH_PAUSED,   /* paused by the user: Resume copy continues it */
 } batch_result_t;
 
 typedef struct {

@@ -20,6 +20,46 @@ static void make_table(void) {
   table_ready = 1;
 }
 
+static uint32_t gf2_times(const uint32_t *mat, uint32_t vec) {
+  uint32_t sum = 0;
+  for (; vec; vec >>= 1, mat++)
+    if (vec & 1)
+      sum ^= *mat;
+  return sum;
+}
+
+static void gf2_square(uint32_t *sq, const uint32_t *mat) {
+  for (int n = 0; n < 32; n++)
+    sq[n] = gf2_times(mat, mat[n]);
+}
+
+uint32_t crc32_combine(uint32_t crc_a, uint32_t crc_b, uint64_t len_b) {
+  uint32_t even[32], odd[32];
+  if (len_b == 0)
+    return crc_a;
+  /* odd: operator for one zero bit */
+  odd[0] = 0xEDB88320u;
+  uint32_t row = 1;
+  for (int n = 1; n < 32; n++, row <<= 1)
+    odd[n] = row;
+  gf2_square(even, odd); /* two zero bits */
+  gf2_square(odd, even); /* four zero bits */
+  /* Apply len_b zero bytes to crc_a. */
+  do {
+    gf2_square(even, odd);
+    if (len_b & 1)
+      crc_a = gf2_times(even, crc_a);
+    len_b >>= 1;
+    if (!len_b)
+      break;
+    gf2_square(odd, even);
+    if (len_b & 1)
+      crc_a = gf2_times(odd, crc_a);
+    len_b >>= 1;
+  } while (len_b);
+  return crc_a ^ crc_b;
+}
+
 uint32_t crc32_update(uint32_t crc, const void *data, size_t len) {
   const uint8_t *p = data;
   if (!table_ready)

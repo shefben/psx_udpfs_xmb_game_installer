@@ -10,4 +10,8 @@
  * copied game data, not as a security measure. */
 uint32_t crc32_update(uint32_t crc, const void *data, size_t len);
 
+/* CRC of a||b from crc(a), crc(b) and len(b) (zlib's crc32_combine
+ * method: GF(2) matrix powers), without the data. */
+uint32_t crc32_combine(uint32_t crc_a, uint32_t crc_b, uint64_t len_b);
+
 #endif

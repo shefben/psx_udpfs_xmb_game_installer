@@ -29,6 +29,7 @@ typedef struct {
 
 typedef enum {
   STAGE_PREPARING = 0,
+  STAGE_CHECKING_RESUME, /* re-reading the last copied segments */
   STAGE_CREATING_HDL,
   STAGE_COPYING,
   STAGE_VALIDATING,
@@ -46,6 +47,9 @@ typedef struct {
   /* After should_abort() stopped the read-back: non-zero if that was
    * the user skipping verification, not aborting the install. */
   int (*skip_verify)(void *ctx);
+  /* After should_abort() stopped the copy: non-zero if the user paused
+   * (the copy can be resumed), not aborted. */
+  int (*paused)(void *ctx);
 } install_ui_t;
 
 typedef struct {
@@ -64,6 +68,7 @@ typedef struct {
   uint64_t bytes_verified;
   int verify_skipped; /* the user skipped the full read-back */
   uint64_t resumed_from; /* resume: bytes already on the HDD before this run */
+  int resume_checked;    /* resume: checkpoint segments read back */
   /* OPL per-game cfg from the server: "copied" | "kept" | "failed" |
    * "none"; NULL when no channel was built. */
   const char *opl_cfg;
