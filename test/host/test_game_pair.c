@@ -40,6 +40,23 @@ TEST(pair_trust_requires_journal_bound_to_partition) {
   CHECK_EQ_INT(pair_classify(&f), PAIR_HIDDEN_UNVERIFIED);
 }
 
+TEST(pair_untrusted_reason_names_first_failed_check) {
+  pair_facts_t f = facts(1, 1, 1, 1, 1, 1);
+  CHECK(pair_untrusted_reason(&f) == NULL);
+  f = facts(0, 0, 0, 0, 1, 1);
+  CHECK_STR(pair_untrusted_reason(&f), "game data partition (__.) missing");
+  f = facts(1, 0, 1, 1, 1, 1);
+  CHECK_STR(pair_untrusted_reason(&f), "game data header unreadable or not HDL");
+  f = facts(1, 1, 0, 0, 1, 1);
+  CHECK_STR(pair_untrusted_reason(&f), "no install journal found for this game");
+  f = facts(1, 1, 1, 0, 1, 1);
+  CHECK_STR(pair_untrusted_reason(&f), "journal: copy not completed and CRC-verified");
+  f = facts(1, 1, 1, 1, 1, 1);
+  f.journal_matches_partition = 0;
+  CHECK_STR(pair_untrusted_reason(&f),
+            "partition start/size/header differ from the journal");
+}
+
 TEST(pair_classify_all_states) {
   pair_facts_t f;
   f = facts(0, 0, 0, 0, 0, 0);

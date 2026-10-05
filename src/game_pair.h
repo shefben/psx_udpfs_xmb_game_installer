@@ -42,6 +42,9 @@ typedef struct {
  * data is UNKNOWN/UNVERIFIED. */
 int pair_hidden_trusted(const pair_facts_t *f);
 
+/* First check pair_hidden_trusted() fails, as text; NULL if trusted. */
+const char *pair_untrusted_reason(const pair_facts_t *f);
+
 pair_state_t pair_classify(const pair_facts_t *f);
 
 /* Bitmask of pair_action_t allowed in a state. */

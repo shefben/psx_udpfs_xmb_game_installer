@@ -708,8 +708,8 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   pair_state_t st = pair_classify(&f);
   unsigned acts = pair_actions(st);
 
-  static char rows[6][UI_ROW_LEN];
-  int map[6], n = 0;
+  static char rows[7][UI_ROW_LEN];
+  int map[7], n = 0;
 #define ADD(a, label)                                                          \
   if (acts & (a)) {                                                            \
     str_copy(rows[n], label, UI_ROW_LEN);                                      \
@@ -724,6 +724,8 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   ADD(ACT_REINSTALL, "Reinstall game (delete, then copy again)");
   ADD(ACT_DELETE, "Delete game");
 #undef ADD
+  str_copy(rows[n], "Details (why this state)", UI_ROW_LEN);
+  map[n++] = 0;
 
   char status[96];
   snprintf(status, sizeof(status), "State: %s", pair_state_label(st));
@@ -732,6 +734,12 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   if (c < 0)
     return;
   switch (map[c]) {
+  case 0: {
+    static char details[2048];
+    game_pair_details(visible, hidden, details, sizeof(details));
+    ui_text_view("Details", details);
+    break;
+  }
   case ACT_CREATE_CHANNEL:
     do_create_channel(hidden);
     break;

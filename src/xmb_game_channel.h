@@ -79,6 +79,10 @@ inst_err_t game_plan_from_manifest(const manifest_entry_t *m, game_plan_t *p);
 /* Gather on-disk facts for a pair (exists/valid/journal). */
 void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f);
 
+/* Every fact behind the pair's state (partitions, journal fields,
+ * identity), as text for the Details screen. Returns the length. */
+size_t game_pair_details(const char *visible, const char *hidden, char *out, size_t outsz);
+
 /* Full install in plan order. Preconditions checked inside. If
  * `allow_without_opl` the data is copied even when the OPL runtime is
  * missing and the run stops at TX_HDL_VERIFIED. */

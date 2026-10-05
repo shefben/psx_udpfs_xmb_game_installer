@@ -140,6 +140,79 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
     f->visible_valid = channel_quick_check(visible) == ERR_OK;
 }
 
+static int count_journals(void) {
+  int dd = fileXioDopen(APP_STATE_DIR), n = 0;
+  if (dd < 0)
+    return dd;
+  iox_dirent_t de;
+  while (fileXioDread(dd, &de) > 0)
+    n += !strncmp(de.name, "install-", 8) && str_ends_with_ci(de.name, ".ini");
+  fileXioDclose(dd);
+  return n;
+}
+
+size_t game_pair_details(const char *visible, const char *hidden, char *out, size_t outsz) {
+  pair_facts_t f;
+  game_pair_facts(visible, hidden, &f);
+  const char *why = pair_untrusted_reason(&f);
+  uint16_t htype = 0, vtype = 0;
+  uint32_t start = 0, size = 0, hcrc = 0;
+  int hst = f.hidden_exists ? hdd_stat(hidden, &htype, NULL, NULL) : -2;
+  int hid = f.hidden_exists ? hdl_partition_identity(hidden, &start, &size, &hcrc) : -2;
+  int vst = hdd_exists(visible) > 0 ? hdd_stat(visible, &vtype, NULL, NULL) : -2;
+  char fn[96] = "-";
+  tx_journal_filename_for(hidden, fn);
+  tx_journal_t j;
+  memset(&j, 0, sizeof(j));
+  inst_err_t je = g_app.app_mounted ? tx_load(APP_STATE_DIR, hidden, &j) : ERR_JOURNAL;
+
+  int off = snprintf(out, outsz,
+                     "State   %s\n"
+                     "Reason  %s\n\n"
+                     "Game data %s\n"
+                     "  exists %s  stat %d  type 0x%04x  header %s\n"
+                     "  identity rc %d  start %lu  size %lu  header CRC %08lx\n\n"
+                     "Journal %s/%s\n"
+                     "  installer partition %s  mounted %s  journals in folder %d\n"
+                     "  (rename rc %d)\n",
+                     pair_state_label(pair_classify(&f)), why ? why : "-", hidden,
+                     f.hidden_exists ? "yes" : "NO", hst, htype,
+                     f.hidden_header_valid ? "valid" : "INVALID", hid, (unsigned long)start,
+                     (unsigned long)size, (unsigned long)hcrc, APP_STATE_DIR, fn,
+                     g_app.app_rename_rc < 0 ? INSTALLER_LEGACY_NAME : INSTALLER_PARTITION,
+                     g_app.app_mounted ? "yes" : "NO", g_app.app_mounted ? count_journals() : -1,
+                     g_app.app_rename_rc);
+  if (je == ERR_OK && off > 0 && (size_t)off < outsz)
+    off += snprintf(
+        out + off, outsz - off,
+        "  state %s  failed_from %s  deleting %d\n"
+        "  bytes expected %llu  written %llu  verified %llu\n"
+        "  CRC source %s%08lx  installed %s%08lx\n"
+        "  identity start %lu  size %lu  header CRC %08lx  (%s)\n"
+        "  last error %s\n\n",
+        tx_state_name(j.state), tx_state_name(j.failed_from), j.deleting,
+        (unsigned long long)j.bytes_expected, (unsigned long long)j.bytes_written,
+        (unsigned long long)j.bytes_verified, j.has_source_crc ? "" : "none ",
+        (unsigned long)j.source_crc32, j.has_installed_crc ? "" : "none ",
+        (unsigned long)j.installed_crc32, (unsigned long)j.hdl_start,
+        (unsigned long)j.hdl_size, (unsigned long)j.hdl_header_crc32,
+        !j.has_hdl_identity            ? "not recorded"
+        : f.journal_matches_partition ? "matches"
+                                      : "DIFFERS",
+        j.last_error[0] ? j.last_error : "-");
+  else if (off > 0 && (size_t)off < outsz)
+    off += snprintf(out + off, outsz - off, "  NOT LOADED (missing or unreadable)\n\n");
+  if (off > 0 && (size_t)off < outsz)
+    off += snprintf(out + off, outsz - off,
+                    "Channel %s\n"
+                    "  exists %s  stat %d  type 0x%04x  files/header %s\n",
+                    visible, f.visible_exists ? "yes" : "NO", vst, vtype,
+                    !f.visible_exists ? "-" : f.visible_valid ? "valid" : "INVALID");
+  if (off < 0)
+    return 0;
+  return (size_t)off < outsz ? (size_t)off : outsz - 1;
+}
+
 /* Jacket: udpfsd's prepared jkt/<BOOT_ID>.png, then udpfs:/ART/<BOOT_ID>.png,
  * then <source>.png, then the built-in default. Returns where it came
  * from (install_report_t.jacket). */
