@@ -99,28 +99,38 @@ PS2KEYS=/absolute/path/to/PS2KEYS.dat make kelfs     # or make dist
 
 * `PS2KEYS` is required and must be absolute; it is used through a
   symlink in a private temporary `HOME`, never copied.
-* `KELF_MODE=mbr` (default, canonical): `kelftool encrypt mbr <in> <out>`,
-  the form OPL-Launcher documents.
-* `KELF_MODE=none` (experimental fallback, only if a DESR rejects the
-  canonical KELF): `kelftool encrypt <in> <out>`. Any other value fails.
-* Which mode a kelftool supports depends on the fork.
-  [xfwcfw/kelftool](https://github.com/xfwcfw/kelftool) (6b9b471, the
-  one used for the first signed build) has no mode argument: its
-  `encrypt <in> <out>` always writes a PSX/DESR header (UserDefined
-  `01 03 00 04 ...`, SystemType 1 = PSX, ApplicationType 1 = xosdmain,
-  Flags 0x22C, MG zone 1 = Japan) and needs `KELF_MODE=none`; with
-  `mbr` it fails and `kelf-sign.sh` says so. The canonical `mbr` mode
-  needs the FMCB-compatible fork OPL-Launcher's README links to.
-  Build xfwcfw/kelftool with `make` (needs `libssl-dev`), install
-  `build/kelftool.elf` as `kelftool`.
+* `KELF_MODE=dnasload` (default):
+  `kelftool encrypt dnasload <in> <out> --apptype=0B`, with
+  [ps2homebrew/kelftool](https://github.com/ps2homebrew/kelftool)
+  (05bbeb8; `make`, needs `libssl-dev`; pass it as `KELFTOOL=...`).
+  This is the header of the KELFs known to start from PSX XMB channels:
+  PFS-BatchKit-Manager's OPL-Launcher `boot.kelf` and `POPSTARTER.KELF`
+  (UserDefined `01 00 00 04 00 06 00 4a 00 0e 01 00 00 00 00 02`,
+  SystemType 0 = PS2, ApplicationType 11, Flags 0x22C, MG zones 0xFF).
+  `kelf-sign.sh` checks those bytes after signing. A `PS2KEYS.dat` of
+  bare `KEY=VALUE` lines (no `[default]` section) is selected with
+  `--keys=` automatically.
+* OPL-Launcher's README says `encrypt mbr`, but it means the old
+  FMCB-compatible fork, whose `mbr` header is today's `dnasload` with
+  application type 11. Today's `mbr` (`KELF_MODE=mbr`) writes a
+  different header and is not used.
+* `KELF_MODE=none`: `kelftool encrypt <in> <out>` with
+  [xfwcfw/kelftool](https://github.com/xfwcfw/kelftool) (6b9b471), which
+  always writes a PSX header (SystemType 1 = PSX, ApplicationType 1 =
+  `xosdmain`, MG zone 1). v2.0's first signed build used it; on a DESR
+  the installer channel then stayed on a black screen. Kept only for
+  comparison. Any other mode fails.
   The mode is a build input (`build/.kelf-mode`): switching it re-signs
   both KELFs and rebuilds the bootstrap; `BUILD-MANIFEST.txt` records
   the mode the shipped KELFs were actually signed with.
+* OPL-Launcher is signed without its debug sections
+  (`OPL-Launcher-stripped.elf`, ~0.3 MB instead of 1.5 MB), like the app.
 * Transactional: the old output is deleted first, the KELF is written to
   `<out>.tmp`, verified, then renamed. Verification: non-empty, >= 1 KiB,
-  not an ELF, and `kelftool decrypt` (signature check) returns exactly
-  the input ELF. On failure nothing is left behind and the exit code is
-  non-zero. `test/host/test_kelf_sign.sh` covers every failure path.
+  not an ELF, the header (dnasload), and `kelftool decrypt` (signature
+  check) returns the input ELF plus at most 16 zero bytes of padding. On
+  failure nothing is left behind and the exit code is non-zero.
+  `test/host/test_kelf_sign.sh` covers every failure path.
 
 ## HDD driver (`make driver`)
 

@@ -36,8 +36,9 @@ NEUTRINO_IRX := $(BUILD)/irx/smap.irx $(BUILD)/irx/ministack.irx $(BUILD)/irx/ud
 EE_DEPS := $(NEUTRINO_IRX) $(BUILD)/.driver-ok $(BUILD)/.refs-ok $(BUILD)/.gitid
 
 # KELF_MODE is part of every KELF's identity: switching it re-signs and
-# re-embeds. Only mbr (default) and none are accepted by kelf-sign.sh.
-KELF_MODE ?= mbr
+# re-embeds. dnasload (default; the header PSX XMB channels start), mbr
+# and none are accepted by kelf-sign.sh.
+KELF_MODE ?= dnasload
 export KELF_MODE
 
 # Stamps that change content (and so trigger rebuilds) only when their
@@ -166,8 +167,13 @@ $(OPL_ELF): $(BUILD)/.refs-ok tools/bin2s
 	  EE_CFLAGS="$(OPL_LAUNCHER_CFLAGS)"
 
 # ---- 2. signed OPL-Launcher -------------------------------------------
-$(OPL_KELF): $(OPL_ELF) tools/kelf-sign.sh $(BUILD)/.kelf-mode
-	bash tools/kelf-sign.sh $(OPL_ELF) $@
+# Signed without its debug sections (1.5 MB -> ~0.3 MB), like the app.
+OPL_ELF_STRIPPED := $(BUILD)/opl-launcher/OPL-Launcher-stripped.elf
+$(OPL_ELF_STRIPPED): $(OPL_ELF)
+	mips64r5900el-ps2-elf-strip -o $@ $<
+
+$(OPL_KELF): $(OPL_ELF_STRIPPED) tools/kelf-sign.sh $(BUILD)/.kelf-mode
+	bash tools/kelf-sign.sh $(OPL_ELF_STRIPPED) $@
 
 # ---- 3. app ELF (embeds 2) ---------------------------------------------
 # The sub-make is always entered (FORCE) but only relinks when an input

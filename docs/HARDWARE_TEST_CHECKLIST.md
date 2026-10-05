@@ -29,7 +29,7 @@ or pfsshell) so the disk can be restored.
 | P9 | KELF signing transactional, explicit keys, mode validation | `test_kelf_sign.sh` | PASS |
 | P10 | Release build graph order / embedding / no spurious re-sign | `make test-graph` (fake kelftool) | PASS |
 | P11 | Signed release built with real kelftool + PS2KEYS | `PS2KEYS=... KELF_MODE=none make dist` with xfwcfw kelftool 6b9b471; both KELFs pass `kelftool decrypt` (all signatures) and decrypt to the exact input ELF | PASS (mode none) |
-| P12 | Signed release in canonical `KELF_MODE=mbr` | needs a kelftool fork with `encrypt mbr` | NOT RUN |
+| P12 | Signed release in `KELF_MODE=dnasload` (default) | ps2homebrew/kelftool 05bbeb8; both KELFs: header bytes 0x00-0x0F and 0x16-0x1F identical to PFS-BatchKit-Manager's OPL-Launcher `boot.kelf` (DNASLOAD, PS2, app type 11, flags 0x22C, MG 0xFF); `kelftool decrypt` returns the input ELF + 16 zero bytes of padding | PASS |
 | P13 | udpfsd mounts (`-install-dir` / `udpfsd.cfg` folders): listing, always read-only, no path escape, mounts-only mode | Go tests in `patches/udpfsd/0002` (`make test-udpfsd`) | PASS |
 | P14 | Batch selection/summary logic | `test_batch.c` | PASS |
 | P15 | udpfsd.cfg parsing/precedence; game prep: ISO/ZSO probe, titles (CFG > game list > file name), art lookup + 74x108 PNG, cover download (local test server), manifest format/atomic write, scan cache | Go tests in `patches/udpfsd/0002` (`make test-udpfsd`) | PASS |
@@ -57,8 +57,10 @@ Run in this order. Nothing here creates or deletes a game partition.
 
 | # | Test | Expected | Status |
 |---|---|---|---|
-| D1 | Install Installer as XMB Channel from the bootstrap ELF | `PP.UDPF-00001..INSTALLER` verified; game install enabled | NOT RUN |
-| D2 | Cold reboot, installer channel visible in XMB, launches, reaches NETWORK_READY and the browser | | NOT RUN |
+| D1 | Install Installer as XMB Channel from the bootstrap ELF | `PP.UDPF-00001..INSTALLER` verified; game install enabled | PASS (v2.0, mode none) |
+| D2 | Cold reboot, installer channel visible in XMB, launches, reaches NETWORK_READY and the browser | | FAIL (v2.0, mode none: black screen after selecting the channel); retest with mode dnasload as D43 |
+| D43 | Bootstrap ELF (dnasload build) > Install Installer as XMB Channel (rewrites `EXECUTE.KELF` in place), cold reboot, start the channel from the XMB | installer menu appears | NOT RUN |
+| D44 | With D43 done and udpfsd's folder replaced (new `opl-launcher-EXECUTE.KELF`): install 2 games, cold reboot | XMB finishes loading (v2.0 mode none: froze ~10 s into the loading screen with 2+ games, booted with 0 or 1); both games start | NOT RUN |
 | D3 | Diagnostics from the XMB app | installer KELF from `pfs0:/EXECUTE.KELF`, hash = manifest | NOT RUN |
 | D4 | Plain ISO < 4 GiB: full acceptance chain (below) | | NOT RUN |
 | D5 | ZSO < 4 GiB: full acceptance chain (below), independently | | NOT RUN |
@@ -89,7 +91,8 @@ Run in this order. Nothing here creates or deletes a game partition.
 | D32 | Installed Games > game > Rename, then return to the XMB; then Repair XMB channel | new title in the XMB; partition name and game unchanged; title kept after Repair | NOT RUN |
 | D33 | Unplug the network cable at ~40 % of a > 1 GiB copy; reconnect; Installed Games > game > Resume copy (also: Install All lists it as esume copy) | resumes at the last 256 MiB checkpoint, full read-back CRC equal, channel boots | NOT RUN |
 | D34 | Install Games from USB: one .iso and one .zso on an exFAT stick (one > 4 GiB) | both install and verify; ZSO decompressed on the PS2 gives the same CRC as the server install | NOT RUN |
-| D35 | PS1: .VCD + POPSTARTER.KELF + POPS.ELF + IOPRP252.IMG in udpfsd's POPS folder; install one PS1 game | PP.SLUS-xxxxx..TITLE channel appears and boots through POPStarter; __common/POPS has POPS.ELF, IOPRP252.IMG and the VMC folder; Installed Games lists it as PS1 game (POPStarter); Delete removes it. If the DESR refuses the KELF: rebuild with POPSTARTER_ELF=... (signed like the other KELFs) | NOT RUN || D36 | A .zso game from the server: copy screen shows a higher total MiB/s than before (only compressed bytes cross the network); CRC/read-back equal | ZSO decompressed on the PS2; a ZSO the PS2 cannot read falls back to the server | NOT RUN |
+| D35 | PS1: .VCD + POPSTARTER.KELF + POPS.ELF + IOPRP252.IMG in udpfsd's POPS folder; install one PS1 game | PP.SLUS-xxxxx..TITLE channel appears and boots through POPStarter; __common/POPS has POPS.ELF, IOPRP252.IMG and the VMC folder; Installed Games lists it as PS1 game (POPStarter); Delete removes it. If the DESR refuses the KELF: rebuild with POPSTARTER_ELF=... (signed like the other KELFs) | NOT RUN |
+| D36 | A .zso game from the server: copy screen shows a higher total MiB/s than before (only compressed bytes cross the network); CRC/read-back equal | ZSO decompressed on the PS2; a ZSO the PS2 cannot read falls back to the server | NOT RUN |
 | D37 | gamedb = PS2DB.xml: install a game; XMB info screen | release date, developer, publisher, genre shown; XMB still boots normally | NOT RUN |
 | D38 | Install All with "power off when done" on; and auto-install with power_off_after_install = yes | 15 s countdown (any button cancels), then the DESR switches off; next boot: games installed and complete | NOT RUN |
 | D39 | Installed Games > game > Back up to USB (exFAT stick; a PS2 game > 4 GiB and a PS1 game); also a FAT32 stick with a > 4 GiB game | file in DVD/ (or CD/, POPS/) named <ID>.<title>.iso/.VCD, CRC equals the install CRC, read back equal; OPL runs the copy from USB; FAT32 > 4 GiB fails with the exFAT message and leaves no partial file | NOT RUN |

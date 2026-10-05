@@ -4,18 +4,18 @@ Status vocabulary: see `docs/HARDWARE_TEST_CHECKLIST.md`. Nothing is
 yet DESR-verified; everything below "works" only at the PC VERIFIED
 level unless stated otherwise.
 
-* **No DESR results yet.** XMB behaviour of the generated channels, the
-  jacket PNGs, CRLF `info.sys`, OPL-Launcher hand-off, the patched HDD
-  driver and the KELF format accepted by the DESR are all unobserved.
-* **Signing is external.** `kelftool` and `PS2KEYS.dat` are build
-  prerequisites, never shipped. The first signed build used
-  xfwcfw/kelftool, which only supports `KELF_MODE=none` (PSX/DESR
-  header). Whether the DESR XMB accepts that KELF from
-  `pfs:/EXECUTE.KELF` is the first thing D1/D2 prove; no `mbr`-mode
-  build exists yet.
-* **KELF sizes.** The app KELF embeds the OPL-Launcher KELF, so it is
-  roughly app + 1.6 MB. No size limit of the DESR loader is known to be
-  exceeded, but none has been tested.
+* **First DESR results (v2.0 build signed with `KELF_MODE=none`):**
+  installs and deletes work from the bootstrap ELF. The installer channel
+  stays on a black screen when started from the XMB, and with two or more
+  installed games the XMB freezes on its loading screen; deleting the
+  games fixes that. Both builds had KELFs with a PSX `xosdmain` header.
+  KELFs are now signed with the header that is known to start from PSX
+  XMB channels (`KELF_MODE=dnasload`, see `docs/BUILD.md`); whether that
+  also cures the boot freeze is D43/D44.
+* **Signing is external.** `kelftool` (ps2homebrew/kelftool) and
+  `PS2KEYS.dat` are build prerequisites, never shipped.
+* **KELF sizes.** The app KELF embeds the OPL-Launcher KELF (~0.3 MB,
+  debug-stripped); the app KELF is about 1 MB.
 * **DHCP is a simple client** (added to ministack): one lease at start-up,
   no renewal (an installer session is far shorter than a lease), no
   gateway (udpfsd must be on the same network). Without an answer within

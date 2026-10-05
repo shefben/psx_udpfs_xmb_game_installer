@@ -2,8 +2,9 @@
 
 ## 2.0 (from 1.0)
 
-Not yet tested on a DESR: back up anything important on the hard disk
-first. `docs/HARDWARE_TEST_CHECKLIST.md` (D28-D42) lists what to check.
+Only partly tested on a DESR: back up anything important on the hard
+disk first. `docs/HARDWARE_TEST_CHECKLIST.md` (D28-D44) lists what to
+check.
 
 ### New
 
@@ -68,6 +69,16 @@ first. `docs/HARDWARE_TEST_CHECKLIST.md` (D28-D42) lists what to check.
 
 ### Fixed
 
+- **Channels did not start from the XMB.** The installer and game KELFs
+  were signed with a PSX `xosdmain` header (the DESR's own XMB type),
+  and the installer channel stayed on a black screen. KELFs now carry
+  the header of the OPL-Launcher and POPStarter KELFs that run from PSX
+  XMB channels, and OPL-Launcher is signed without its debug data
+  (1.5 MB to 0.3 MB). The same build also froze the XMB while loading
+  once two or more games were installed; that is being retested with
+  the new KELFs. Start the new bootstrap ELF once and choose
+  *Install Installer as XMB Channel* to replace the installer's KELF,
+  and use the new `udpfsd` folder.
 - **Broken USB backups.** Backing up a game whose copy never finished
   is refused, so a broken `.iso` can no longer pass its own check.
 - **Game info memory bug.** Loading the game info no longer writes
