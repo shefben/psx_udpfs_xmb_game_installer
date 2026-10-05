@@ -190,6 +190,9 @@ int hdl_partition_looks_valid(const char *hidden, hdl_header_info_t *out) {
   return boot_id_is_valid(out->startup) && out->title[0] && out->data_bytes > 0;
 }
 
+static hdl_result_t read_back(const char *hidden, uint64_t total, const iso_info_t *iso,
+                              const stream_cb_t *cb);
+
 hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
                         int expected_parts, const stream_cb_t *cb) {
   uint64_t total = (uint64_t)iso->sectors * ISO_SECTOR;
@@ -209,9 +212,27 @@ hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
                                   iso->layer1_start, expected_parts, total);
   if (e)
     return res(e, 0);
+  return read_back(hidden, total, iso, cb);
+}
 
-  /* Full read-back of the installed data from the HDD, read-only mount.
-   * The caller compares the CRC with the CRC of the source stream. */
+hdl_result_t hdl_read_back(const char *hidden, uint64_t total, const stream_cb_t *cb) {
+  uint16_t type = 0;
+  int r = hdd_stat(hidden, &type, NULL, NULL);
+  if (r < 0)
+    return res(ERR_HDL_VERIFY, r);
+  if (type != APA_TYPE_HDL_ID)
+    return res(ERR_HDL_VERIFY, type);
+  if (total == 0 || total % ISO_SECTOR)
+    return res(ERR_INVALID_ARG, 0);
+  return read_back(hidden, total, NULL, cb);
+}
+
+/* Full read-back of the installed data from the HDD, read-only mount.
+ * With `iso`, sector 16 must hold its PVD. The caller compares the CRC
+ * with the CRC of the source stream. */
+static hdl_result_t read_back(const char *hidden, uint64_t total, const iso_info_t *iso,
+                              const stream_cb_t *cb) {
+  int r;
   char dev[48];
   snprintf(dev, sizeof(dev), "hdd0:%s", hidden);
   fileXioUmount("hdl0:");
@@ -249,7 +270,7 @@ hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
     }
     /* Structural: the PVD must be at sector 16 of the installed data.
      * A ZSO container (no PVD there) can never pass this. */
-    if (done_bytes == 0 && want >= 17 * ISO_SECTOR &&
+    if (iso && done_bytes == 0 && want >= 17 * ISO_SECTOR &&
         (memcmp(stream_buf + 16 * ISO_SECTOR, "\x01" "CD001", 6) != 0 ||
          get_u32le(stream_buf + 16 * ISO_SECTOR + 80) != iso->pvd_blocks ||
          memcmp(stream_buf + 16 * ISO_SECTOR + 40, iso->volume_id,

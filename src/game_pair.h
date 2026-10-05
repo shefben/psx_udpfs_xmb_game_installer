@@ -32,6 +32,7 @@ typedef struct {
   int journal_matches_partition; /* tx_identity_matches() on the live partition */
   int visible_exists;
   int visible_valid; /* files + PPAA header verified */
+  int verify_skipped; /* journal: full read-back skipped by the user */
 } pair_facts_t;
 
 /* Hidden data is trusted only when its header is valid AND this
@@ -51,5 +52,13 @@ pair_state_t pair_classify(const pair_facts_t *f);
 unsigned pair_actions(pair_state_t s);
 
 const char *pair_state_label(pair_state_t s);
+
+/* pair_state_label, plus "not verified" for a trusted install whose
+ * read-back was skipped. */
+const char *pair_label(const pair_facts_t *f);
+
+/* Offer "Verify game data": a completed install with a journal bound to
+ * the partition (verified or skipped). */
+int pair_can_verify(const pair_facts_t *f);
 
 #endif

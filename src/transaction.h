@@ -51,6 +51,9 @@ typedef struct {
   char last_error[64];
   char launcher_source[24]; /* "server" | "embedded": channel KELF origin */
   char opl_cfg[8];          /* "copied" | "kept" | "failed" | "none" */
+  /* The user skipped the full read-back after a complete copy (header
+   * and PVD were still checked). "Verify game data" can do it later. */
+  int verify_skipped;
 } tx_journal_t;
 
 const char *tx_state_name(tx_state_t s); /* "TX_PLANNED" ... */
@@ -77,6 +80,11 @@ int tx_channel_creation_allowed(const tx_journal_t *j);
  * expected bytes were written and read back, both CRCs are recorded
  * and equal, and no delete was started. */
 int tx_hidden_data_verified(const tx_journal_t *j);
+/* (With verify_skipped, the read-back is waived: the copy must still be
+ * complete with its source CRC recorded.) */
+
+/* The full read-back ran and its CRC equals the source stream's. */
+int tx_hidden_data_read_back(const tx_journal_t *j);
 
 /* Field-by-field equality (what tx_save's read-back compares). */
 int tx_journal_equal(const tx_journal_t *a, const tx_journal_t *b);

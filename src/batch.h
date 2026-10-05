@@ -55,6 +55,7 @@ typedef struct {
   const char *stage;
   const char *opl_cfg;    /* install_report_t.opl_cfg */
   const char *jacket;     /* install_report_t.jacket */
+  int verify_skipped;     /* install_report_t.verify_skipped */
   int id_on_hdd;          /* a partition with this game ID exists (any title) */
 } batch_entry_t;
 

@@ -124,6 +124,7 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
   if (load_pair_journal(hidden, &j)) {
     f->has_journal = 1;
     f->journal_verified = tx_hidden_data_verified(&j);
+    f->verify_skipped = j.verify_skipped;
     uint32_t start, size, hcrc;
     f->journal_matches_partition =
         f->hidden_exists && hdl_partition_identity(hidden, &start, &size, &hcrc) == 0 &&
@@ -544,19 +545,27 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   hr = hdl_verify(p->hidden, &p->iso, 1 + p->alloc.subs, &cb);
   j.bytes_verified = hr.bytes;
   rep->bytes_verified = hr.bytes;
-  if (!hr.err) {
-    j.has_installed_crc = 1;
-    j.installed_crc32 = hr.crc32;
-    rep->installed_crc32 = hr.crc32;
-    rep->have_crc = 1;
-  }
-  if (hr.err) {
-    fail(&j, rep, hr.err, hr.rc, "read-back of installed data");
-    goto out;
-  }
-  if (hr.bytes != j.bytes_expected || hr.crc32 != j.source_crc32) {
-    fail(&j, rep, ERR_HDL_VERIFY, 0, "CRC-32 of installed data != source stream");
-    goto out;
+  if (hr.err == ERR_USER_ABORT && ui && ui->skip_verify && ui->skip_verify(ui->ctx)) {
+    /* Skipped by the user: the HDL header and the PVD (first block) were
+     * checked, the full CRC read-back was not. The copy itself is
+     * complete with its source CRC; "Verify game data" can finish it. */
+    j.verify_skipped = 1;
+    rep->verify_skipped = 1;
+  } else {
+    if (!hr.err) {
+      j.has_installed_crc = 1;
+      j.installed_crc32 = hr.crc32;
+      rep->installed_crc32 = hr.crc32;
+      rep->have_crc = 1;
+    }
+    if (hr.err) {
+      fail(&j, rep, hr.err, hr.rc, "read-back of installed data");
+      goto out;
+    }
+    if (hr.bytes != j.bytes_expected || hr.crc32 != j.source_crc32) {
+      fail(&j, rep, ERR_HDL_VERIFY, 0, "CRC-32 of installed data != source stream");
+      goto out;
+    }
   }
   if (advance(&j, TX_HDL_VERIFIED) || !tx_hidden_data_verified(&j)) {
     fail(&j, rep, ERR_JOURNAL, 0, NULL);
@@ -580,6 +589,55 @@ out_src:
 out:
   payload_release(&kelf);
   finish_report(rep, p->visible, p->hidden);
+}
+
+void game_verify_data(const char *hidden, const install_ui_t *ui, install_report_t *rep) {
+  memset(rep, 0, sizeof(*rep));
+  stage(ui, rep, STAGE_VALIDATING);
+  tx_journal_t j;
+  pair_facts_t f;
+  char visible[APA_NAME_MAX + 1];
+  if (partition_partner(hidden, visible) < 0 || !partition_is_hidden_game(hidden)) {
+    rep->err = ERR_INVALID_ARG;
+    return;
+  }
+  game_pair_facts(visible, hidden, &f);
+  /* Only a copy this installer completed has a source CRC to compare. */
+  if (!load_pair_journal(hidden, &j) || j.deleting || !j.has_source_crc ||
+      j.bytes_expected == 0 || j.bytes_written != j.bytes_expected ||
+      !f.journal_matches_partition) {
+    rep->err = ERR_HDL_VERIFY;
+    rep->detail = "no completed install journal for this partition; reinstall instead";
+    goto out;
+  }
+  stream_cb_t cb = {ui ? ui->progress : NULL, ui ? ui->should_abort : NULL,
+                    ui ? ui->ctx : NULL};
+  hdl_result_t hr = hdl_read_back(hidden, j.bytes_expected, &cb);
+  rep->bytes_written = j.bytes_written;
+  rep->bytes_verified = hr.bytes;
+  rep->source_crc32 = j.source_crc32;
+  if (hr.err) {
+    /* Aborted or unreadable: the journal is left as it was. */
+    rep->err = hr.err;
+    rep->rc = hr.rc;
+    rep->detail = "read-back of installed data";
+    goto out;
+  }
+  rep->have_crc = 1;
+  rep->installed_crc32 = hr.crc32;
+  j.bytes_verified = hr.bytes;
+  j.has_installed_crc = 1;
+  j.installed_crc32 = hr.crc32;
+  j.verify_skipped = 0; /* the read-back ran: its result decides from now on */
+  if (hr.crc32 != j.source_crc32) {
+    str_copy(j.last_error, "ERR_HDL_VERIFY", sizeof(j.last_error));
+    rep->err = ERR_HDL_VERIFY;
+    rep->detail = "CRC-32 of installed data != source stream";
+  }
+  if (persist(&j) != ERR_OK && !rep->err)
+    rep->err = ERR_JOURNAL;
+out:
+  finish_report(rep, visible, hidden);
 }
 
 void game_create_channel(const char *hidden, const install_ui_t *ui,

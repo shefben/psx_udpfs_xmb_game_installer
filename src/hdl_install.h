@@ -59,6 +59,11 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
 hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
                         int expected_parts, const stream_cb_t *cb);
 
+/* Read back `total` installed bytes (APA type HDL checked) and return
+ * their CRC-32: "Verify game data" for an install whose journal holds
+ * the source CRC. */
+hdl_result_t hdl_read_back(const char *hidden, uint64_t total, const stream_cb_t *cb);
+
 /* Header-only read for repair/manage scans. 0 or <0. */
 int hdl_read_header(const char *hidden, hdl_header_info_t *out);
 

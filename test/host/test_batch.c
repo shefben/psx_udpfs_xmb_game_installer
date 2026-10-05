@@ -177,6 +177,21 @@ TEST(batch_summary_mentions_missing_cover) {
   CHECK(hit && strstr(hit + 1, "cover not found on server") == NULL); /* only A */
 }
 
+TEST(batch_summary_mentions_skipped_verification) {
+  batch_entry_t e[2];
+  e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);
+  e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_NONE, 4096);
+  batch_classify(e, 2);
+  e[0].result = e[1].result = BATCH_DONE;
+  e[1].verify_skipped = 1;
+  char sum[512];
+  batch_summary(e, 2, sum, sizeof(sum));
+  const char *hit = strstr(sum, "verification skipped");
+  CHECK(hit != NULL);
+  CHECK(hit && strstr(sum, "B.iso") < hit && strstr(sum, "A.iso") < strstr(sum, "B.iso"));
+  CHECK(hit && strstr(hit + 1, "verification skipped") == NULL);
+}
+
 TEST(batch_auto_select_fits_free_space_in_order) {
   batch_entry_t e[4];
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);

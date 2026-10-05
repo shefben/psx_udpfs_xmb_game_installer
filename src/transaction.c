@@ -69,12 +69,16 @@ int tx_channel_creation_allowed(const tx_journal_t *j) {
          j->state == TX_CHANNEL_VERIFIED;
 }
 
+int tx_hidden_data_read_back(const tx_journal_t *j) {
+  return j->bytes_expected > 0 && j->bytes_verified == j->bytes_expected &&
+         j->has_source_crc && j->has_installed_crc && j->source_crc32 == j->installed_crc32;
+}
+
 int tx_hidden_data_verified(const tx_journal_t *j) {
   tx_state_t s = j->state == TX_FAILED ? j->failed_from : j->state;
   return !j->deleting && s >= TX_HDL_VERIFIED && s <= TX_COMPLETE &&
          j->bytes_expected > 0 && j->bytes_written == j->bytes_expected &&
-         j->bytes_verified == j->bytes_expected && j->has_source_crc &&
-         j->has_installed_crc && j->source_crc32 == j->installed_crc32;
+         j->has_source_crc && (j->verify_skipped || tx_hidden_data_read_back(j));
 }
 
 int tx_journal_equal(const tx_journal_t *a, const tx_journal_t *b) {
@@ -91,7 +95,8 @@ int tx_journal_equal(const tx_journal_t *a, const tx_journal_t *b) {
          a->hdl_size == b->hdl_size && a->hdl_header_crc32 == b->hdl_header_crc32 &&
          a->state == b->state && a->failed_from == b->failed_from &&
          !strcmp(a->last_error, b->last_error) &&
-         !strcmp(a->launcher_source, b->launcher_source) && !strcmp(a->opl_cfg, b->opl_cfg);
+         !strcmp(a->launcher_source, b->launcher_source) && !strcmp(a->opl_cfg, b->opl_cfg) &&
+         a->verify_skipped == b->verify_skipped;
 }
 
 int tx_identity_matches(const tx_journal_t *j, uint32_t start, uint32_t size,
@@ -161,7 +166,8 @@ size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz) {
                    "failed_from=%s\n"
                    "last_error=%s\n"
                    "launcher_source=%s\n"
-                   "opl_cfg=%s\n",
+                   "opl_cfg=%s\n"
+                   "verify_skipped=%d\n",
                    j->source_path, (unsigned long long)j->source_size,
                    j->startup_id, j->visible_partition, j->hidden_partition,
                    (unsigned long long)j->bytes_expected,
@@ -169,7 +175,7 @@ size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz) {
                    (unsigned long long)j->bytes_verified, scrc, icrc,
                    j->deleting ? 1 : 0, id_start, id_size, id_crc, tx_state_name(j->state),
                    tx_state_name(j->failed_from), j->last_error, j->launcher_source,
-                   j->opl_cfg);
+                   j->opl_cfg, j->verify_skipped ? 1 : 0);
   if (n < 0 || (size_t)n >= outsz)
     return 0;
   return (size_t)n;
@@ -246,10 +252,10 @@ int tx_parse(const char *text, tx_journal_t *out) {
         return -1;
       if (has)
         out->has_hdl_identity = 1;
-    } else if (!strcmp(k, "deleting")) {
+    } else if (!strcmp(k, "deleting") || !strcmp(k, "verify_skipped")) {
       if (strcmp(v, "0") && strcmp(v, "1"))
         return -1;
-      out->deleting = v[0] == '1';
+      *(!strcmp(k, "deleting") ? &out->deleting : &out->verify_skipped) = v[0] == '1';
     } else if (!strcmp(k, "state")) {
       if (tx_state_parse(v, &out->state) < 0)
         return -1;

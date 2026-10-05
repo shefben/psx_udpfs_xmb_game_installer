@@ -39,6 +39,9 @@ typedef struct {
   void (*progress)(void *ctx, uint64_t done, uint64_t total, uint32_t elapsed_s);
   int (*should_abort)(void *ctx);
   void *ctx;
+  /* After should_abort() stopped the read-back: non-zero if that was
+   * the user skipping verification, not aborting the install. */
+  int (*skip_verify)(void *ctx);
 } install_ui_t;
 
 typedef struct {
@@ -55,6 +58,7 @@ typedef struct {
   uint32_t installed_crc32;
   uint64_t bytes_written;
   uint64_t bytes_verified;
+  int verify_skipped; /* the user skipped the full read-back */
   /* OPL per-game cfg from the server: "copied" | "kept" | "failed" |
    * "none"; NULL when no channel was built. */
   const char *opl_cfg;
@@ -78,6 +82,12 @@ inst_err_t game_plan_from_manifest(const manifest_entry_t *m, game_plan_t *p);
 
 /* Gather on-disk facts for a pair (exists/valid/journal). */
 void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f);
+
+/* Read back a completed install whose verification was skipped (or
+ * re-check any install) and compare with the source CRC in its journal.
+ * Records the result in the journal: a match clears verify_skipped; a
+ * mismatch marks the data as not trusted (journal fails). */
+void game_verify_data(const char *hidden, const install_ui_t *ui, install_report_t *rep);
 
 /* Every fact behind the pair's state (partitions, journal fields,
  * identity), as text for the Details screen. Returns the length. */

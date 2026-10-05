@@ -89,7 +89,10 @@ DESR SIDE
      chosen yet;
    - the installer creates its own XMB channel, installs OPL if missing,
      then copies every game that is not on the DESR yet and fits;
-   - every game is read back and checked before its XMB icon is made;
+   - every game is read back and CRC-checked before its XMB icon is
+     made. To save time, press START during "validating" to skip this
+     check; the game is still installed and marked "NOT VERIFIED", and
+     Installed Games > the game > Verify game data checks it later;
    - a summary is shown, then the DESR returns to the XMB.
    Do not switch the DESR off while it is copying.
 

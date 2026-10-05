@@ -188,6 +188,10 @@ size_t batch_summary(const batch_entry_t *e, int n, char *out, size_t outsz) {
         (size_t)off < outsz)
       off += snprintf(out + off, outsz - off,
                       "          cover not found on server: default used\n");
+    if ((e[i].result == BATCH_DONE || e[i].result == BATCH_DATA_ONLY) && e[i].verify_skipped &&
+        (size_t)off < outsz)
+      off += snprintf(out + off, outsz - off,
+                      "          verification skipped (Verify game data later)\n");
   }
   if (off < 0)
     return 0;

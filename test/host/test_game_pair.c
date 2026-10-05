@@ -57,6 +57,22 @@ TEST(pair_untrusted_reason_names_first_failed_check) {
             "partition start/size/header differ from the journal");
 }
 
+TEST(pair_label_marks_skipped_verification) {
+  pair_facts_t f = facts(1, 1, 1, 1, 1, 1);
+  CHECK_STR(pair_label(&f), "installed");
+  CHECK(pair_can_verify(&f));
+  f.verify_skipped = 1;
+  CHECK_STR(pair_label(&f), "installed, NOT VERIFIED");
+  CHECK(pair_can_verify(&f));
+  f = facts(1, 1, 1, 1, 0, 0);
+  f.verify_skipped = 1;
+  CHECK_STR(pair_label(&f), "not verified, channel pending");
+  f = facts(1, 1, 0, 0, 0, 0); /* no journal: nothing to compare with */
+  CHECK(!pair_can_verify(&f));
+  f = facts(1, 1, 1, 0, 1, 1); /* copy never completed */
+  CHECK(!pair_can_verify(&f));
+}
+
 TEST(pair_classify_all_states) {
   pair_facts_t f;
   f = facts(0, 0, 0, 0, 0, 0);

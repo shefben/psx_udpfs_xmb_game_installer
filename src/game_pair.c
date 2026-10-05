@@ -51,6 +51,17 @@ unsigned pair_actions(pair_state_t s) {
   return 0;
 }
 
+const char *pair_label(const pair_facts_t *f) {
+  pair_state_t s = pair_classify(f);
+  if (f->verify_skipped && s == PAIR_COMPLETE)
+    return "installed, NOT VERIFIED";
+  if (f->verify_skipped && s == PAIR_HIDDEN_ONLY)
+    return "not verified, channel pending";
+  return pair_state_label(s);
+}
+
+int pair_can_verify(const pair_facts_t *f) { return pair_hidden_trusted(f); }
+
 const char *pair_state_label(pair_state_t s) {
   switch (s) {
   case PAIR_NONE:

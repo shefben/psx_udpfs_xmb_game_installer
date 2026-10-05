@@ -1,5 +1,6 @@
 #include <kernel.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "app_state.h"
 #include "manifest.h"
@@ -57,7 +58,8 @@ void network_start(void) {
   ui_wake();
 
   ChangeThreadPriority(GetThreadId(), MAIN_THREAD_PRIO);
-  ee_thread_t t = {0};
+  ee_thread_t t;
+  memset(&t, 0, sizeof(t));
   t.func = (void *)net_thread_main;
   t.stack = net_stack;
   t.stack_size = sizeof(net_stack);

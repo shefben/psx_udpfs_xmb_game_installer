@@ -341,6 +341,54 @@ TEST(opl_resolve_malformed) {
                -1);
 }
 
+TEST(tx_verify_skipped_trusts_only_a_complete_copy) {
+  tx_journal_t j;
+  verified_journal(&j);
+  j.verify_skipped = 1; /* read-back skipped by the user */
+  j.has_installed_crc = 0;
+  j.installed_crc32 = 0;
+  j.bytes_verified = 0;
+  CHECK(tx_hidden_data_verified(&j));
+  CHECK(tx_hidden_data_read_back(&j) == 0);
+  j.bytes_written -= 2048; /* copy incomplete: never trusted */
+  CHECK(!tx_hidden_data_verified(&j));
+  j.bytes_written += 2048;
+  j.has_source_crc = 0;
+  CHECK(!tx_hidden_data_verified(&j));
+  j.has_source_crc = 1;
+  j.state = TX_HDL_COMPLETE; /* not yet at the verify decision */
+  CHECK(!tx_hidden_data_verified(&j));
+  j.state = TX_COMPLETE;
+  j.deleting = 1;
+  CHECK(!tx_hidden_data_verified(&j));
+
+  verified_journal(&j);
+  CHECK(tx_hidden_data_read_back(&j));
+}
+
+TEST(tx_verify_skipped_roundtrip_and_old_journals) {
+  tx_journal_t j, k;
+  verified_journal(&j);
+  j.verify_skipped = 1;
+  char buf[1200];
+  CHECK(tx_serialize(&j, buf, sizeof(buf)) > 0);
+  CHECK(strstr(buf, "verify_skipped=1\n") != NULL);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK(tx_journal_equal(&j, &k));
+  k.verify_skipped = 0;
+  CHECK(!tx_journal_equal(&j, &k));
+  /* A journal written before the field existed reads as verified. */
+  verified_journal(&j);
+  tx_serialize(&j, buf, sizeof(buf));
+  char *p = strstr(buf, "verify_skipped=0\n");
+  CHECK(p != NULL);
+  if (p)
+    memmove(p, p + 17, strlen(p + 17) + 1);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK_EQ_INT(k.verify_skipped, 0);
+  CHECK(tx_journal_equal(&j, &k));
+}
+
 TEST(tx_launcher_and_opl_cfg_fields_roundtrip) {
   tx_journal_t j, k;
   verified_journal(&j);

@@ -29,6 +29,8 @@
 typedef struct {
   const game_plan_t *p;
   install_stage_t stage;
+  int no_skip;     /* START does not skip the read-back (Verify game data) */
+  int skip_verify; /* START was pressed during the read-back */
 } progress_ctx_t;
 
 #define ROW_STAGE 11
@@ -78,13 +80,27 @@ static void cb_progress(void *ctx, uint64_t done, uint64_t total, uint32_t el) {
   else
     ui_at(ROW_BAR + 3, " network %u.%u   CRC %u.%u   HDD write %u.%u MiB/s", rd / 10,
           rd % 10, cr / 10, cr % 10, wr / 10, wr % 10);
-  ui_at(ROW_BAR + 4, " Hold [SELECT]+[O] to abort (no XMB channel will be created).");
+  if (c && c->stage == STAGE_VALIDATING && !c->no_skip)
+    ui_at(ROW_BAR + 4, " [START] skip verification    Hold [SELECT]+[O] to abort");
+  else
+    ui_at(ROW_BAR + 4, " Hold [SELECT]+[O] to abort (no XMB channel will be created).");
 }
 
 static int cb_abort(void *ctx) {
-  (void)ctx;
+  progress_ctx_t *c = ctx;
+  int b = ui_poll_button();
+  /* START during the read-back: skip it, keep the install. */
+  if (c && c->stage == STAGE_VALIDATING && !c->no_skip && (b & UI_START)) {
+    c->skip_verify = 1;
+    return 1;
+  }
   /* Two buttons so a stray press cannot abort a long copy. */
-  return (ui_poll_button() & UI_CIRCLE) && (ui_held_buttons() & UI_SELECT);
+  return (b & UI_CIRCLE) && (ui_held_buttons() & UI_SELECT);
+}
+
+static int cb_skip_verify(void *ctx) {
+  const progress_ctx_t *c = ctx;
+  return c && c->skip_verify;
 }
 
 /* ------------------------------------------------------------------ */
@@ -133,8 +149,8 @@ static const char *recovery_for(const install_report_t *rep) {
 }
 
 static void run_install(game_plan_t *p, int allow_without_opl) {
-  progress_ctx_t ctx = {p, STAGE_PREPARING};
-  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx};
+  progress_ctx_t ctx = {p, STAGE_PREPARING, 0, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify};
   install_report_t rep;
   draw_install_static(p, "Installing");
   ui_footer("Do not power off.");
@@ -142,18 +158,22 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
 
   if (rep.err == ERR_OK) {
     /* TX_COMPLETE reached: only now report success. */
-    char msg[800];
+    char msg[800], installed[64];
+    if (rep.verify_skipped)
+      snprintf(installed, sizeof(installed), "SKIPPED (Verify game data later)");
+    else
+      snprintf(installed, sizeof(installed), "%08lx", (unsigned long)rep.installed_crc32);
     snprintf(msg, sizeof(msg),
              "%s installed (TX_COMPLETE).\n\n%s\n%s\n\n"
              "Bytes copied:     %llu\nBytes read back:  %llu\n"
-             "Source CRC-32:    %08lx\nInstalled CRC-32: %08lx\n"
+             "Source CRC-32:    %08lx\nInstalled CRC-32: %s\n"
              "OPL settings:     %s\n"
              "Cover:            %s\n\n"
              "The game appears as its own XMB channel\n"
              "after the XMB refreshes (return to the XMB or reboot).",
              p->title, p->visible, p->hidden, (unsigned long long)rep.bytes_written,
              (unsigned long long)rep.bytes_verified, (unsigned long)rep.source_crc32,
-             (unsigned long)rep.installed_crc32, rep.opl_cfg ? rep.opl_cfg : "none",
+             installed, rep.opl_cfg ? rep.opl_cfg : "none",
              rep.jacket && !strcmp(rep.jacket, "missing")
                  ? "not found on server, default used"
                  : (rep.jacket ? rep.jacket : "none"));
@@ -359,8 +379,8 @@ static void batch_run_selected(int n, int allow_without_opl, const char *label) 
     }
     char title[48];
     snprintf(title, sizeof(title), "%s %d/%d", label, idx, total);
-    progress_ctx_t ctx = {&batch_plans[i], STAGE_PREPARING};
-    install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx};
+    progress_ctx_t ctx = {&batch_plans[i], STAGE_PREPARING, 0, 0};
+    install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify};
     install_report_t rep;
     draw_install_static(&batch_plans[i], title);
     ui_footer("Do not power off.");
@@ -369,6 +389,7 @@ static void batch_run_selected(int n, int allow_without_opl, const char *label) 
     e->stage = install_stage_name(rep.stage);
     e->opl_cfg = rep.opl_cfg;
     e->jacket = rep.jacket;
+    e->verify_skipped = rep.verify_skipped;
     e->result = rep.err == ERR_OK              ? BATCH_DONE
                 : rep.data_installed_no_channel ? BATCH_DATA_ONLY
                                                 : BATCH_FAILED;
@@ -682,8 +703,8 @@ static void do_delete(const char *visible, const char *hidden, int pp_only,
 }
 
 static void do_create_channel(const char *hidden) {
-  progress_ctx_t ctx = {NULL, STAGE_VALIDATING};
-  install_ui_t ui = {cb_stage, NULL, NULL, &ctx};
+  progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0};
+  install_ui_t ui = {cb_stage, NULL, NULL, &ctx, NULL};
   install_report_t rep;
   ensure_opl("Create/Repair XMB Channel", 0, NULL);
   ui_header("Create/Repair XMB Channel", hidden);
@@ -703,14 +724,44 @@ static void do_create_channel(const char *hidden) {
   }
 }
 
+#define ROW_VERIFY (1 << 16) /* menu row, not a pair_action_t */
+
+static void do_verify(const char *visible, const char *hidden) {
+  progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, NULL};
+  install_report_t rep;
+  ui_header("Verify game data", hidden);
+  ui_at(4, " Reading back all installed data and comparing its CRC-32 with the");
+  ui_at(5, " CRC-32 recorded while copying. Nothing is written except the journal.");
+  game_verify_data(hidden, &ui, &rep);
+  if (rep.err == ERR_USER_ABORT) {
+    ui_message("Verify game data", "Stopped. Nothing was changed.");
+  } else if (rep.err) {
+    flow_show_error(rep.detail && !strcmp(rep.detail, "CRC-32 of installed data != source stream")
+                        ? "The installed data does NOT match the copy (CRC differs)."
+                        : "Verification did not run to the end.",
+                    &rep,
+                    rep.err == ERR_HDL_VERIFY && rep.have_crc
+                        ? "reinstall the game (Delete game, then install it again)."
+                        : "nothing was changed; try again.");
+  } else {
+    char msg[300];
+    snprintf(msg, sizeof(msg),
+             "Verified: %llu bytes read back,\nCRC-32 %08lx equals the copy's CRC-32.\n\n%s",
+             (unsigned long long)rep.bytes_verified, (unsigned long)rep.installed_crc32,
+             visible);
+    ui_message("Verify game data", msg);
+  }
+}
+
 void flow_pair_actions(const char *visible, const char *hidden) {
   pair_facts_t f;
   game_pair_facts(visible, hidden, &f);
   pair_state_t st = pair_classify(&f);
   unsigned acts = pair_actions(st);
 
-  static char rows[7][UI_ROW_LEN];
-  int map[7], n = 0;
+  static char rows[8][UI_ROW_LEN];
+  int map[8], n = 0;
 #define ADD(a, label)                                                          \
   if (acts & (a)) {                                                            \
     str_copy(rows[n], label, UI_ROW_LEN);                                      \
@@ -725,16 +776,25 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   ADD(ACT_REINSTALL, "Reinstall game (delete, then copy again)");
   ADD(ACT_DELETE, "Delete game");
 #undef ADD
+  if (pair_can_verify(&f)) {
+    str_copy(rows[n], f.verify_skipped ? "Verify game data (was skipped)"
+                                       : "Verify game data again",
+             UI_ROW_LEN);
+    map[n++] = ROW_VERIFY;
+  }
   str_copy(rows[n], "Details (why this state)", UI_ROW_LEN);
   map[n++] = 0;
 
   char status[96];
-  snprintf(status, sizeof(status), "State: %s", pair_state_label(st));
+  snprintf(status, sizeof(status), "State: %s", pair_label(&f));
   ui_header("Existing installation", status);
   int c = ui_select("Existing installation", status, rows, n, 0, NULL, NULL);
   if (c < 0)
     return;
   switch (map[c]) {
+  case ROW_VERIFY:
+    do_verify(visible, hidden);
+    break;
   case 0: {
     static char details[2048];
     game_pair_details(visible, hidden, details, sizeof(details));
@@ -809,8 +869,7 @@ static int collect_pairs(void) {
     ui_at(4, " Checking %d/%d: %s", i + 1, n, pairs[i].hidden + 3);
     game_pair_facts(pairs[i].visible, pairs[i].hidden, &f);
     pairs[i].state = pair_classify(&f);
-    snprintf(pair_rows[i], UI_ROW_LEN, "%-34.34s %s", pairs[i].visible + 3,
-             pair_state_label(pairs[i].state));
+    snprintf(pair_rows[i], UI_ROW_LEN, "%-34.34s %s", pairs[i].visible + 3, pair_label(&f));
   }
   return n;
 }
