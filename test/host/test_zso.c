@@ -156,6 +156,42 @@ TEST(zso_source_strip_iso_opens_the_raw_file) {
   free(z);
 }
 
+TEST(zso_source_switches_to_fallback_on_undecodable_block) {
+  enum { BLOCKS = 5 };
+  static uint8_t expect[BLOCKS * 2048];
+  size_t zlen;
+  uint8_t *z = make_ziso(BLOCKS, &zlen, expect);
+  /* Corrupt block 3 (compressed): its match offset points before the start. */
+  uint32_t off3;
+  memcpy(&off3, z + 0x18 + 4 * 3, 4);
+  z[off3 + 2] = 0xFF;
+  z[off3 + 3] = 0xFF;
+  GameSource inner, src, fb;
+  memsrc_t m, mf;
+  memsrc_init(&inner, &m, zlen);
+  memsrc_add(&m, 0, z, (uint32_t)zlen);
+  memsrc_init(&fb, &mf, sizeof(expect)); /* the server's decompressed view */
+  memsrc_add(&mf, 0, expect, sizeof(expect));
+  fb.is_open = 0;
+  zso_src_t zs;
+  source_zso_init(&src, &zs, &inner);
+  zs.fallback = &fb;
+  CHECK_EQ_INT(source_open(&src, "udpfs:/DVD/G.zso.iso"), ERR_OK);
+  static uint8_t got[BLOCKS * 2048];
+  CHECK_EQ_INT(source_read_exact(&src, got, sizeof(got)), ERR_OK);
+  CHECK(memcmp(got, expect, sizeof(got)) == 0);
+  CHECK(zs.using_fallback);
+  CHECK(fb.is_open);
+  /* without a fallback the same read fails */
+  memsrc_init(&inner, &m, zlen);
+  memsrc_add(&m, 0, z, (uint32_t)zlen);
+  source_zso_init(&src, &zs, &inner);
+  CHECK_EQ_INT(source_open(&src, "mass0:/G.zso"), ERR_OK);
+  CHECK_EQ_INT(source_read_exact(&src, got, sizeof(got)), ERR_SOURCE_READ);
+  source_close(&src);
+  free(z);
+}
+
 TEST(zso_source_rejects_bad_header) {
   static const uint8_t junk[64] = "NOTZ";
   GameSource inner, src;

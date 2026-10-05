@@ -17,6 +17,11 @@ typedef struct {
   /* Open "<x>.zso" for the path "<x>.zso.iso" (udpfsd's virtual name):
    * the raw, still compressed file goes over the network. */
   int strip_iso;
+  /* Optional: a source for the same logical bytes (udpfsd's decompressed
+   * "<x>.zso.iso"). If a block cannot be read or decoded here, reading
+   * continues from it at the same position, for the rest of the image. */
+  GameSource *fallback;
+  int using_fallback;
   uint64_t size;      /* uncompressed */
   uint32_t block_size;
   uint32_t num_blocks;

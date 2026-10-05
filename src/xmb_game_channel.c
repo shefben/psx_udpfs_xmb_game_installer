@@ -44,8 +44,8 @@ const char *install_stage_name(install_stage_t s) {
 
 int game_source_is_server(const char *path) { return !strncmp(path, "udpfs:", 6); }
 
-static GameSource g_src, g_inner;
-static udpfs_src_t g_usrc;
+static GameSource g_src, g_inner, g_fallback;
+static udpfs_src_t g_usrc, g_ufb;
 static zso_src_t g_zso;
 
 /* Any fileXio device (udpfs:, mass0:). ZSO is decompressed here: a raw
@@ -58,6 +58,10 @@ static void source_init_for(const char *path, int zso_on_ps2) {
     source_udpfs_init(&g_inner, &g_usrc);
     source_zso_init(&g_src, &g_zso, &g_inner);
     g_zso.strip_iso = virt;
+    if (virt) { /* udpfsd's own decompression if a block fails here */
+      source_udpfs_init(&g_fallback, &g_ufb);
+      g_zso.fallback = &g_fallback;
+    }
   } else {
     source_udpfs_init(&g_src, &g_usrc);
   }
@@ -271,11 +275,12 @@ int game_load_info(const char *boot_id, xmb_game_info_t *gi) {
   char path[64];
   snprintf(path, sizeof(path), MANIFEST_DIR "/info/%s.txt", boot_id);
   void *buf = NULL;
-  int n = file_load(path, &buf, 2048);
+  int n = file_load(path, &buf, 2047); /* allocates exactly n bytes */
   int ok = 0;
   if (n > 0) {
-    char *s = buf;
-    s[n < 2048 ? n : 2047] = 0;
+    char s[2048];
+    memcpy(s, buf, (size_t)n);
+    s[n] = 0;
     ok = xmb_game_info_parse(s, gi) > 0;
   }
   free(buf);

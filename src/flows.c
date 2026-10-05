@@ -951,7 +951,9 @@ void flow_pair_actions(const char *visible, const char *hidden) {
     str_copy(rows[n], "Rename (title shown in the XMB)", UI_ROW_LEN);
     map[n++] = ROW_RENAME;
   }
-  if (f.hidden_exists && f.hidden_header_valid) {
+  /* Not while a copy is unfinished (offer Resume instead). */
+  if (f.hidden_exists && f.hidden_header_valid && !f.resumable &&
+      (!f.has_journal || f.journal_verified)) {
     str_copy(rows[n], "Back up to USB (.iso)", UI_ROW_LEN);
     map[n++] = ROW_BACKUP;
   }

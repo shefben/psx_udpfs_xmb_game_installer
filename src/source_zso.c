@@ -105,6 +105,7 @@ static int z_open(GameSource *src, const char *path) {
   z->idx_count = 0;
   z->chunk_len = 0;
   z->cur_block = -1;
+  z->using_fallback = 0;
   return 0;
 bad:
   source_close(z->inner);
@@ -112,7 +113,25 @@ bad:
 }
 
 static int z_close(GameSource *src) {
-  source_close(((zso_src_t *)src->priv)->inner);
+  zso_src_t *z = src->priv;
+  source_close(z->inner);
+  if (z->fallback)
+    source_close(z->fallback);
+  z->using_fallback = 0;
+  return 0;
+}
+
+/* Switch to the fallback source (same logical bytes) for good. */
+static int use_fallback(GameSource *src, zso_src_t *z) {
+  if (!z->fallback || z->using_fallback)
+    return -1;
+  if (source_open(z->fallback, src->path) != ERR_OK)
+    return -1;
+  if (source_size(z->fallback) != (int64_t)z->size) {
+    source_close(z->fallback);
+    return -1;
+  }
+  z->using_fallback = 1;
   return 0;
 }
 
@@ -121,10 +140,22 @@ static int z_read(GameSource *src, void *buf, uint32_t size) {
   uint8_t *out = buf;
   uint32_t done = 0;
   while (done < size && z->pos < z->size) {
+    if (z->using_fallback) {
+      uint64_t left = z->size - z->pos;
+      uint32_t n = size - done < left ? size - done : (uint32_t)left;
+      if (source_read_at(z->fallback, z->pos, out + done, n) != ERR_OK)
+        return done ? (int)done : (z->fallback->last_rc ? z->fallback->last_rc : -5);
+      done += n;
+      z->pos += n;
+      continue;
+    }
     uint32_t b = (uint32_t)(z->pos / z->block_size);
     uint32_t in_blk = (uint32_t)(z->pos % z->block_size);
-    if (load_block(z, b) < 0)
+    if (load_block(z, b) < 0) {
+      if (use_fallback(src, z) == 0)
+        continue;
       return done ? (int)done : -5;
+    }
     uint64_t blk_end = (uint64_t)b * z->block_size + z->block_size;
     if (blk_end > z->size)
       blk_end = z->size;
@@ -157,6 +188,8 @@ void source_zso_init(GameSource *src, zso_src_t *z, GameSource *inner) {
   memset(src, 0, sizeof(*src));
   z->inner = inner;
   z->strip_iso = 0;
+  z->fallback = NULL;
+  z->using_fallback = 0;
   z->idx_count = 0;
   z->chunk_len = 0;
   z->cur_block = -1;

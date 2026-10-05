@@ -175,8 +175,17 @@ void backup_ps2_game(const char *hidden, const install_ui_t *ui, install_report_
   tx_journal_t j;
   int have_j = g_app.app_mounted && tx_load(APP_STATE_DIR, hidden, &j) == ERR_OK &&
                !strcmp(j.hidden_partition, hidden) && j.bytes_expected;
-  if (have_j)
+  if (have_j) {
+    /* Only a finished copy: an interrupted one (resume pending) would back
+     * up stale sectors that its own read-back cannot tell apart. */
+    tx_state_t s = j.state == TX_FAILED ? j.failed_from : j.state;
+    if (s < TX_HDL_COMPLETE || !j.has_source_crc || j.bytes_written != j.bytes_expected) {
+      rep->err = ERR_HDL_VERIFY;
+      rep->detail = "the copy of this game never finished: Resume or reinstall it first";
+      return;
+    }
     total = j.bytes_expected;
+  }
   if (pick_dest(h.disc_type == DISC_TYPE_DVD, boot_id, h.title, ".iso") < 0) {
     rep->err = ERR_INVALID_ARG;
     rep->detail = "no free file name on the USB drive";
