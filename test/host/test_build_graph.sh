@@ -49,10 +49,17 @@ done; check dist_contents $?
 (cd "$D" && sha256sum -c SHA256SUMS >/dev/null); check dist_sha256sums $?
 ! find "$D" "$B" -name '*.tmp' -o -name '*PS2KEYS*' | grep -q .; check no_tmp_or_keys_in_outputs $?
 
-# Rebuild with nothing changed: no re-signing.
+# Rebuild with nothing changed: no re-signing. udpfsd is run from
+# dist/udpfsd: its prepared cache (covers, manifest) must survive the
+# rebuild, while any stale file of the old build is removed.
 : > "$W/kelf.log"
+mkdir -p "$D/udpfsd/udpfsd-cache/served/jkt"
+echo png > "$D/udpfsd/udpfsd-cache/served/jkt/SLUS_200.66.png"
+echo old > "$D/stale-file.txt"
 make -C "$ROOT" dist BUILD="$B" DIST="$D" > "$W/make2.log" 2>&1; rc=$?
 [ $rc -eq 0 ] && ! grep -q "^encrypt" "$W/kelf.log"; check incremental_no_resign $?
+[ -s "$D/udpfsd/udpfsd-cache/served/jkt/SLUS_200.66.png" ] && [ ! -e "$D/stale-file.txt" ]
+check dist_keeps_server_cache $?
 
 # Switching KELF_MODE re-signs both KELFs, re-embeds, and the manifest
 # reports the mode actually used.

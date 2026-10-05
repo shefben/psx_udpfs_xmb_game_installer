@@ -178,6 +178,10 @@ size_t batch_summary(const batch_entry_t *e, int n, char *out, size_t outsz) {
     if (e[i].result == BATCH_DONE && e[i].opl_cfg && !strcmp(e[i].opl_cfg, "failed") &&
         (size_t)off < outsz)
       off += snprintf(out + off, outsz - off, "          OPL cfg not copied\n");
+    if (e[i].result == BATCH_DONE && e[i].jacket && !strcmp(e[i].jacket, "missing") &&
+        (size_t)off < outsz)
+      off += snprintf(out + off, outsz - off,
+                      "          cover not found on server: default used\n");
   }
   if (off < 0)
     return 0;

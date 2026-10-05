@@ -146,12 +146,16 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
              "%s installed (TX_COMPLETE).\n\n%s\n%s\n\n"
              "Bytes copied:     %llu\nBytes read back:  %llu\n"
              "Source CRC-32:    %08lx\nInstalled CRC-32: %08lx\n"
-             "OPL settings:     %s\n\n"
+             "OPL settings:     %s\n"
+             "Cover:            %s\n\n"
              "The game appears as its own XMB channel\n"
              "after the XMB refreshes (return to the XMB or reboot).",
              p->title, p->visible, p->hidden, (unsigned long long)rep.bytes_written,
              (unsigned long long)rep.bytes_verified, (unsigned long)rep.source_crc32,
-             (unsigned long)rep.installed_crc32, rep.opl_cfg ? rep.opl_cfg : "none");
+             (unsigned long)rep.installed_crc32, rep.opl_cfg ? rep.opl_cfg : "none",
+             rep.jacket && !strcmp(rep.jacket, "missing")
+                 ? "not found on server, default used"
+                 : (rep.jacket ? rep.jacket : "none"));
     ui_message("Finished", msg);
     return;
   }
@@ -363,6 +367,7 @@ static void batch_run_selected(int n, int allow_without_opl, const char *label) 
     e->err = rep.err;
     e->stage = install_stage_name(rep.stage);
     e->opl_cfg = rep.opl_cfg;
+    e->jacket = rep.jacket;
     e->result = rep.err == ERR_OK              ? BATCH_DONE
                 : rep.data_installed_no_channel ? BATCH_DATA_ONLY
                                                 : BATCH_FAILED;
@@ -683,10 +688,17 @@ static void do_create_channel(const char *hidden) {
   game_create_channel(hidden, &ui, &rep);
   if (rep.err)
     flow_show_error("XMB channel was not created.", &rep, recovery_for(&rep));
-  else
-    ui_message("XMB channel created",
-               "The channel was created and verified.\n"
-               "It appears after the XMB refreshes. Game data was not rewritten.");
+  else {
+    char msg[300];
+    snprintf(msg, sizeof(msg),
+             "The channel was created and verified.\n"
+             "It appears after the XMB refreshes. Game data was not rewritten.\n\n"
+             "Cover: %s",
+             rep.jacket && !strcmp(rep.jacket, "missing")
+                 ? "not found on server, default used (restart udpfsd)"
+                 : (rep.jacket ? rep.jacket : "none"));
+    ui_message("XMB channel created", msg);
+  }
 }
 
 void flow_pair_actions(const char *visible, const char *hidden) {

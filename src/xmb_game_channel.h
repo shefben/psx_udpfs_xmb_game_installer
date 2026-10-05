@@ -58,6 +58,10 @@ typedef struct {
   /* OPL per-game cfg from the server: "copied" | "kept" | "failed" |
    * "none"; NULL when no channel was built. */
   const char *opl_cfg;
+  /* Channel cover: "server" (udpfsd's prepared jacket or an image next
+   * to the game) | "missing" (the server listed a cover that could not
+   * be read; default used) | "default"; NULL when no channel was built. */
+  const char *jacket;
 } install_report_t;
 
 /* Probe a UDPFS file and build names/sizes. Leaves no source open. */

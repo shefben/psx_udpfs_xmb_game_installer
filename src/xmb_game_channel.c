@@ -141,10 +141,12 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
 }
 
 /* Jacket: udpfsd's prepared jkt/<BOOT_ID>.png, then udpfs:/ART/<BOOT_ID>.png,
- * then <source>.png, then the built-in default. */
-static void load_jacket(const char *boot_id, const char *source_path,
-                        const uint8_t **data, uint32_t *size, void **owned) {
+ * then <source>.png, then the built-in default. Returns where it came
+ * from (install_report_t.jacket). */
+static const char *load_jacket(const char *boot_id, const char *source_path,
+                               const uint8_t **data, uint32_t *size, void **owned) {
   char path[SOURCE_PATH_MAX + 8];
+  const char *fallback = "default";
   *owned = NULL;
   if (g_app.net == NETWORK_READY) {
     const manifest_entry_t *me = g_manifest_loaded ? manifest_find_id(&g_manifest, boot_id) : NULL;
@@ -156,9 +158,10 @@ static void load_jacket(const char *boot_id, const char *source_path,
         *data = buf;
         *size = (uint32_t)n;
         *owned = buf;
-        return;
+        return "server";
       }
       free(buf);
+      fallback = "missing";
     }
     const char *cands[2] = {path, NULL};
     snprintf(path, sizeof(path), "udpfs:/ART/%s.png", boot_id);
@@ -176,12 +179,13 @@ static void load_jacket(const char *boot_id, const char *source_path,
         *data = buf;
         *size = (uint32_t)n;
         *owned = buf;
-        return;
+        return "server";
       }
       free(buf);
     }
   }
   payload_default_jacket(data, size);
+  return fallback;
 }
 
 /* Journal writes are part of the transaction: a destructive step never
@@ -290,7 +294,7 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
   const uint8_t *jkt;
   uint32_t jkt_size;
   void *jkt_owned;
-  load_jacket(j->startup_id, j->source_path, &jkt, &jkt_size, &jkt_owned);
+  rep->jacket = load_jacket(j->startup_id, j->source_path, &jkt, &jkt_size, &jkt_owned);
 
   channel_content_t c = {kelf->data, kelf->size, info, info_len, jkt, jkt_size};
   int rc = 0;

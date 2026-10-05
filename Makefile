@@ -200,11 +200,13 @@ DIST_FILES := desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
 dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME)
 	@# Empty dist/ rather than delete it: an Explorer window open on a
 	@# folder in it locks the folder on Windows. No old file may survive,
-	@# except a running udpfsd (Windows locks it) that is byte-identical
-	@# to the one being shipped.
+	@# except udpfsd's own state when it is run from dist/udpfsd: its
+	@# cache (prepared covers + manifest it is serving) and a running
+	@# udpfsd (Windows locks it) that is byte-identical to the new one.
 	mkdir -p $(DIST)
-	find $(DIST) -mindepth 1 -depth -delete 2>/dev/null || true
-	@for f in $$(find $(DIST) -type f); do \
+	find $(DIST) -mindepth 1 -depth -not -path '$(DIST)/udpfsd/udpfsd-cache*' \
+	  -not -path '$(DIST)/udpfsd' -delete 2>/dev/null || true
+	@for f in $$(find $(DIST) -type f -not -path '$(DIST)/udpfsd/udpfsd-cache/*'); do \
 	  cmp -s "$$f" "$(BUILD)/udpfsd/$$(basename "$$f")" || \
 	    { echo "dist: cannot replace $$f (stop udpfsd first)"; exit 1; }; \
 	done
