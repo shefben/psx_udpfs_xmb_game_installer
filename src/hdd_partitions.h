@@ -36,6 +36,12 @@ int hdd_exists(const char *name);
 int hdd_stat(const char *name, uint16_t *type, uint32_t *size_sectors,
              uint32_t *start_sector);
 
+/* Rename the installer's legacy partition (INSTALLER_LEGACY_NAME) to
+ * INSTALLER_PARTITION when only the legacy one exists (it must not be
+ * mounted). 0 if nothing was needed or the rename was confirmed, <0
+ * driver code otherwise (the legacy partition is then still intact). */
+int installer_partition_migrate(void);
+
 /* Remove exactly `name` (never by prefix) and confirm it is gone.
  * ERR_OK if gone (or was already absent), ERR_PARTITION_DELETE. */
 inst_err_t hdd_remove_exact(const char *name, int *rc_out);

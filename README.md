@@ -20,7 +20,7 @@ PC/NAS .iso/.zso -> udpfsd -> UDPFS/UDPRDMA -> udpfs_ioman.irx -> udpfs:/...
 * The channel is created only after the whole installed game was read
   back from the HDD and its CRC-32 equals the CRC of the stream received
   from udpfsd; a failed copy never leaves a visible channel.
-* Every step is journaled under `PP.UDPFS-INSTALLER:/state/`; the
+* Every step is journaled under `PP.UDPF-00001..INSTALLER:/state/`; the
   journal, not the HDL format, records whether data is verified.
 * Release builds: `desr-udpfs-installer-bootstrap.elf` (first run, embeds
   the signed app and OPL-Launcher KELFs) and the signed XMB app

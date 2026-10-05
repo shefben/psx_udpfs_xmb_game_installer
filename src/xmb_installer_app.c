@@ -67,7 +67,14 @@ void installer_app_install(selfinstall_report_t *rep) {
   channel_content_t c;
   build_content(&c, &kelf, info, sizeof(info));
 
-  int rc = 0;
+  int rc = installer_partition_migrate();
+  if (rc < 0) {
+    /* Never create a second installer partition next to the old one. */
+    rep->err = ERR_PARTITION_EXISTS;
+    rep->rc = rc;
+    rep->detail = "rename " INSTALLER_LEGACY_NAME " -> " INSTALLER_PARTITION;
+    goto out;
+  }
   int exists = hdd_exists(INSTALLER_PARTITION);
   if (exists < 0) {
     rep->err = ERR_HDD_MISSING;
@@ -102,7 +109,7 @@ out:
 inst_err_t installer_app_verify(const char **detail) {
   *detail = NULL;
   if (hdd_exists(INSTALLER_PARTITION) <= 0) {
-    *detail = "PP.UDPFS-INSTALLER does not exist";
+    *detail = INSTALLER_PARTITION " does not exist";
     return ERR_XMB_VERIFY;
   }
   int was = g_app.app_mounted;

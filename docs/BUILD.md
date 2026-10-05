@@ -150,7 +150,7 @@ IP can be read from the HDD before the network starts
    `sbv_patch_disable_prefix_check`, iomanX, fileXio (+ `fileXioInit`),
    poweroff, ps2dev9, ps2atad, ps2hdd-hdl (`-o 4 -n 128`), ps2fs
    (`-m 4 -o 10 -n 40`), hdlfs, then sio2man, padman.
-2. Mount `PP.UDPFS-INSTALLER` at `pfs0:` and read `config/network.ini`.
+2. Mount `PP.UDPF-00001..INSTALLER` at `pfs0:` and read `config/network.ini`.
 3. `iop_boot_network`: smap, ministack `ip=<validated ip>`, udpfs_ioman
    (server discovery happens in its device init).
 

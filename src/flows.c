@@ -525,7 +525,7 @@ void flow_auto_install(void) {
     auto_show("Auto-install",
               INSTALLER_PARTITION " exists but could not be mounted.\n\n"
               "Auto-install stopped; nothing was changed. Use\n"
-              "'Install/Repair Installer XMB App' or Diagnostics.",
+              "'Install Installer as XMB Channel' or Diagnostics.",
               15000);
     return;
   case AUTO_CREATE_INSTALLER: {
@@ -933,9 +933,9 @@ void flow_self_install(void) {
            "config/network.ini and the state/ journal directory that game\n"
            "installs need. Existing config/ and state/ are kept.\n\nContinue?",
            INSTALLER_PARTITION);
-  if (!ui_confirm("Install/Repair Installer XMB App", txt))
+  if (!ui_confirm("Install Installer as XMB Channel", txt))
     return;
-  ui_header("Install/Repair Installer XMB App", "Working...");
+  ui_header("Install Installer as XMB Channel", "Working...");
   selfinstall_report_t rep;
   installer_app_install(&rep);
   if (rep.err) {

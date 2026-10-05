@@ -35,8 +35,18 @@ void app_unmount(void) {
 
 void app_mount(void) {
   app_unmount();
-  g_app.app_exists = g_app.iop.hdd_ok && hdd_exists(INSTALLER_PARTITION) > 0;
-  if (g_app.app_exists && pfs_mount(PFS_APP, INSTALLER_PARTITION, FIO_MT_RDWR) == 0)
+  const char *name = INSTALLER_PARTITION;
+  g_app.app_rename_rc = 0;
+  if (g_app.iop.hdd_ok) {
+    /* Earlier releases' PP.UDPFS-INSTALLER was never listed by the XMB;
+     * give it the XMB-shaped name. If that fails, keep using it as is
+     * so its journals and settings are not lost. */
+    g_app.app_rename_rc = installer_partition_migrate();
+    if (g_app.app_rename_rc < 0)
+      name = INSTALLER_LEGACY_NAME;
+  }
+  g_app.app_exists = g_app.iop.hdd_ok && hdd_exists(name) > 0;
+  if (g_app.app_exists && pfs_mount(PFS_APP, name, FIO_MT_RDWR) == 0)
     g_app.app_mounted = 1;
 }
 

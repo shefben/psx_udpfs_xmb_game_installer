@@ -3,7 +3,7 @@
 
 #include "errors.h"
 
-/* Install/Repair the installer's own XMB channel PP.UDPFS-INSTALLER
+/* Install/Repair the installer's own XMB channel PP.UDPF-00001..INSTALLER
  * (plan sections 21, 34). Keeps existing config/ and state/. */
 
 typedef struct {

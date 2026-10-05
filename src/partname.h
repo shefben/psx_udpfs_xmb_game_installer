@@ -50,7 +50,7 @@ int build_game_partition_pair(const char *startup_id, const char *display_title,
 int partition_pair_matches(const char *visible, const char *hidden);
 
 /* 1 if `name` looks like a visible ("PP.XXXX-NNNNN..") game channel,
- * 0 otherwise. The installer partition PP.UDPFS-INSTALLER is NOT a
+ * 0 otherwise. The installer partition (INSTALLER_PARTITION_NAME) is NOT a
  * game channel. */
 int partition_is_game_channel(const char *name);
 
@@ -66,15 +66,33 @@ int partition_partner(const char *name, char out[APA_NAME_MAX + 1]);
  * not a game partition. */
 int part_id_from_partition(const char *name, char out[16]);
 
-#define INSTALLER_PARTITION_NAME "PP.UDPFS-INSTALLER"
+/* The DESR XMB only lists PP. partitions shaped PP.XXXX-NNNNN..TITLE
+ * (BatchKit names apps PP.UAPP-00001..NAME). Earlier releases used
+ * PP.UDPFS-INSTALLER, which the XMB never showed; it is renamed to
+ * INSTALLER_PARTITION_NAME on start (app_mount). */
+#define INSTALLER_PARTITION_NAME "PP.UDPF-00001..INSTALLER"
+#define INSTALLER_LEGACY_NAME "PP.UDPFS-INSTALLER"
 #define TEST_PARTITION_NAME "PP.UDPFS-TEST"
+
+/* 1 for the installer's own partition, current or legacy name. */
+int partition_is_installer(const char *name);
+
+/* What to do with the installer partition names, given hdd_exists()
+ * of the current and the legacy name (1 / 0 / <0 on error): rename
+ * the legacy one only when it alone exists. */
+typedef enum {
+  INSTALLER_NAME_NONE = 0,       /* neither (or unknown): nothing to do */
+  INSTALLER_NAME_OK,             /* current name exists: use it */
+  INSTALLER_NAME_RENAME_LEGACY,  /* rename legacy -> current, then use it */
+} installer_name_action_t;
+installer_name_action_t installer_name_action(int current_exists, int legacy_exists);
 #define APA_TYPE_PFS_ID 0x0100
 #define APA_TYPE_HDL_ID 0x1337
 
 /* Whether the installer may remove partition `name` whose APA type is
  * `apa_type`: a hidden game partition of type HDL, a visible game
  * channel of type PFS, or the installer's own PFS partitions
- * (PP.UDPFS-INSTALLER, PP.UDPFS-TEST). Nothing else -- in particular no
+ * (both installer names, PP.UDPFS-TEST). Nothing else -- in particular no
  * system "__xxx" partition and no name containing ',' (the APA driver
  * would parse the rest as a password and act on another partition). */
 int partition_remove_allowed(const char *name, unsigned apa_type);

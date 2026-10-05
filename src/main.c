@@ -6,6 +6,7 @@
 #include "browser.h"
 #include "diagnostics.h"
 #include "flows.h"
+#include "hdd_partitions.h"
 #include "manifest.h"
 #include "network.h"
 #include "transaction.h"
@@ -36,10 +37,10 @@ static void startup_notices(void) {
                       "shown in the XMB. See Repair XMB Channels.\n\n", n);
   } else if (g_app.hdd_state == ERR_OK) {
     off += snprintf(msg + off, sizeof(msg) - off,
-                    "First run: PP.UDPFS-INSTALLER does not exist yet.\n\n"
+                    "First run: " INSTALLER_PARTITION " does not exist yet.\n\n"
                     "Game installation stays disabled until it exists, because\n"
                     "it holds the install journals and network settings.\n"
-                    "Run 'Install/Repair Installer XMB App' first. Diagnostics\n"
+                    "Run 'Install Installer as XMB Channel' first. Diagnostics\n"
                     "are available now.\n\n");
   }
   if (off > 0)
@@ -64,7 +65,7 @@ int main(int argc, char *argv[]) {
       "Installed Games",
       "Repair XMB Channels",
       "Network Settings",
-      "Install/Repair Installer XMB App",
+      "Install Installer as XMB Channel",
       "Diagnostics",
       "Exit",
   };
@@ -86,10 +87,10 @@ int main(int argc, char *argv[]) {
     }
     if (!g_app.app_mounted && needs_games) {
       ui_message("Installer partition required",
-                 "PP.UDPFS-INSTALLER is not present (or could not be mounted).\n\n"
+                 INSTALLER_PARTITION " is not present (or could not be mounted).\n\n"
                  "It stores the install journals that prove a game was copied\n"
                  "and verified, so games cannot be installed or managed without\n"
-                 "it. Choose 'Install/Repair Installer XMB App' first.");
+                 "it. Choose 'Install Installer as XMB Channel' first.");
       continue;
     }
     switch (c) {

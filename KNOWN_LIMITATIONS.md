@@ -27,7 +27,7 @@ level unless stated otherwise.
 * **Formats.** Plain `.iso` and udpfsd's virtual `.zso.iso` only. CSO/CHD
   virtual images are hidden; split `.iso.001` sets are not offered.
 * **Trust is per installer partition.** Data is trusted only through a
-  completed, CRC-verified journal in `PP.UDPFS-INSTALLER:/state/` that
+  completed, CRC-verified journal in `PP.UDPF-00001..INSTALLER:/state/` that
   also matches the live partition's start sector, size and HDL-header
   CRC. If that partition is recreated, for games installed by other
   tools, or for a same-named partition recreated by another tool, the

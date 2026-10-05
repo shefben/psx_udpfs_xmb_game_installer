@@ -79,8 +79,11 @@ static void check_hdd(void) {
 static void check_app_partition(void) {
   int ex = g_app.iop.hdd_ok ? hdd_exists(INSTALLER_PARTITION) : -1;
   line(ex > 0 ? "PASS" : "FAIL", "%s present", INSTALLER_PARTITION);
+  if (g_app.app_rename_rc < 0)
+    line("FAIL", "%s could not be renamed (code %d): not shown in the XMB",
+         INSTALLER_LEGACY_NAME, g_app.app_rename_rc);
   line(g_app.app_mounted ? "PASS" : "FAIL", "%s mounted read/write at pfs0:",
-       INSTALLER_PARTITION);
+       g_app.app_rename_rc < 0 ? INSTALLER_LEGACY_NAME : INSTALLER_PARTITION);
   if (!g_app.app_mounted)
     return;
   /* Journal directory writable: write, read back, remove a probe. */

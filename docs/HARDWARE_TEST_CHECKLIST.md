@@ -57,7 +57,7 @@ Run in this order. Nothing here creates or deletes a game partition.
 
 | # | Test | Expected | Status |
 |---|---|---|---|
-| D1 | Install/Repair Installer XMB App from the bootstrap ELF | `PP.UDPFS-INSTALLER` verified; game install enabled | NOT RUN |
+| D1 | Install Installer as XMB Channel from the bootstrap ELF | `PP.UDPF-00001..INSTALLER` verified; game install enabled | NOT RUN |
 | D2 | Cold reboot, installer channel visible in XMB, launches, reaches NETWORK_READY and the browser | | NOT RUN |
 | D3 | Diagnostics from the XMB app | installer KELF from `pfs0:/EXECUTE.KELF`, hash = manifest | NOT RUN |
 | D4 | Plain ISO < 4 GiB: full acceptance chain (below) | | NOT RUN |
@@ -77,7 +77,7 @@ Run in this order. Nothing here creates or deletes a game partition.
 | D19 | Jackets prepared by the server (ART `_COV` and a downloaded cover) appear in the XMB | | NOT RUN |
 | D20 | OPL cfg copied to `<OPL partition>/CFG/<ID>.cfg`; its compatibility modes take effect when the channel boots; behaviour of a `$VMC_0=` entry whose VMC does not exist yet; an existing cfg is kept | | NOT RUN |
 | D21 | Channels use the server OPL-Launcher (Diagnostics: "OPL-Launcher KELF from server", journal `launcher_source=server`); a mismatching server copy falls back to the embedded one | | NOT RUN |
-| D22 | Fresh console (no `PP.UDPFS-INSTALLER`), `auto_install = yes`, one ISO + one ZSO on the server: start the bootstrap ELF, no further input | installer partition created, both games complete the acceptance chain, console returns to the XMB, both games boot | NOT RUN |
+| D22 | Fresh console (no `PP.UDPF-00001..INSTALLER`), `auto_install = yes`, one ISO + one ZSO on the server: start the bootstrap ELF, no further input | installer partition created, both games complete the acceptance chain, console returns to the XMB, both games boot | NOT RUN |
 | D23 | `LoadExecPS2("rom0:OSDSYS")` after auto-install lands in the DESR XMB | | NOT RUN |
 | D24 | DESR without OPL: auto-install creates `+OPL` with the server's OPNPS2LD.ELF, then installs games; channels boot through it | `+OPL` 128 MiB PFS, ELF hash = manifest, games reach title screen | NOT RUN |
 | D25 | OPL already present: server OPL is never written; a configured partition that is missing stops with a reason | | NOT RUN |

@@ -45,14 +45,14 @@ Do not install a game until both pass.
    `NETWORK_READY <ip>` when udpfsd was found. Otherwise open
    **Network Settings**, set the console's static IP for your LAN and
    choose **Save and restart network**.
-3. A notice explains that `PP.UDPFS-INSTALLER` does not exist yet and
+3. A notice explains that `PP.UDPF-00001..INSTALLER` does not exist yet and
    that game installation stays disabled until it does (it holds the
    install journals and the network setting).
 
 ## 2. Install the installer into the XMB
 
-1. **Install/Repair Installer XMB App**, confirm with X.
-2. `PP.UDPFS-INSTALLER` (128 MiB) is created and receives the signed
+1. **Install Installer as XMB Channel**, confirm with X.
+2. `PP.UDPF-00001..INSTALLER` (128 MiB) is created and receives the signed
    installer `EXECUTE.KELF` (embedded in the bootstrap ELF),
    `res/info.sys`, both jacket images, the PFS-boot `system.cnf` header,
    `config/network.ini` and `state/`. Everything is verified.
@@ -114,7 +114,7 @@ bootstrap ELF from wLaunchELF, or its XMB channel) needs no further input:
 1. A 10 second countdown starts as soon as the server is found (if the
    server is still reading games, the installer waits up to a minute).
    O or Triangle cancels into the normal menu.
-2. First run: `PP.UDPFS-INSTALLER` is created and verified (the installer
+2. First run: `PP.UDPF-00001..INSTALLER` is created and verified (the installer
    then also appears in the XMB).
 3. If OPL is not on the HDD, the server's OPL is installed first (checked by
    SHA-256). If that is impossible nothing is installed; the reason is shown.

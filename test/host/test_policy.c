@@ -104,3 +104,9 @@ TEST(comma_names_are_not_games) {
   CHECK(!partition_is_game_channel("PP.SLUS-20312..a"));
   CHECK(partition_is_game_channel("PP.SLUS-20312..A_1"));
 }
+
+TEST(installer_policy_both_installer_names) {
+  CHECK(partition_remove_allowed(INSTALLER_PARTITION_NAME, T_PFS));
+  CHECK(partition_remove_allowed(INSTALLER_LEGACY_NAME, T_PFS));
+  CHECK(!partition_remove_allowed(INSTALLER_PARTITION_NAME, T_HDL));
+}

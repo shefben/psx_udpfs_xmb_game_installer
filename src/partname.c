@@ -111,7 +111,21 @@ static int has_game_shape(const char *name) {
   for (size_t i = 15; i < n; i++)
     if (!is_upper(name[i]) && !is_digit(name[i]) && name[i] != '_')
       return 0;
-  return 1;
+  /* The installer's channel is game-shaped for the XMB but is no game
+   * (nor is a "__." partner of it). */
+  return strcmp(name + 2, INSTALLER_PARTITION_NAME + 2) != 0;
+}
+
+int partition_is_installer(const char *name) {
+  return name && (!strcmp(name, INSTALLER_PARTITION_NAME) || !strcmp(name, INSTALLER_LEGACY_NAME));
+}
+
+installer_name_action_t installer_name_action(int current_exists, int legacy_exists) {
+  if (current_exists > 0)
+    return INSTALLER_NAME_OK;
+  if (current_exists == 0 && legacy_exists > 0)
+    return INSTALLER_NAME_RENAME_LEGACY;
+  return INSTALLER_NAME_NONE;
 }
 
 int partition_is_game_channel(const char *name) {
@@ -165,7 +179,7 @@ int partition_remove_allowed(const char *name, unsigned apa_type) {
     return apa_type == APA_TYPE_HDL_ID;
   if (partition_is_game_channel(name))
     return apa_type == APA_TYPE_PFS_ID;
-  if (!strcmp(name, INSTALLER_PARTITION_NAME) || !strcmp(name, TEST_PARTITION_NAME))
+  if (partition_is_installer(name) || !strcmp(name, TEST_PARTITION_NAME))
     return apa_type == APA_TYPE_PFS_ID;
   return 0;
 }

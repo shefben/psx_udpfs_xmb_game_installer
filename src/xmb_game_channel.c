@@ -352,7 +352,7 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   }
   if (!g_app.app_mounted) {
     rep->err = ERR_JOURNAL;
-    rep->detail = "installer partition PP.UDPFS-INSTALLER not mounted";
+    rep->detail = "installer partition " INSTALLER_PARTITION " not mounted";
     goto out;
   }
   /* 2-4. source still accessible, re-parse and compare with the plan */
@@ -522,7 +522,7 @@ void game_create_channel(const char *hidden, const install_ui_t *ui,
   }
   if (!g_app.app_mounted) {
     rep->err = ERR_JOURNAL;
-    rep->detail = "installer partition PP.UDPFS-INSTALLER not mounted";
+    rep->detail = "installer partition " INSTALLER_PARTITION " not mounted";
     goto out;
   }
   pair_facts_t f;

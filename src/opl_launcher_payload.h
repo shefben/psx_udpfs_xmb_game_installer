@@ -13,7 +13,7 @@
  *   bootstrap  desr-udpfs-installer-bootstrap.elf, run once from a
  *              homebrew launcher. Embeds the signed OPL-Launcher KELF
  *              AND the signed app KELF it installs into
- *              PP.UDPFS-INSTALLER.
+ *              PP.UDPF-00001..INSTALLER.
  *   dev        unsigned development build (make dev). Nothing embedded;
  *              payloads may come from udpfs:/PAYLOAD/ as an explicit
  *              development fallback. Never shipped in dist/.
@@ -33,7 +33,7 @@ typedef struct {
  * only, udpfs:/PAYLOAD/opl-launcher-EXECUTE.KELF. */
 inst_err_t payload_opl_launcher(payload_t *out, int udpfs_ok);
 
-/* Installer app KELF for PP.UDPFS-INSTALLER: bootstrap -> embedded;
+/* Installer app KELF for PP.UDPF-00001..INSTALLER: bootstrap -> embedded;
  * app -> its own pfs0:/EXECUTE.KELF (repair in place); dev ->
  * udpfs:/PAYLOAD/installer-EXECUTE.KELF. */
 inst_err_t payload_installer(payload_t *out, int app_mounted, int udpfs_ok);

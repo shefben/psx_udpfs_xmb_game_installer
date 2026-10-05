@@ -91,6 +91,24 @@ int hdd_exists(const char *name) {
   return found;
 }
 
+int installer_partition_migrate(void) {
+  switch (installer_name_action(hdd_exists(INSTALLER_PARTITION),
+                                hdd_exists(INSTALLER_LEGACY_NAME))) {
+  case INSTALLER_NAME_RENAME_LEGACY: {
+    /* APA rename (HDLGameInstaller apa-hdl hddReName): only the header
+     * id changes; the PFS contents (config/, state/ journals) stay. */
+    int r = fileXioRename("hdd0:" INSTALLER_LEGACY_NAME, "hdd0:" INSTALLER_PARTITION);
+    if (r < 0)
+      return r;
+    return hdd_exists(INSTALLER_PARTITION) > 0 && hdd_exists(INSTALLER_LEGACY_NAME) == 0
+               ? 0
+               : -5;
+  }
+  default:
+    return 0;
+  }
+}
+
 int hdd_stat(const char *name, uint16_t *type, uint32_t *size_sectors,
              uint32_t *start_sector) {
   char path[48];

@@ -17,8 +17,10 @@ typedef struct {
   iop_status_t iop;
   net_state_t net;
   net_settings_t settings;
-  int app_mounted;    /* PP.UDPFS-INSTALLER mounted at pfs0: */
+  int app_mounted;    /* installer partition mounted at pfs0: */
   int app_exists;     /* partition present on the HDD */
+  int app_rename_rc;  /* <0: legacy PP.UDPFS-INSTALLER could not be renamed
+                         (it is then mounted under its old name) */
   int hdd_state;      /* inst_err_t from hdd_status() */
   int unfinished_txs; /* count found at startup */
 } app_state_t;

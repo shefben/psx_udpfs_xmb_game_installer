@@ -52,7 +52,7 @@ Result: `df6bea5a03d42e4a9babde9b068d0df562db56e9a11cc800b75eeef872baf8d3`
 The installer applies a stricter rule on top
 (`partition_remove_allowed()` in `src/partname.c`): only a game-shaped
 `__.XXXX-NNNNN..TITLE` partition of type HDL, a game-shaped `PP.`
-channel of type PFS, `PP.UDPFS-INSTALLER` and `PP.UDPFS-TEST`.
+channel of type PFS, the installer partition (`PP.UDPF-00001..INSTALLER`, formerly `PP.UDPFS-INSTALLER`) and `PP.UDPFS-TEST`.
 
 ## Evidence kept in the repository
 

@@ -124,3 +124,32 @@ TEST(region_labels) {
   CHECK_STR(region_label("ABCD_123.45"), "UNKNOWN");
   CHECK_STR(region_label(""), "UNKNOWN");
 }
+
+TEST(installer_partition_name_is_xmb_shaped) {
+  /* The DESR XMB only lists PP. partitions named PP.XXXX-NNNNN..TITLE
+   * (as BatchKit's PP.UAPP-00001..NAME); "PP.UDPFS-INSTALLER" was never
+   * shown. The installer must still not count as a game. */
+  const char *n = INSTALLER_PARTITION_NAME;
+  CHECK(strlen(n) <= APA_NAME_MAX);
+  CHECK(!strncmp(n, "PP.", 3) && n[7] == '-' && n[13] == '.' && n[14] == '.' && n[15]);
+  for (int i = 3; i < 7; i++)
+    CHECK(n[i] >= 'A' && n[i] <= 'Z');
+  for (int i = 8; i < 13; i++)
+    CHECK(n[i] >= '0' && n[i] <= '9');
+  CHECK(!partition_is_game_channel(n));
+  CHECK(!partition_is_xmb_channel(n, APA_TYPE_PFS_ID));
+  char id[16];
+  CHECK_EQ_INT(part_id_from_partition(n, id), -1);
+  CHECK(partition_is_installer(n));
+  CHECK(partition_is_installer(INSTALLER_LEGACY_NAME)); /* renamed on first start */
+  CHECK(!partition_is_installer("PP.SLUS-20312..GT4"));
+}
+
+TEST(installer_partition_migration) {
+  CHECK_EQ_INT(installer_name_action(1, 0), INSTALLER_NAME_OK);
+  CHECK_EQ_INT(installer_name_action(1, 1), INSTALLER_NAME_OK); /* never touch the old one */
+  CHECK_EQ_INT(installer_name_action(0, 1), INSTALLER_NAME_RENAME_LEGACY);
+  CHECK_EQ_INT(installer_name_action(0, 0), INSTALLER_NAME_NONE);
+  CHECK_EQ_INT(installer_name_action(-1, 1), INSTALLER_NAME_NONE); /* HDD error: do nothing */
+  CHECK_EQ_INT(installer_name_action(0, -1), INSTALLER_NAME_NONE);
+}

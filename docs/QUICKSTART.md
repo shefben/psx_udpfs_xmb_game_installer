@@ -94,7 +94,7 @@ DESR. Back up the HDD partition table before the first run (e.g.
    * **Diagnostics > Pre-hardware checks**: every line should be `PASS`
      (installer-partition lines fail until the installer is installed).
    * **Diagnostics > HDD self-test**: must end with `self-test passed`.
-   * **Install/Repair Installer XMB App**: creates `PP.UDPFS-INSTALLER`
+   * **Install Installer as XMB Channel**: creates `PP.UDPF-00001..INSTALLER`
      (128 MiB), which stores the network setting and the install
      journals. The installer also appears in the XMB afterwards.
      With `auto_install = yes` this happens automatically, but doing it
