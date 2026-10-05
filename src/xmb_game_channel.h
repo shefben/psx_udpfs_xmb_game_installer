@@ -5,6 +5,7 @@
 
 #include "errors.h"
 #include "game_pair.h"
+#include "xmb_text.h"
 #include "hdl_plan.h"
 #include "iso9660.h"
 #include "manifest.h"
@@ -21,10 +22,14 @@ typedef struct {
   char visible[APA_NAME_MAX + 1];
   char hidden[APA_NAME_MAX + 1];
   hdl_alloc_t alloc;
+  /* Continue this plan's interrupted copy from its journal checkpoint
+   * instead of creating the partitions (game_install). */
+  int resume;
 } game_plan_t;
 
 typedef enum {
   STAGE_PREPARING = 0,
+  STAGE_CHECKING_RESUME, /* re-reading the last copied segments */
   STAGE_CREATING_HDL,
   STAGE_COPYING,
   STAGE_VALIDATING,
@@ -39,6 +44,12 @@ typedef struct {
   void (*progress)(void *ctx, uint64_t done, uint64_t total, uint32_t elapsed_s);
   int (*should_abort)(void *ctx);
   void *ctx;
+  /* After should_abort() stopped the read-back: non-zero if that was
+   * the user skipping verification, not aborting the install. */
+  int (*skip_verify)(void *ctx);
+  /* After should_abort() stopped the copy: non-zero if the user paused
+   * (the copy can be resumed), not aborted. */
+  int (*paused)(void *ctx);
 } install_ui_t;
 
 typedef struct {
@@ -55,6 +66,9 @@ typedef struct {
   uint32_t installed_crc32;
   uint64_t bytes_written;
   uint64_t bytes_verified;
+  int verify_skipped; /* the user skipped the full read-back */
+  uint64_t resumed_from; /* resume: bytes already on the HDD before this run */
+  int resume_checked;    /* resume: checkpoint segments read back */
   /* OPL per-game cfg from the server: "copied" | "kept" | "failed" |
    * "none"; NULL when no channel was built. */
   const char *opl_cfg;
@@ -67,6 +81,9 @@ typedef struct {
 /* Probe a UDPFS file and build names/sizes. Leaves no source open. */
 inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out);
 
+/* The image is on udpfsd (needs the network), not e.g. on USB. */
+int game_source_is_server(const char *path);
+
 /* Rebuild partition names after the title was edited. */
 inst_err_t game_plan_set_title(game_plan_t *p, const char *title);
 
@@ -76,8 +93,33 @@ inst_err_t game_plan_set_title(game_plan_t *p, const char *title);
  * PS2's own probe result. */
 inst_err_t game_plan_from_manifest(const manifest_entry_t *m, game_plan_t *p);
 
+/* Plan to continue the interrupted copy of `hidden`: re-probes the
+ * image at the journal's source path (server must be up) and sets
+ * p->resume. game_install() re-checks everything before writing. */
+inst_err_t game_resume_plan(const char *hidden, game_plan_t *p, int *rc_out);
+
+/* XMB game info (release date, developer, publisher, genre) that udpfsd
+ * prepared from its game database; 0 if none (server down, no entry). */
+int game_load_info(const char *boot_id, xmb_game_info_t *gi);
+
+/* XMB cover for a game: udpfsd's prepared jacket, then <source>.png, then
+ * the built-in default. *owned (if set) must be freed. Returns where it
+ * came from: "server" | "missing" | "default". */
+const char *game_load_jacket(const char *boot_id, const char *source_path,
+                             const uint8_t **data, uint32_t *size, void **owned);
+
 /* Gather on-disk facts for a pair (exists/valid/journal). */
 void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f);
+
+/* Read back a completed install whose verification was skipped (or
+ * re-check any install) and compare with the source CRC in its journal.
+ * Records the result in the journal: a match clears verify_skipped; a
+ * mismatch marks the data as not trusted (journal fails). */
+void game_verify_data(const char *hidden, const install_ui_t *ui, install_report_t *rep);
+
+/* Every fact behind the pair's state (partitions, journal fields,
+ * identity), as text for the Details screen. Returns the length. */
+size_t game_pair_details(const char *visible, const char *hidden, char *out, size_t outsz);
 
 /* Full install in plan order. Preconditions checked inside. If
  * `allow_without_opl` the data is copied even when the OPL runtime is

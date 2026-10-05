@@ -26,6 +26,8 @@ void batch_classify(batch_entry_t *e, int n) {
       e[i].status = BATCH_TOO_BIG;
     } else if (e[i].probe_err != ERR_OK) {
       e[i].status = BATCH_INVALID;
+    } else if (e[i].pair == PAIR_HIDDEN_UNVERIFIED && e[i].resumable) {
+      e[i].status = BATCH_RESUME;
     } else if (e[i].pair != PAIR_NONE || e[i].id_on_hdd) {
       e[i].status = BATCH_EXISTS;
     } else {
@@ -39,7 +41,7 @@ void batch_classify(batch_entry_t *e, int n) {
         }
       }
     }
-    e[i].selected = e[i].status == BATCH_ELIGIBLE;
+    e[i].selected = batch_selectable(e[i].status);
   }
 }
 
@@ -62,14 +64,22 @@ int auto_should_wait(int loaded, const manifest_t *m) {
   return !loaded || !m || m->scanning;
 }
 
+int auto_start_due(int hdd_ok, int net_ready, int manifest_loaded, int auto_install,
+                   int user_acted, int already_ran) {
+  return hdd_ok && net_ready && manifest_loaded && auto_install && !user_acted &&
+         !already_ran;
+}
+
 auto_step_t auto_installer_step(int exists, int mounted) {
   if (!exists)
     return AUTO_CREATE_INSTALLER;
   return mounted ? AUTO_INSTALLER_OK : AUTO_STOP;
 }
 
+int batch_selectable(batch_status_t s) { return s == BATCH_ELIGIBLE || s == BATCH_RESUME; }
+
 int batch_toggle(batch_entry_t *e) {
-  if (e->status != BATCH_ELIGIBLE)
+  if (!batch_selectable(e->status))
     return e->selected = 0;
   return e->selected = !e->selected;
 }
@@ -81,11 +91,16 @@ int batch_count_selected(const batch_entry_t *e, int n) {
   return c;
 }
 
+/* Data partitions (none for a resume: they exist) + the 128 MiB channel. */
+static uint64_t batch_entry_need_mb(const batch_entry_t *e) {
+  return (e->status == BATCH_RESUME ? 0 : (uint64_t)e->alloc_mb) + 128;
+}
+
 uint64_t batch_needed_mb(const batch_entry_t *e, int n) {
   uint64_t mb = 0;
   for (int i = 0; i < n; i++)
     if (e[i].selected)
-      mb += (uint64_t)e[i].alloc_mb + 128; /* + the 128 MiB XMB channel */
+      mb += batch_entry_need_mb(&e[i]);
   return mb;
 }
 
@@ -103,6 +118,8 @@ const char *batch_status_label(batch_status_t s) {
     return "too big for APA";
   case BATCH_NO_SPACE:
     return "no space";
+  case BATCH_RESUME:
+    return "resume copy";
   }
   return "?";
 }
@@ -114,11 +131,12 @@ int batch_auto_select(batch_entry_t *e, int n, uint64_t free_mb) {
     if (e[i].status == BATCH_NO_SPACE)
       e[i].status = BATCH_ELIGIBLE;
     e[i].selected = 0;
-    if (e[i].status != BATCH_ELIGIBLE)
+    if (!batch_selectable(e[i].status))
       continue;
-    uint64_t need = (uint64_t)e[i].alloc_mb + 128;
+    uint64_t need = batch_entry_need_mb(&e[i]);
     if (used + need > free_mb) {
-      e[i].status = BATCH_NO_SPACE;
+      if (e[i].status == BATCH_ELIGIBLE)
+        e[i].status = BATCH_NO_SPACE;
       continue;
     }
     used += need;
@@ -140,6 +158,8 @@ const char *batch_result_label(batch_result_t r) {
     return "FAILED";
   case BATCH_SKIPPED:
     return "skipped";
+  case BATCH_PAUSED:
+    return "paused";
   }
   return "?";
 }
@@ -155,23 +175,28 @@ void batch_format_row(const batch_entry_t *e, char *out, size_t outsz) {
 }
 
 size_t batch_summary(const batch_entry_t *e, int n, char *out, size_t outsz) {
-  int done = 0, data = 0, failed = 0, skipped = 0;
+  int done = 0, data = 0, failed = 0, paused = 0, skipped = 0;
   for (int i = 0; i < n; i++) {
     if (!e[i].selected)
       continue;
     done += e[i].result == BATCH_DONE;
     data += e[i].result == BATCH_DATA_ONLY;
     failed += e[i].result == BATCH_FAILED;
+    paused += e[i].result == BATCH_PAUSED;
     skipped += e[i].result == BATCH_SKIPPED || e[i].result == BATCH_PENDING;
   }
   int off = snprintf(out, outsz,
-                     "%d installed, %d data only (channel pending), %d failed, %d skipped\n\n",
-                     done, data, failed, skipped);
+                     "%d installed, %d data only (channel pending), %d failed, %d paused, "
+                     "%d skipped\n\n",
+                     done, data, failed, paused, skipped);
   for (int i = 0; i < n && off > 0 && (size_t)off < outsz; i++) {
     if (!e[i].selected)
       continue;
     off += snprintf(out + off, outsz - off, "%-9s %.40s\n", batch_result_label(e[i].result),
                     e[i].name);
+    if (e[i].result == BATCH_PAUSED && (size_t)off < outsz)
+      off += snprintf(out + off, outsz - off,
+                      "          Installed Games > Resume copy continues it\n");
     if (e[i].result == BATCH_FAILED && (size_t)off < outsz)
       off += snprintf(out + off, outsz - off, "          %s at %s\n", err_name(e[i].err),
                       e[i].stage ? e[i].stage : "-");
@@ -182,6 +207,10 @@ size_t batch_summary(const batch_entry_t *e, int n, char *out, size_t outsz) {
         (size_t)off < outsz)
       off += snprintf(out + off, outsz - off,
                       "          cover not found on server: default used\n");
+    if ((e[i].result == BATCH_DONE || e[i].result == BATCH_DATA_ONLY) && e[i].verify_skipped &&
+        (size_t)off < outsz)
+      off += snprintf(out + off, outsz - off,
+                      "          verification skipped (Verify game data later)\n");
   }
   if (off < 0)
     return 0;

@@ -1,0 +1,384 @@
+diff --git a/cmd/udpfsd/main.go b/cmd/udpfsd/main.go
+index 9c5ee71..150685e 100644
+--- a/cmd/udpfsd/main.go
++++ b/cmd/udpfsd/main.go
+@@ -308,7 +308,7 @@ func startPrep(cfg config.Config) {
+ 	}
+ 	o := prep.Options{Folders: gameFolders(cfg), CFGDir: cfg.CFG, ARTDir: cfg.ART,
+ 		Gamelist: cfg.Gamelist, CacheDir: cfg.Cache, Launcher: launcher, OPL: oplElf,
+-		Auto:       cfg.AutoInstall,
++		Auto: cfg.AutoInstall, GameDB: cfg.GameDB, PowerOff: cfg.PowerOff,
+ 		Download:   cfg.DownloadCovers && !*noDownload,
+ 		Downloader: &prep.Downloader{BaseURL: prep.CoverURL, CacheDir: cfg.Cache}}
+ 	// Before the server answers discovery: never serve the previous run's
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 187eae4..930b5f2 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -16,6 +16,8 @@ type Config struct {
+ 	Gamelist, Cache, OPLLauncher, FSRoot  string
+ 	OPLElf                                string // OPL runtime offered to consoles without OPL
+ 	POPS                                  string // PS1 games (.VCD) + POPStarter files, served as /POPS
++	GameDB                                string // PS2DB.xml (PFS-BatchKit-Manager): XMB game info
++	PowerOff                              bool   // power_off_after_install
+ 	DownloadCovers, AutoInstall, ReadOnly bool
+ 	Port                                  int
+ 	Bind                                  string
+@@ -25,7 +27,7 @@ type Config struct {
+ }
+ 
+ // Keys lists every accepted key.
+-var Keys = []string{"dvd", "cd", "games", "install", "cfg", "art", "pops", "gamelist", "cache",
++var Keys = []string{"dvd", "cd", "games", "install", "cfg", "art", "pops", "gamedb", "power_off_after_install", "gamelist", "cache",
+ 	"download_covers", "opl_launcher", "opl_elf", "auto_install", "fsroot", "read_only", "port", "bind"}
+ 
+ // Defaults returns the built-in defaults (relative paths not yet resolved).
+@@ -89,6 +91,15 @@ func (c *Config) Set(key, value, baseDir string) error {
+ 		return dir(&c.ART)
+ 	case "pops":
+ 		return dir(&c.POPS)
++	case "gamedb":
++		c.GameDB = resolve(v, baseDir)
++		if c.GameDB != "" {
++			if _, err := os.Stat(c.GameDB); err != nil {
++				return fmt.Errorf("gamedb %s: %w", c.GameDB, err)
++			}
++		}
++	case "power_off_after_install":
++		c.PowerOff, err = parseBool(v)
+ 	case "fsroot":
+ 		return dir(&c.FSRoot)
+ 	case "gamelist":
+diff --git a/internal/config/config_test.go b/internal/config/config_test.go
+index 6e2fc9c..ddce4f1 100644
+--- a/internal/config/config_test.go
++++ b/internal/config/config_test.go
+@@ -153,3 +153,17 @@ func TestPOPSFolderKey(t *testing.T) {
+ 		t.Fatal("missing pops folder accepted")
+ 	}
+ }
++
++func TestGameDBAndPowerOffKeys(t *testing.T) {
++	base := t.TempDir()
++	write(t, base, "PS2DB.xml", "<datafile/>")
++	p := write(t, base, "udpfsd.cfg", "gamedb = PS2DB.xml\npower_off_after_install = yes\n")
++	c, err := Load(p, base)
++	if err != nil || c.GameDB != filepath.Join(base, "PS2DB.xml") || !c.PowerOff {
++		t.Fatalf("%v %+v", err, c)
++	}
++	p = write(t, base, "udpfsd.cfg", "gamedb = missing.xml\n")
++	if _, err := Load(p, base); err == nil {
++		t.Fatal("missing gamedb accepted")
++	}
++}
+diff --git a/internal/prep/gamedb.go b/internal/prep/gamedb.go
+new file mode 100644
+index 0000000..64e305a
+--- /dev/null
++++ b/internal/prep/gamedb.go
+@@ -0,0 +1,148 @@
++package prep
++
++import (
++	"encoding/xml"
++	"fmt"
++	"os"
++	"path/filepath"
++	"regexp"
++	"strconv"
++	"strings"
++)
++
++// GameInfo is the XMB info of one game (OPL-Games-Infos-Database, the
++// PS2DB.xml / PS1DB.xml shipped with PFS-BatchKit-Manager).
++type GameInfo struct {
++	Release, Developer, Publisher, Genre string
++}
++
++type dbGame struct {
++	Serial    string `xml:"serial,attr"`
++	Release   string `xml:"Release"`
++	Developer string `xml:"Developer"`
++	Publisher string `xml:"Publisher"`
++	Genre     string `xml:"Genre"`
++}
++
++// LoadGameDB reads a game database keyed by game ID ("SLUS_203.12").
++func LoadGameDB(path string) (map[string]GameInfo, error) {
++	f, err := os.Open(path)
++	if err != nil {
++		return nil, err
++	}
++	defer f.Close()
++	out := map[string]GameInfo{}
++	d := xml.NewDecoder(f)
++	// The real database has bare "&" in names ("Tom & Jerry"): be lenient.
++	d.Strict = false
++	d.AutoClose = xml.HTMLAutoClose
++	d.Entity = xml.HTMLEntity
++	for {
++		tok, err := d.Token()
++		if err != nil {
++			if err.Error() == "EOF" {
++				return out, nil
++			}
++			return out, fmt.Errorf("gamedb %s: %w", path, err)
++		}
++		se, ok := tok.(xml.StartElement)
++		if !ok || se.Name.Local != "game" {
++			continue
++		}
++		var g dbGame
++		if err := d.DecodeElement(&g, &se); err != nil {
++			return out, fmt.Errorf("gamedb %s: %w", path, err)
++		}
++		id := serialToID(g.Serial)
++		if id == "" {
++			continue
++		}
++		out[id] = GameInfo{Release: ReleaseDate(g.Release),
++			Developer: strings.TrimRight(Sanitize(g.Developer, 63), ", "),
++			Publisher: strings.TrimRight(Sanitize(g.Publisher, 63), ", "),
++			Genre:     Sanitize(g.Genre, 31)}
++	}
++}
++
++// "SLUS-20312" -> "SLUS_203.12"; "" if it is not a game ID.
++func serialToID(s string) string {
++	s = strings.TrimSpace(s)
++	if len(s) != 10 || s[4] != '-' {
++		return ""
++	}
++	id := s[:4] + "_" + s[5:8] + "." + s[8:10]
++	if !ValidID(id) {
++		return ""
++	}
++	return id
++}
++
++var months = map[string]int{
++	"january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6, "july": 7,
++	"august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
++	"janvier": 1, "février": 2, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6,
++	"juillet": 7, "août": 8, "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11,
++	"décembre": 12, "decembre": 12,
++}
++
++var (
++	dayMonthYear = regexp.MustCompile(`^(\d{1,2})(?:er)?\s+(\pL+)\s+(\d{4})$`)
++	monthDayYear = regexp.MustCompile(`^(\pL+)\s+(\d{1,2}),?\s+(\d{4})$`)
++	isoDate      = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})$`)
++)
++
++// ReleaseDate converts "17 Décembre 2001", "December 17, 2001" or
++// "2001-12-17" to the XMB's YYYYMMDD (as PFS-BatchKit-Manager writes
++// it); "" if the date is unknown or partial.
++func ReleaseDate(s string) string {
++	s = strings.TrimSpace(s)
++	var d, m, y int
++	if g := dayMonthYear.FindStringSubmatch(s); g != nil {
++		d, _ = strconv.Atoi(g[1])
++		m = months[strings.ToLower(g[2])]
++		y, _ = strconv.Atoi(g[3])
++	} else if g := monthDayYear.FindStringSubmatch(s); g != nil {
++		m = months[strings.ToLower(g[1])]
++		d, _ = strconv.Atoi(g[2])
++		y, _ = strconv.Atoi(g[3])
++	} else if g := isoDate.FindStringSubmatch(s); g != nil {
++		y, _ = strconv.Atoi(g[1])
++		m, _ = strconv.Atoi(g[2])
++		d, _ = strconv.Atoi(g[3])
++	}
++	if m < 1 || m > 12 || d < 1 || d > 31 || y < 1990 || y > 2099 {
++		return ""
++	}
++	return fmt.Sprintf("%04d%02d%02d", y, m, d)
++}
++
++// infoText is served as /.udpfsd/info/<ID>.txt; empty fields are left out.
++func infoText(g GameInfo) string {
++	var b strings.Builder
++	for _, kv := range [][2]string{{"release_date", g.Release}, {"developer", g.Developer},
++		{"publisher", g.Publisher}, {"genre", g.Genre}} {
++		if kv[1] != "" {
++			fmt.Fprintf(&b, "%s=%s\n", kv[0], kv[1])
++		}
++	}
++	return b.String()
++}
++
++// writeInfo writes info/<ID>.txt for a game found in the database and
++// removes a stale one otherwise.
++func writeInfo(served, id string, db map[string]GameInfo) {
++	p := filepath.Join(served, "info", id+".txt")
++	g, ok := db[id]
++	text := ""
++	if ok {
++		text = infoText(g)
++	}
++	if text == "" {
++		os.Remove(p)
++		return
++	}
++	if old, err := os.ReadFile(p); err == nil && string(old) == text {
++		return
++	}
++	writeAtomic(p, []byte(text))
++}
+diff --git a/internal/prep/gamedb_test.go b/internal/prep/gamedb_test.go
+new file mode 100644
+index 0000000..8042b69
+--- /dev/null
++++ b/internal/prep/gamedb_test.go
+@@ -0,0 +1,81 @@
++package prep
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++const sampleDB = `<?xml version="1.0" encoding="utf-8"?>
++<datafile>
++	<PS2GamesDB version="1" filter="FR" />
++	<game serial="SLUS-20312">
++		<Title>Final Fantasy X</Title>
++		<Serial>SLUS-20312</Serial>
++		<Release>17 Décembre 2001</Release>
++		<Developer>Square Co. Ltd</Developer>
++		<Notes>Tom & Jerry</Notes>
++		<Publisher>Square Enix</Publisher>
++		<Genre>RPG</Genre>
++		<Description>long text</Description>
++	</game>
++	<game serial="SLES-52392">
++		<Release></Release>
++		<Developer>BattleBorne & Co,</Developer>
++		<Genre>Action</Genre>
++	</game>
++	<game serial="BOGUS">
++		<Genre>x</Genre>
++	</game>
++</datafile>
++`
++
++func TestLoadGameDB(t *testing.T) {
++	p := filepath.Join(t.TempDir(), "PS2DB.xml")
++	os.WriteFile(p, []byte(sampleDB), 0o644)
++	db, err := LoadGameDB(p)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(db) != 2 {
++		t.Fatalf("%d entries", len(db))
++	}
++	g := db["SLUS_203.12"]
++	if g != (GameInfo{"20011217", "Square Co. Ltd", "Square Enix", "RPG"}) {
++		t.Fatalf("%+v", g)
++	}
++	if g := db["SLES_523.92"]; g.Developer != "BattleBorne & Co" || g.Release != "" {
++		t.Fatalf("%+v", g)
++	}
++}
++
++func TestReleaseDate(t *testing.T) {
++	for in, want := range map[string]string{
++		"17 Décembre 2001":  "20011217",
++		"1er Juillet 2003":  "20030701",
++		"December 17, 2001": "20011217",
++		"5 March 2004":      "20040305",
++		"2004-03-05":        "20040305",
++		"2004":              "",
++		"":                  "",
++		"31 Smarch 2004":    "",
++	} {
++		if got := ReleaseDate(in); got != want {
++			t.Errorf("%q: %q, want %q", in, got, want)
++		}
++	}
++}
++
++func TestWriteInfo(t *testing.T) {
++	served := t.TempDir()
++	db := map[string]GameInfo{"SLUS_203.12": {"20011217", "Square", "", "RPG"}}
++	writeInfo(served, "SLUS_203.12", db)
++	b, err := os.ReadFile(filepath.Join(served, "info", "SLUS_203.12.txt"))
++	if err != nil || string(b) != "release_date=20011217\ndeveloper=Square\ngenre=RPG\n" {
++		t.Fatalf("%v %q", err, b)
++	}
++	writeInfo(served, "SLUS_203.12", map[string]GameInfo{}) // no longer in the DB
++	if _, err := os.Stat(filepath.Join(served, "info", "SLUS_203.12.txt")); err == nil {
++		t.Fatal("stale info kept")
++	}
++}
+diff --git a/internal/prep/scan.go b/internal/prep/scan.go
+index 1d9fb5d..6f782cc 100644
+--- a/internal/prep/scan.go
++++ b/internal/prep/scan.go
+@@ -23,6 +23,8 @@ type Options struct {
+ 	Folders                                      []Folder
+ 	CFGDir, ARTDir, Gamelist, CacheDir, Launcher string
+ 	OPL                                          string // OPNPS2LD.ELF offered to consoles without OPL
++	GameDB                                       string // PS2DB.xml: XMB info (release, developer, genre)
++	PowerOff                                     bool   // console switches off after auto-install
+ 	Download, Auto                               bool
+ 	Downloader                                   *Downloader
+ }
+@@ -184,7 +186,11 @@ func (o *Options) manifest(entries []entry, launcher string) []byte {
+ 	if o.Auto {
+ 		auto = 1
+ 	}
+-	fmt.Fprintf(&b, "udpfsd-manifest 1%s auto=%d\n", launcher, auto)
++	poweroff := ""
++	if o.PowerOff {
++		poweroff = " poweroff=1"
++	}
++	fmt.Fprintf(&b, "udpfsd-manifest 1%s auto=%d%s\n", launcher, auto, poweroff)
+ 	for _, e := range entries {
+ 		if e.Err != "" {
+ 			fmt.Fprintf(&b, "%s\tinvalid:%s\t-\t-\t%d\t-\t0\t-\t-\n", e.Path, Sanitize(e.Err, 40), e.Size)
+@@ -223,6 +229,13 @@ func Run(o Options) (Result, error) {
+ 			return Result{}, err
+ 		}
+ 	}
++	var db map[string]GameInfo
++	if o.GameDB != "" {
++		var err error
++		if db, err = LoadGameDB(o.GameDB); err != nil {
++			log.Printf("prep: %v", err) // game info is optional
++		}
++	}
+ 	cacheFile := filepath.Join(o.CacheDir, "scan.json")
+ 	cached := map[string]entry{}
+ 	if b, err := os.ReadFile(cacheFile); err == nil {
+@@ -243,6 +256,7 @@ func Run(o Options) (Result, error) {
+ 		}
+ 		res.Games++
+ 		e.Title = Title(e.Info.ID, o.CFGDir, list, e.Host)
++		writeInfo(served, e.Info.ID, db)
+ 		if o.CFGDir != "" {
+ 			if _, err := os.Stat(filepath.Join(o.CFGDir, e.Info.ID+".cfg")); err == nil {
+ 				e.CFG = true
+diff --git a/internal/prep/scan_test.go b/internal/prep/scan_test.go
+index 5c0eee5..f5109c3 100644
+--- a/internal/prep/scan_test.go
++++ b/internal/prep/scan_test.go
+@@ -262,3 +262,17 @@ func TestServesOPLRuntime(t *testing.T) {
+ 		t.Fatal("stale OPL left in served dir")
+ 	}
+ }
++
++func TestManifestPowerOffFlag(t *testing.T) {
++	base := t.TempDir()
++	dir := filepath.Join(base, "G")
++	os.MkdirAll(dir, 0755)
++	cache := filepath.Join(base, "c")
++	if _, err := Run(Options{Folders: []Folder{{"GAMES", dir}}, CacheDir: cache, Auto: true,
++		PowerOff: true}); err != nil {
++		t.Fatal(err)
++	}
++	if head, _ := readManifest(t, cache); head != "udpfsd-manifest 1 auto=1 poweroff=1" {
++		t.Fatalf("%q", head)
++	}
++}

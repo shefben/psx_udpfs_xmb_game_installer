@@ -16,6 +16,7 @@
 #include "pfs_channel.h"
 #include "server_assets.h"
 #include "source_udpfs.h"
+#include "source_zso.h"
 #include "transaction.h"
 #include "util.h"
 #include "xmb_game_channel.h"
@@ -27,6 +28,8 @@ const char *install_stage_name(install_stage_t s) {
   switch (s) {
   case STAGE_PREPARING:
     return "preparing";
+  case STAGE_CHECKING_RESUME:
+    return "checking the data already copied";
   case STAGE_CREATING_HDL:
     return "creating HDL";
   case STAGE_COPYING:
@@ -41,8 +44,43 @@ const char *install_stage_name(install_stage_t s) {
   return "?";
 }
 
-static GameSource g_src;
-static udpfs_src_t g_usrc;
+int game_source_is_server(const char *path) { return !strncmp(path, "udpfs:", 6); }
+
+static GameSource g_src, g_inner, g_fallback;
+static udpfs_src_t g_usrc, g_ufb;
+static zso_src_t g_zso;
+
+/* Any fileXio device (udpfs:, mass0:). ZSO is decompressed here: a raw
+ * .zso (USB), and udpfsd's virtual "<x>.zso.iso" too - the raw .zso next
+ * to it is read instead, so only the compressed bytes cross the network.
+ * Same logical ISO bytes either way (CRC, resume, verify unchanged). */
+static void source_init_for(const char *path, int zso_on_ps2) {
+  int virt = zso_on_ps2 && game_source_is_server(path) && source_classify(path) == SRC_TYPE_ZSO;
+  if (source_is_raw_zso(path) || virt) {
+    source_udpfs_init(&g_inner, &g_usrc);
+    source_zso_init(&g_src, &g_zso, &g_inner);
+    g_zso.strip_iso = virt;
+    if (virt) { /* udpfsd's own decompression if a block fails here */
+      source_udpfs_init(&g_fallback, &g_ufb);
+      g_zso.fallback = &g_fallback;
+    }
+  } else {
+    source_udpfs_init(&g_src, &g_usrc);
+  }
+}
+
+/* Open with PS2-side ZSO decompression; if that fails (a ZSO variant this
+ * reader does not support), fall back to udpfsd's decompression. */
+static inst_err_t game_source_open(const char *path) {
+  source_init_for(path, 1);
+  inst_err_t e = source_open(&g_src, path);
+  if (e && game_source_is_server(path) && source_classify(path) == SRC_TYPE_ZSO) {
+    source_init_for(path, 0);
+    e = source_open(&g_src, path);
+  }
+  return e;
+}
+
 
 inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out) {
   memset(p, 0, sizeof(*p));
@@ -50,8 +88,7 @@ inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out) {
   str_copy(p->source_path, path, sizeof(p->source_path));
   p->type = source_classify(path);
 
-  source_udpfs_init(&g_src, &g_usrc);
-  inst_err_t e = source_open(&g_src, path);
+  inst_err_t e = game_source_open(path);
   if (!e)
     e = iso_probe(&g_src, iso_hint_from_path(path), &p->iso);
   *rc_out = g_src.last_rc;
@@ -124,10 +161,13 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
   if (load_pair_journal(hidden, &j)) {
     f->has_journal = 1;
     f->journal_verified = tx_hidden_data_verified(&j);
+    f->verify_skipped = j.verify_skipped;
     uint32_t start, size, hcrc;
     f->journal_matches_partition =
         f->hidden_exists && hdl_partition_identity(hidden, &start, &size, &hcrc) == 0 &&
         tx_identity_matches(&j, start, size, hcrc);
+    f->resumable = tx_resumable(&j) && f->journal_matches_partition;
+    f->resume_bytes = f->resumable ? j.bytes_written : 0;
   }
   /* Only a PFS partition is an XMB channel; a same-named HDL partition
    * (hdl-dump visible install) still blocks a new install via
@@ -140,10 +180,116 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
     f->visible_valid = channel_quick_check(visible) == ERR_OK;
 }
 
+static int count_journals(void) {
+  int dd = fileXioDopen(APP_STATE_DIR), n = 0;
+  if (dd < 0)
+    return dd;
+  iox_dirent_t de;
+  while (fileXioDread(dd, &de) > 0)
+    n += !strncmp(de.name, "install-", 8) && str_ends_with_ci(de.name, ".ini");
+  fileXioDclose(dd);
+  return n;
+}
+
+inst_err_t game_resume_plan(const char *hidden, game_plan_t *p, int *rc_out) {
+  tx_journal_t j;
+  *rc_out = 0;
+  if (!load_pair_journal(hidden, &j) || !tx_resumable(&j))
+    return ERR_JOURNAL;
+  inst_err_t e = game_plan_build(j.source_path, p, rc_out);
+  if (e)
+    return e;
+  /* The partitions keep the names they were created with. */
+  str_copy(p->visible, j.visible_partition, sizeof(p->visible));
+  str_copy(p->hidden, j.hidden_partition, sizeof(p->hidden));
+  p->resume = 1;
+  return ERR_OK;
+}
+
+size_t game_pair_details(const char *visible, const char *hidden, char *out, size_t outsz) {
+  pair_facts_t f;
+  game_pair_facts(visible, hidden, &f);
+  const char *why = pair_untrusted_reason(&f);
+  uint16_t htype = 0, vtype = 0;
+  uint32_t start = 0, size = 0, hcrc = 0;
+  int hst = f.hidden_exists ? hdd_stat(hidden, &htype, NULL, NULL) : -2;
+  int hid = f.hidden_exists ? hdl_partition_identity(hidden, &start, &size, &hcrc) : -2;
+  int vst = hdd_exists(visible) > 0 ? hdd_stat(visible, &vtype, NULL, NULL) : -2;
+  char fn[96] = "-";
+  tx_journal_filename_for(hidden, fn);
+  tx_journal_t j;
+  memset(&j, 0, sizeof(j));
+  inst_err_t je = g_app.app_mounted ? tx_load(APP_STATE_DIR, hidden, &j) : ERR_JOURNAL;
+
+  int off = snprintf(out, outsz,
+                     "State   %s\n"
+                     "Reason  %s\n\n"
+                     "Game data %s\n"
+                     "  exists %s  stat %d  type 0x%04x  header %s\n"
+                     "  identity rc %d  start %lu  size %lu  header CRC %08lx\n\n"
+                     "Journal %s/%s\n"
+                     "  installer partition %s  mounted %s  journals in folder %d\n"
+                     "  (rename rc %d)\n",
+                     pair_state_label(pair_classify(&f)), why ? why : "-", hidden,
+                     f.hidden_exists ? "yes" : "NO", hst, htype,
+                     f.hidden_header_valid ? "valid" : "INVALID", hid, (unsigned long)start,
+                     (unsigned long)size, (unsigned long)hcrc, APP_STATE_DIR, fn,
+                     g_app.app_rename_rc < 0 ? INSTALLER_LEGACY_NAME : INSTALLER_PARTITION,
+                     g_app.app_mounted ? "yes" : "NO", g_app.app_mounted ? count_journals() : -1,
+                     g_app.app_rename_rc);
+  if (je == ERR_OK && off > 0 && (size_t)off < outsz)
+    off += snprintf(
+        out + off, outsz - off,
+        "  state %s  failed_from %s  deleting %d\n"
+        "  bytes expected %llu  written %llu  verified %llu\n"
+        "  CRC source %s%08lx  installed %s%08lx\n"
+        "  identity start %lu  size %lu  header CRC %08lx  (%s)\n"
+        "  last error %s\n\n",
+        tx_state_name(j.state), tx_state_name(j.failed_from), j.deleting,
+        (unsigned long long)j.bytes_expected, (unsigned long long)j.bytes_written,
+        (unsigned long long)j.bytes_verified, j.has_source_crc ? "" : "none ",
+        (unsigned long)j.source_crc32, j.has_installed_crc ? "" : "none ",
+        (unsigned long)j.installed_crc32, (unsigned long)j.hdl_start,
+        (unsigned long)j.hdl_size, (unsigned long)j.hdl_header_crc32,
+        !j.has_hdl_identity            ? "not recorded"
+        : f.journal_matches_partition ? "matches"
+                                      : "DIFFERS",
+        j.last_error[0] ? j.last_error : "-");
+  else if (off > 0 && (size_t)off < outsz)
+    off += snprintf(out + off, outsz - off, "  NOT LOADED (missing or unreadable)\n\n");
+  if (off > 0 && (size_t)off < outsz)
+    off += snprintf(out + off, outsz - off,
+                    "Channel %s\n"
+                    "  exists %s  stat %d  type 0x%04x  files/header %s\n",
+                    visible, f.visible_exists ? "yes" : "NO", vst, vtype,
+                    !f.visible_exists ? "-" : f.visible_valid ? "valid" : "INVALID");
+  if (off < 0)
+    return 0;
+  return (size_t)off < outsz ? (size_t)off : outsz - 1;
+}
+
 /* Jacket: udpfsd's prepared jkt/<BOOT_ID>.png, then udpfs:/ART/<BOOT_ID>.png,
  * then <source>.png, then the built-in default. Returns where it came
  * from (install_report_t.jacket). */
-static const char *load_jacket(const char *boot_id, const char *source_path,
+int game_load_info(const char *boot_id, xmb_game_info_t *gi) {
+  if (g_app.net != NETWORK_READY || !boot_id_is_valid(boot_id))
+    return 0;
+  char path[64];
+  snprintf(path, sizeof(path), MANIFEST_DIR "/info/%s.txt", boot_id);
+  void *buf = NULL;
+  int n = file_load(path, &buf, 2047); /* allocates exactly n bytes */
+  int ok = 0;
+  if (n > 0) {
+    char s[2048];
+    memcpy(s, buf, (size_t)n);
+    s[n] = 0;
+    ok = xmb_game_info_parse(s, gi) > 0;
+  }
+  free(buf);
+  return ok;
+}
+
+const char *game_load_jacket(const char *boot_id, const char *source_path,
                                const uint8_t **data, uint32_t *size, void **owned) {
   char path[SOURCE_PATH_MAX + 8];
   const char *fallback = "default";
@@ -212,10 +358,60 @@ static void fail(tx_journal_t *j, install_report_t *rep, inst_err_t e, int rc,
   persist(j); /* best effort: the data is untrusted either way */
 }
 
+/* stream_cb_t.checkpoint: the first `bytes` are on the HDD; save where
+ * a resumed copy would continue. */
+static seg_list_t g_segs;
+
+static int journal_checkpoint(void *cp_ctx, uint64_t bytes, uint32_t cum_crc, uint32_t seg_crc) {
+  tx_journal_t *j = cp_ctx;
+  /* Segment list first: a journal never names a checkpoint whose
+   * segment cannot be re-checked. */
+  if (seg_add(&g_segs, bytes, cum_crc, seg_crc) < 0 ||
+      tx_seg_save(APP_STATE_DIR, j->hidden_partition, &g_segs) != ERR_OK)
+    return 1;
+  j->bytes_written = bytes;
+  j->has_resume_crc = 1;
+  j->resume_crc32 = cum_crc;
+  return persist(j) != ERR_OK;
+}
+
+static const char *g_crc_hidden;
+static int crc_hdd(void *ctx, uint64_t start, uint64_t end, uint32_t *crc) {
+  (void)ctx;
+  return hdl_crc_range(g_crc_hidden, start, end, crc);
+}
+
 static void stage(const install_ui_t *ui, install_report_t *rep, install_stage_t s) {
   rep->stage = s;
   if (ui && ui->stage)
     ui->stage(ui->ctx, s);
+}
+
+/* Resume: read back the newest checkpoint segments from the HDD and keep
+ * the newest one that is still correct; everything after it is copied
+ * again. Without a segment list (older journal) the journal's checkpoint
+ * is used as it is. The full read-back after the copy checks the rest. */
+static void pick_resume_point(tx_journal_t *j, const install_ui_t *ui, install_report_t *rep) {
+  if (tx_seg_load(APP_STATE_DIR, j->hidden_partition, &g_segs) != ERR_OK || g_segs.n == 0)
+    return;
+  /* The list may run ahead of the journal (power cut between the two). */
+  while (g_segs.n && g_segs.s[g_segs.n - 1].bytes > j->bytes_written)
+    g_segs.n--;
+  stage(ui, rep, STAGE_CHECKING_RESUME);
+  g_crc_hidden = j->hidden_partition;
+  int checked = 0;
+  int k = seg_pick_resume(&g_segs, 4, crc_hdd, NULL, &checked);
+  rep->resume_checked = checked;
+  if (k < 0) { /* nothing re-checks: start the copy over (same partition) */
+    g_segs.n = 0;
+    j->bytes_written = 0;
+    j->resume_crc32 = 0;
+  } else {
+    g_segs.n = k + 1;
+    j->bytes_written = g_segs.s[k].bytes;
+    j->resume_crc32 = g_segs.s[k].cum_crc;
+  }
+  tx_seg_save(APP_STATE_DIR, j->hidden_partition, &g_segs);
 }
 
 static void finish_report(install_report_t *rep, const char *visible,
@@ -289,12 +485,14 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
            sizeof(j->launcher_source));
   stage(ui, rep, STAGE_CREATING_CHANNEL);
   char info[1024];
-  uint32_t info_len = (uint32_t)xmb_game_info_sys(info, sizeof(info), title,
-                                                  j->startup_id);
+  xmb_game_info_t gi;
+  int have_gi = game_load_info(j->startup_id, &gi);
+  uint32_t info_len = (uint32_t)xmb_game_info_sys_ex(info, sizeof(info), title, j->startup_id,
+                                                     have_gi ? &gi : NULL);
   const uint8_t *jkt;
   uint32_t jkt_size;
   void *jkt_owned;
-  rep->jacket = load_jacket(j->startup_id, j->source_path, &jkt, &jkt_size, &jkt_owned);
+  rep->jacket = game_load_jacket(j->startup_id, j->source_path, &jkt, &jkt_size, &jkt_owned);
 
   channel_content_t c = {kelf->data, kelf->size, info, info_len, jkt, jkt_size};
   int rc = 0;
@@ -345,8 +543,8 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   memset(&kelf, 0, sizeof(kelf));
   stage(ui, rep, STAGE_PREPARING);
 
-  /* 1. network ready; journal storage present */
-  if (g_app.net != NETWORK_READY) {
+  /* 1. network ready (server images); journal storage present */
+  if (game_source_is_server(p->source_path) && g_app.net != NETWORK_READY) {
     rep->err = ERR_NETWORK;
     goto out;
   }
@@ -356,8 +554,7 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     goto out;
   }
   /* 2-4. source still accessible, re-parse and compare with the plan */
-  source_udpfs_init(&g_src, &g_usrc);
-  if ((rep->err = source_open(&g_src, p->source_path))) {
+  if ((rep->err = game_source_open(p->source_path))) {
     rep->rc = g_src.last_rc;
     goto out;
   }
@@ -380,15 +577,30 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     rep->err = ERR_INTERNAL;
     goto out_src;
   }
-  /* 6. existing partitions: callers resolve these via pair actions */
-  if (hdd_exists(p->hidden) != 0 || hdd_exists(p->visible) != 0) {
+  /* 6. existing partitions: callers resolve these via pair actions. A
+   * resume needs exactly the interrupted copy: its journal, bound to
+   * the same physical partition, for this same image. */
+  if (p->resume) {
+    uint32_t s = 0, z = 0, c = 0;
+    if (!load_pair_journal(p->hidden, &j) || !tx_resumable(&j) ||
+        strcmp(j.visible_partition, p->visible) || strcmp(j.startup_id, p->iso.boot_id) ||
+        strcmp(j.source_path, p->source_path) || j.source_size != p->iso.source_size ||
+        j.bytes_expected != (uint64_t)p->iso.sectors * ISO_SECTOR ||
+        hdd_exists(p->visible) != 0 ||
+        hdl_partition_identity(p->hidden, &s, &z, &c) < 0 || !tx_identity_matches(&j, s, z, c)) {
+      rep->err = ERR_JOURNAL;
+      rep->detail = "cannot resume: journal, partition or source changed; reinstall";
+      goto out_src;
+    }
+  } else if (hdd_exists(p->hidden) != 0 || hdd_exists(p->visible) != 0) {
     rep->err = ERR_PARTITION_EXISTS;
     goto out_src;
   }
-  /* 7. free space: data partitions + the 128 MiB channel */
+  /* 7. free space: data partitions + the 128 MiB channel (a resume
+   * already holds its data partitions) */
   uint32_t total_mb, free_mb, max_mb;
   if (hdd_space_mb(&total_mb, &free_mb, &max_mb) < 0 ||
-      (uint64_t)p->alloc.total_mb + CHANNEL_SIZE_MB > free_mb) {
+      (uint64_t)(p->resume ? 0 : p->alloc.total_mb) + CHANNEL_SIZE_MB > free_mb) {
     rep->err = ERR_NO_SPACE;
     goto out_src;
   }
@@ -410,6 +622,18 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     goto out_src;
   }
 
+  hdl_result_t hr;
+  if (p->resume) {
+    pick_resume_point(&j, ui, rep);
+    if (advance(&j, TX_STREAMING)) {
+      rep->err = ERR_JOURNAL;
+      goto out_src;
+    }
+    goto stream;
+  }
+  /* A fresh copy: no checkpoints from an earlier attempt. */
+  memset(&g_segs, 0, sizeof(g_segs));
+  tx_seg_remove(APP_STATE_DIR, p->hidden);
   /* 9. journal: TX_PLANNED on disk before the first HDD write */
   str_copy(j.source_path, p->source_path, sizeof(j.source_path));
   j.source_size = p->iso.source_size;
@@ -426,7 +650,7 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   stage(ui, rep, STAGE_CREATING_HDL);
   struct HDLFS_FormatArgs args;
   hdl_format_args_build(&args, &p->iso, p->title);
-  hdl_result_t hr = hdl_create_and_format(p->hidden, &p->alloc, &args);
+  hr = hdl_create_and_format(p->hidden, &p->alloc, &args);
   if (hr.err) {
     fail(&j, rep, hr.err, hr.rc, NULL);
     goto out_src;
@@ -445,13 +669,27 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     goto out_src;
   }
 
-  /* 13-15. stream, CRC-32 over every byte received */
+  /* 13-15. stream, CRC-32 over every byte received; a checkpoint is
+   * saved every STREAM_CHECKPOINT bytes so a cut copy can resume. */
+stream:
   stage(ui, rep, STAGE_COPYING);
   stream_cb_t cb = {ui ? ui->progress : NULL, ui ? ui->should_abort : NULL,
-                    ui ? ui->ctx : NULL};
-  hr = hdl_stream(p->hidden, &g_src, j.bytes_expected, &cb);
-  j.bytes_written = hr.bytes;
+                    ui ? ui->ctx : NULL, journal_checkpoint, &j};
+  uint64_t from = p->resume ? j.bytes_written : 0;
+  hr = hdl_stream(p->hidden, &g_src, j.bytes_expected, from, p->resume ? j.resume_crc32 : 0,
+                  &cb);
   rep->bytes_written = hr.bytes;
+  rep->resumed_from = from;
+  if (!hr.err) {
+    j.bytes_written = hr.bytes;
+    j.has_resume_crc = 0;
+    j.resume_crc32 = 0;
+    tx_seg_remove(APP_STATE_DIR, p->hidden); /* copy finished */
+  } else if (hr.err == ERR_USER_ABORT && ui && ui->paused && ui->paused(ui->ctx)) {
+    /* Paused: the stop point is already saved as a checkpoint. */
+    hr.err = ERR_PAUSED;
+  }
+  /* On failure bytes_written stays at the last checkpoint (resume point). */
   if (hr.err) {
     fail(&j, rep, hr.err, hr.rc, NULL);
     goto out_src;
@@ -471,19 +709,28 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   hr = hdl_verify(p->hidden, &p->iso, 1 + p->alloc.subs, &cb);
   j.bytes_verified = hr.bytes;
   rep->bytes_verified = hr.bytes;
-  if (!hr.err) {
-    j.has_installed_crc = 1;
-    j.installed_crc32 = hr.crc32;
-    rep->installed_crc32 = hr.crc32;
-    rep->have_crc = 1;
-  }
-  if (hr.err) {
-    fail(&j, rep, hr.err, hr.rc, "read-back of installed data");
-    goto out;
-  }
-  if (hr.bytes != j.bytes_expected || hr.crc32 != j.source_crc32) {
-    fail(&j, rep, ERR_HDL_VERIFY, 0, "CRC-32 of installed data != source stream");
-    goto out;
+  if (hr.err == ERR_USER_ABORT && !p->resume && ui && ui->skip_verify &&
+      ui->skip_verify(ui->ctx)) {
+    /* Skipped by the user: the HDL header and the PVD (first block) were
+     * checked, the full CRC read-back was not. The copy itself is
+     * complete with its source CRC; "Verify game data" can finish it. */
+    j.verify_skipped = 1;
+    rep->verify_skipped = 1;
+  } else {
+    if (!hr.err) {
+      j.has_installed_crc = 1;
+      j.installed_crc32 = hr.crc32;
+      rep->installed_crc32 = hr.crc32;
+      rep->have_crc = 1;
+    }
+    if (hr.err) {
+      fail(&j, rep, hr.err, hr.rc, "read-back of installed data");
+      goto out;
+    }
+    if (hr.bytes != j.bytes_expected || hr.crc32 != j.source_crc32) {
+      fail(&j, rep, ERR_HDL_VERIFY, 0, "CRC-32 of installed data != source stream");
+      goto out;
+    }
   }
   if (advance(&j, TX_HDL_VERIFIED) || !tx_hidden_data_verified(&j)) {
     fail(&j, rep, ERR_JOURNAL, 0, NULL);
@@ -507,6 +754,55 @@ out_src:
 out:
   payload_release(&kelf);
   finish_report(rep, p->visible, p->hidden);
+}
+
+void game_verify_data(const char *hidden, const install_ui_t *ui, install_report_t *rep) {
+  memset(rep, 0, sizeof(*rep));
+  stage(ui, rep, STAGE_VALIDATING);
+  tx_journal_t j;
+  pair_facts_t f;
+  char visible[APA_NAME_MAX + 1];
+  if (partition_partner(hidden, visible) < 0 || !partition_is_hidden_game(hidden)) {
+    rep->err = ERR_INVALID_ARG;
+    return;
+  }
+  game_pair_facts(visible, hidden, &f);
+  /* Only a copy this installer completed has a source CRC to compare. */
+  if (!load_pair_journal(hidden, &j) || j.deleting || !j.has_source_crc ||
+      j.bytes_expected == 0 || j.bytes_written != j.bytes_expected ||
+      !f.journal_matches_partition) {
+    rep->err = ERR_HDL_VERIFY;
+    rep->detail = "no completed install journal for this partition; reinstall instead";
+    goto out;
+  }
+  stream_cb_t cb = {ui ? ui->progress : NULL, ui ? ui->should_abort : NULL,
+                    ui ? ui->ctx : NULL, NULL, NULL};
+  hdl_result_t hr = hdl_read_back(hidden, j.bytes_expected, &cb);
+  rep->bytes_written = j.bytes_written;
+  rep->bytes_verified = hr.bytes;
+  rep->source_crc32 = j.source_crc32;
+  if (hr.err) {
+    /* Aborted or unreadable: the journal is left as it was. */
+    rep->err = hr.err;
+    rep->rc = hr.rc;
+    rep->detail = "read-back of installed data";
+    goto out;
+  }
+  rep->have_crc = 1;
+  rep->installed_crc32 = hr.crc32;
+  j.bytes_verified = hr.bytes;
+  j.has_installed_crc = 1;
+  j.installed_crc32 = hr.crc32;
+  j.verify_skipped = 0; /* the read-back ran: its result decides from now on */
+  if (hr.crc32 != j.source_crc32) {
+    str_copy(j.last_error, "ERR_HDL_VERIFY", sizeof(j.last_error));
+    rep->err = ERR_HDL_VERIFY;
+    rep->detail = "CRC-32 of installed data != source stream";
+  }
+  if (persist(&j) != ERR_OK && !rep->err)
+    rep->err = ERR_JOURNAL;
+out:
+  finish_report(rep, visible, hidden);
 }
 
 void game_create_channel(const char *hidden, const install_ui_t *ui,
@@ -553,12 +849,16 @@ void game_create_channel(const char *hidden, const install_ui_t *ui,
     goto out;
   }
 
-  /* Rebuild: an existing (broken) PP. is removed first. */
+  /* Rebuild: an existing (broken) PP. is removed first. A title the user
+   * set with Rename is kept if the old info.sys is still readable. */
+  char title[64];
+  if (!f.visible_exists || channel_get_title(visible, title, sizeof(title)) < 0 || !title[0])
+    str_copy(title, h.title, sizeof(title));
   if (f.visible_exists && (rep->err = hdd_remove_exact(visible, &rep->rc))) {
     rep->detail = visible;
     goto out;
   }
-  build_channel(&j, h.title, &kelf, ui, rep);
+  build_channel(&j, title, &kelf, ui, rep);
   if (!rep->err)
     stage(ui, rep, STAGE_FINISHED);
 out:

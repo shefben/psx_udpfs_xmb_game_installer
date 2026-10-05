@@ -92,6 +92,6 @@ void default_display_title(const iso_info_t *iso, const char *source_path,
   size_t n = strlen(out);
   if (str_ends_with_ci(out, ".zso.iso"))
     out[n - 8] = 0;
-  else if (str_ends_with_ci(out, ".iso"))
+  else if (str_ends_with_ci(out, ".iso") || str_ends_with_ci(out, ".zso"))
     out[n - 4] = 0;
 }

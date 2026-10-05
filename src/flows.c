@@ -1,26 +1,39 @@
 #include <kernel.h>
+#include <libpwroff.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
+#include <hdd-ioctl.h>
 #include <io_common.h>
 
 #include "app_state.h"
+#include "backup.h"
 #include "batch.h"
+#include "browser.h"
 #include "flows.h"
 #include "hdd_partitions.h"
 #include "hdl_install.h"
 #include "manifest.h"
 #include "network.h"
 #include "opl_dependency.h"
+#include "listui.h"
 #include "opl_launcher_payload.h"
+#include "partname.h"
+#include "pfs_channel.h"
+#include "pops_install.h"
+#include "remove_games.h"
 #include "settings.h"
 #include "transaction.h"
 #include "ui.h"
 #include "util.h"
 #include "xmb_installer_app.h"
+
+static void auto_show(const char *title, const char *text, int ms);
+static void power_off_now(void);
+static int power_off_countdown(const char *title);
 
 /* ------------------------------------------------------------------ */
 /* Install progress screen                                             */
@@ -28,6 +41,9 @@
 typedef struct {
   const game_plan_t *p;
   install_stage_t stage;
+  int no_skip;     /* START does not skip the read-back (Verify game data) */
+  int skip_verify; /* START was pressed during the read-back */
+  int paused;      /* START was pressed while copying */
 } progress_ctx_t;
 
 #define ROW_STAGE 11
@@ -77,13 +93,41 @@ static void cb_progress(void *ctx, uint64_t done, uint64_t total, uint32_t el) {
   else
     ui_at(ROW_BAR + 3, " network %u.%u   CRC %u.%u   HDD write %u.%u MiB/s", rd / 10,
           rd % 10, cr / 10, cr % 10, wr / 10, wr % 10);
-  ui_at(ROW_BAR + 4, " Hold [SELECT]+[O] to abort (no XMB channel will be created).");
+  if (c && c->stage == STAGE_VALIDATING && !c->no_skip)
+    ui_at(ROW_BAR + 4, " [START] skip verification    Hold [SELECT]+[O] to abort");
+  else if (c && c->stage == STAGE_COPYING && c->p)
+    ui_at(ROW_BAR + 4, " [START] pause (resume later)    Hold [SELECT]+[O] to abort");
+  else
+    ui_at(ROW_BAR + 4, " Hold [SELECT]+[O] to abort (no XMB channel will be created).");
 }
 
 static int cb_abort(void *ctx) {
-  (void)ctx;
+  progress_ctx_t *c = ctx;
+  int b = ui_poll_button();
+  /* START while copying a game: pause (the copy stops at a checkpoint
+   * and Resume copy continues it later). */
+  if (c && c->stage == STAGE_COPYING && c->p && (b & UI_START)) {
+    c->paused = 1;
+    ui_at(ROW_BAR + 4, " Pausing: saving where the copy got to...");
+    return 1;
+  }
+  /* START during the read-back: skip it, keep the install. */
+  if (c && c->stage == STAGE_VALIDATING && !c->no_skip && (b & UI_START)) {
+    c->skip_verify = 1;
+    return 1;
+  }
   /* Two buttons so a stray press cannot abort a long copy. */
-  return (ui_poll_button() & UI_CIRCLE) && (ui_held_buttons() & UI_SELECT);
+  return (b & UI_CIRCLE) && (ui_held_buttons() & UI_SELECT);
+}
+
+static int cb_paused(void *ctx) {
+  const progress_ctx_t *c = ctx;
+  return c && c->paused;
+}
+
+static int cb_skip_verify(void *ctx) {
+  const progress_ctx_t *c = ctx;
+  return c && c->skip_verify;
 }
 
 /* ------------------------------------------------------------------ */
@@ -132,8 +176,9 @@ static const char *recovery_for(const install_report_t *rep) {
 }
 
 static void run_install(game_plan_t *p, int allow_without_opl) {
-  progress_ctx_t ctx = {p, STAGE_PREPARING};
-  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx};
+  /* A resumed copy is always verified in full (no START skip). */
+  progress_ctx_t ctx = {p, STAGE_PREPARING, p->resume, 0, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify, cb_paused};
   install_report_t rep;
   draw_install_static(p, "Installing");
   ui_footer("Do not power off.");
@@ -141,22 +186,44 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
 
   if (rep.err == ERR_OK) {
     /* TX_COMPLETE reached: only now report success. */
-    char msg[800];
+    char msg[800], installed[64];
+    if (rep.verify_skipped)
+      snprintf(installed, sizeof(installed), "SKIPPED (Verify game data later)");
+    else
+      snprintf(installed, sizeof(installed), "%08lx", (unsigned long)rep.installed_crc32);
+    if (rep.resumed_from)
+      snprintf(installed + strlen(installed), sizeof(installed) - strlen(installed),
+               "  (resumed at %lu MiB)", (unsigned long)(rep.resumed_from >> 20));
+    else if (rep.resume_checked)
+      snprintf(installed + strlen(installed), sizeof(installed) - strlen(installed),
+               "  (copied again from the start)");
     snprintf(msg, sizeof(msg),
              "%s installed (TX_COMPLETE).\n\n%s\n%s\n\n"
              "Bytes copied:     %llu\nBytes read back:  %llu\n"
-             "Source CRC-32:    %08lx\nInstalled CRC-32: %08lx\n"
+             "Source CRC-32:    %08lx\nInstalled CRC-32: %s\n"
              "OPL settings:     %s\n"
              "Cover:            %s\n\n"
              "The game appears as its own XMB channel\n"
              "after the XMB refreshes (return to the XMB or reboot).",
              p->title, p->visible, p->hidden, (unsigned long long)rep.bytes_written,
              (unsigned long long)rep.bytes_verified, (unsigned long)rep.source_crc32,
-             (unsigned long)rep.installed_crc32, rep.opl_cfg ? rep.opl_cfg : "none",
+             installed, rep.opl_cfg ? rep.opl_cfg : "none",
              rep.jacket && !strcmp(rep.jacket, "missing")
                  ? "not found on server, default used"
                  : (rep.jacket ? rep.jacket : "none"));
     ui_message("Finished", msg);
+    return;
+  }
+  if (rep.err == ERR_PAUSED) {
+    char msg[400];
+    snprintf(msg, sizeof(msg),
+             "%s paused: %llu MiB of %llu MiB are on the HDD.\n\n"
+             "Continue later with Installed Games > the game > Resume copy\n"
+             "(Install All also lists it as 'resume copy'). The last copied\n"
+             "part is read back and checked before the copy goes on.",
+             p->title, (unsigned long long)(rep.bytes_written >> 20),
+             (unsigned long long)(((uint64_t)p->iso.sectors * ISO_SECTOR) >> 20));
+    ui_message("Paused", msg);
     return;
   }
   flow_show_error("Install did not complete.", &rep, recovery_for(&rep));
@@ -256,6 +323,7 @@ static void batch_fill_from_plan(int i) {
     pair_facts_t f;
     game_pair_facts(p->visible, p->hidden, &f);
     e->pair = pair_classify(&f);
+    e->resumable = f.resumable;
   }
 }
 
@@ -358,8 +426,9 @@ static void batch_run_selected(int n, int allow_without_opl, const char *label) 
     }
     char title[48];
     snprintf(title, sizeof(title), "%s %d/%d", label, idx, total);
-    progress_ctx_t ctx = {&batch_plans[i], STAGE_PREPARING};
-    install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx};
+    batch_plans[i].resume = e->status == BATCH_RESUME;
+    progress_ctx_t ctx = {&batch_plans[i], STAGE_PREPARING, batch_plans[i].resume, 0, 0};
+    install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify, cb_paused};
     install_report_t rep;
     draw_install_static(&batch_plans[i], title);
     ui_footer("Do not power off.");
@@ -368,17 +437,22 @@ static void batch_run_selected(int n, int allow_without_opl, const char *label) 
     e->stage = install_stage_name(rep.stage);
     e->opl_cfg = rep.opl_cfg;
     e->jacket = rep.jacket;
-    e->result = rep.err == ERR_OK              ? BATCH_DONE
+    e->verify_skipped = rep.verify_skipped;
+    e->result = rep.err == ERR_PAUSED          ? BATCH_PAUSED
+                : rep.err == ERR_OK              ? BATCH_DONE
                 : rep.data_installed_no_channel ? BATCH_DATA_ONLY
                                                 : BATCH_FAILED;
     if (rep.err == ERR_USER_ABORT && idx < total)
       stop = ui_confirm(label, "Game aborted. Stop the remaining games too?");
+    if (rep.err == ERR_PAUSED)
+      stop = idx >= total || ui_confirm(label, "Game paused (Resume copy continues it later).\n"
+                                                 "Stop the remaining games too?");
   }
 }
 
 void flow_batch_install(void) {
   if (g_app.net != NETWORK_READY) {
-    ui_message("Install All", "The network is not ready. See Network Settings.");
+    ui_message("Install All Games", network_not_ready_text());
     return;
   }
   int n = batch_load_entries("Install All Games");
@@ -397,22 +471,27 @@ void flow_batch_install(void) {
   }
 
   /* Selection: Square toggles, X starts, O backs out. */
-  int sel = 0;
+  static listui_state_t ls;
+  static lv_item_t items[BATCH_MAX];
+  ls.item = 0;
   for (;;) {
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < n; i++) {
       batch_format_row(&batch[i], batch_rows[i], UI_ROW_LEN);
+      items[i].name = batch[i].title[0] ? batch[i].title : batch[i].name;
+      items[i].size = batch[i].bytes;
+      items[i].group = 0;
+    }
     uint32_t free_mb = 0;
     hdd_space_mb(NULL, &free_mb, NULL);
     char status[96];
-    snprintf(status, sizeof(status), "%d of %d selected, need %lu MiB, free %lu MiB",
+    snprintf(status, sizeof(status), "%d/%d selected, need %lu MiB, free %lu",
              batch_count_selected(batch, n), n, (unsigned long)batch_needed_mb(batch, n),
              (unsigned long)free_mb);
     int key = 0;
-    int c = ui_select("Install All Games", status, batch_rows, n, sel,
-                      "[Sq] toggle  [X] install selected  [O] back", &key);
+    int c = listui_pick("Install All Games", status, items, batch_rows, n, &ls,
+                        "[Sq] toggle  [X] install  [O] back", UI_SQUARE, &key);
     if (c < 0)
       return;
-    sel = c;
     if (key & UI_SQUARE) {
       batch_toggle(&batch[c]);
       continue;
@@ -445,18 +524,34 @@ void flow_batch_install(void) {
       return;
     allow_without_opl = 1;
   }
-  char txt[300];
-  snprintf(txt, sizeof(txt),
-           "Install %d game(s), one after another (%lu MiB).\n\n"
-           "Each game is copied, read back and CRC-checked before its XMB\n"
-           "channel is created. Hold SELECT + O to abort the current game.",
-           batch_count_selected(batch, n), (unsigned long)batch_needed_mb(batch, n));
-  if (!ui_confirm("Install All Games", txt))
-    return;
+  /* Confirm; Square toggles switching the console off when done. */
+  int power_off = g_manifest_loaded && g_manifest.power_off;
+  for (;;) {
+    ui_header("Install All Games", NULL);
+    ui_at(3, " Install %d game(s), one after another (%lu MiB).",
+          batch_count_selected(batch, n), (unsigned long)batch_needed_mb(batch, n));
+    ui_at(5, " Each game is copied, read back and CRC-checked before its XMB");
+    ui_at(6, " channel is created. Hold SELECT + O to abort the current game.");
+    ui_at(8, " When all games are done:  %s",
+          power_off ? "switch the DESR OFF" : "stay on (show the summary)");
+    ui_footer("[X] install   [Square] power off when done: on/off   [O] back");
+    int b = ui_wait_button();
+    if (b & (UI_CIRCLE | UI_TRIANGLE))
+      return;
+    if (b & UI_SQUARE)
+      power_off = !power_off;
+    if (b & UI_CROSS)
+      break;
+  }
 
   batch_run_selected(n, allow_without_opl, "Install All");
   static char summary[4096];
   batch_summary(batch, n, summary, sizeof(summary));
+  if (power_off) {
+    auto_show("Install All Games - summary", summary, 15000);
+    if (power_off_countdown("Install All Games"))
+      power_off_now();
+  }
   ui_text_view("Install All Games - summary", summary);
 }
 
@@ -475,7 +570,37 @@ static void auto_show(const char *title, const char *text, int ms) {
   ui_wait_button_timeout(ms);
 }
 
+/* Switch the console off cleanly: no copy is running (callers are past
+ * their install loop), PFS files closed and unmounted, HDD cache flushed,
+ * DEV9 (HDD + network) off, then the power. */
+static void power_off_now(void) {
+  network_wait_idle();
+  ui_header("Power off", "Switching the DESR off...");
+  app_unmount();
+  fileXioDevctl("pfs:", PDIOC_CLOSEALL, NULL, 0, NULL, 0);
+  fileXioDevctl("hdd0:", HDIOC_FLUSH, NULL, 0, NULL, 0);
+  fileXioDevctl("dev9x:", DDIOC_OFF, NULL, 0, NULL, 0);
+  ui_pad_close();
+  poweroffShutdown();
+  for (;;)
+    ui_delay_ms(1000);
+}
+
+/* Last chance to keep the console on: any button cancels (returns 0). */
+static int power_off_countdown(const char *title) {
+  for (int s = 15; s > 0; s--) {
+    char st[64];
+    snprintf(st, sizeof(st), "Switching off in %d s - any button cancels", s);
+    ui_header(title, st);
+    ui_at(4, " All games are done. The DESR switches itself off.");
+    if (ui_wait_button_timeout(1000))
+      return 0;
+  }
+  return 1;
+}
+
 static void exit_to_system_menu(void) {
+  network_wait_idle();
   app_unmount();
   ui_pad_close();
   LoadExecPS2("rom0:OSDSYS", 0, NULL);
@@ -579,6 +704,9 @@ void flow_auto_install(void) {
   static char summary[4096];
   batch_summary(batch, n, summary, sizeof(summary));
   auto_show("Auto-install finished", summary, 15000);
+  /* udpfsd.cfg power_off_after_install = yes: switch off (cancellable). */
+  if (g_manifest.power_off && power_off_countdown("Auto-install finished"))
+    power_off_now();
   exit_to_system_menu();
 }
 
@@ -680,8 +808,8 @@ static void do_delete(const char *visible, const char *hidden, int pp_only,
 }
 
 static void do_create_channel(const char *hidden) {
-  progress_ctx_t ctx = {NULL, STAGE_VALIDATING};
-  install_ui_t ui = {cb_stage, NULL, NULL, &ctx};
+  progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0, 0};
+  install_ui_t ui = {cb_stage, NULL, NULL, &ctx, NULL, NULL};
   install_report_t rep;
   ensure_opl("Create/Repair XMB Channel", 0, NULL);
   ui_header("Create/Repair XMB Channel", hidden);
@@ -701,14 +829,139 @@ static void do_create_channel(const char *hidden) {
   }
 }
 
+#define ROW_VERIFY (1 << 16) /* menu rows, not pair_action_t values */
+#define ROW_RENAME (1 << 17)
+#define ROW_RESUME (1 << 18)
+#define ROW_BACKUP (1 << 19)
+
+/* ps1: "name" is the PS1 channel, else the hidden PS2 partition. */
+static void do_backup(const char *name, int ps1) {
+  if (!g_app.iop.usb_ok) {
+    ui_message("Back up to USB", "The USB drivers failed to load (see Diagnostics).");
+    return;
+  }
+  char txt[300];
+  snprintf(txt, sizeof(txt),
+           "Copy %s to the USB drive (%s/%s folder)?\n\n"
+           "Use a FAT32 or exFAT drive; games over 4 GiB need exFAT.\n"
+           "The copy is checked against the HDD data afterwards.",
+           name + 3, USB_ROOT, ps1 ? "POPS" : "DVD or CD");
+  if (!ui_confirm("Back up to USB", txt))
+    return;
+  progress_ctx_t ctx = {NULL, STAGE_PREPARING, 0, 0, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify, cb_paused};
+  install_report_t rep;
+  ui_header("Back up to USB", name);
+  ui_footer("Do not unplug the USB drive.");
+  if (ps1)
+    backup_ps1_game(name, &ui, &rep);
+  else
+    backup_ps2_game(name, &ui, &rep);
+  if (rep.err == ERR_USER_ABORT) {
+    ui_message("Back up to USB", "Stopped. The partial file was removed.");
+  } else if (rep.err) {
+    flow_show_error("Backup did not complete.", &rep,
+                    "the partial file was removed; the game on the HDD is unchanged.");
+  } else {
+    snprintf(txt, sizeof(txt), "Saved as\n  %s\n\n%llu bytes, CRC-32 %08lx, read back: %s.",
+             rep.detail, (unsigned long long)rep.bytes_written, (unsigned long)rep.source_crc32,
+             rep.verify_skipped ? "SKIPPED" : "equal");
+    ui_message("Back up to USB", txt);
+  }
+}
+
+
+static void do_resume(const char *hidden) {
+  if (g_app.net != NETWORK_READY) {
+    ui_message("Resume copy", network_not_ready_text());
+    return;
+  }
+  static game_plan_t plan;
+  int rc = 0;
+  ui_header("Resume copy", hidden);
+  ui_at(4, " Checking the image on the server...");
+  inst_err_t e = game_resume_plan(hidden, &plan, &rc);
+  if (e) {
+    char msg[400];
+    snprintf(msg, sizeof(msg),
+             "Cannot resume: %s (%s), code %d.\n\n"
+             "The game image must still be on the server at the same path.\n"
+             "Otherwise delete the incomplete install and install it again.",
+             err_text(e), err_name(e), rc);
+    ui_message("Resume copy", msg);
+    return;
+  }
+  int allow_without_opl = 0;
+  opl_runtime_t opl;
+  int orc;
+  if (!ensure_opl("Resume copy", 0, NULL) && opl_check_runtime(&opl, &orc) != ERR_OK) {
+    if (!ui_confirm("OPL runtime not found",
+                    "OPL is missing, so no XMB channel can be created.\n"
+                    "Finish copying the game data anyway?"))
+      return;
+    allow_without_opl = 1;
+  }
+  run_install(&plan, allow_without_opl);
+}
+
+static void do_rename(const char *visible) {
+  char t[64] = "";
+  if (channel_get_title(visible, t, sizeof(t)) < 0)
+    str_copy(t, visible + 3 + PART_ID_LEN + 2, sizeof(t)); /* "..TITLE" part */
+  if (!ui_edit_text("Rename", "Title shown in the XMB (the game ID stays the same):", t, 48))
+    return;
+  ui_header("Rename", visible);
+  channel_result_t r = channel_set_title(visible, t);
+  char msg[300];
+  if (r.err)
+    snprintf(msg, sizeof(msg),
+             "The title was not changed: %s (%s), step %s, code %d.\n\n"
+             "If the channel now shows no title, use Repair XMB channel.",
+             err_text(r.err), err_name(r.err), r.step ? r.step : "-", r.rc);
+  else
+    snprintf(msg, sizeof(msg),
+             "New title: %s\n\nIt appears after the XMB refreshes (return to the\n"
+             "XMB or reboot). The partition name and game data are unchanged.",
+             t);
+  ui_message("Rename", msg);
+}
+
+static void do_verify(const char *visible, const char *hidden) {
+  progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, NULL, NULL};
+  install_report_t rep;
+  ui_header("Verify game data", hidden);
+  ui_at(4, " Reading back all installed data and comparing its CRC-32 with the");
+  ui_at(5, " CRC-32 recorded while copying. Nothing is written except the journal.");
+  game_verify_data(hidden, &ui, &rep);
+  if (rep.err == ERR_USER_ABORT) {
+    ui_message("Verify game data", "Stopped. Nothing was changed.");
+  } else if (rep.err) {
+    flow_show_error(rep.detail && !strcmp(rep.detail, "CRC-32 of installed data != source stream")
+                        ? "The installed data does NOT match the copy (CRC differs)."
+                        : "Verification did not run to the end.",
+                    &rep,
+                    rep.err == ERR_HDL_VERIFY && rep.have_crc
+                        ? "reinstall the game (Delete game, then install it again)."
+                        : "nothing was changed; try again.");
+  } else {
+    char msg[300];
+    snprintf(msg, sizeof(msg),
+             "Verified: %llu bytes read back,\nCRC-32 %08lx equals the copy's CRC-32.\n\n%s",
+             (unsigned long long)rep.bytes_verified, (unsigned long)rep.installed_crc32,
+             visible);
+    ui_message("Verify game data", msg);
+  }
+}
+
 void flow_pair_actions(const char *visible, const char *hidden) {
   pair_facts_t f;
   game_pair_facts(visible, hidden, &f);
   pair_state_t st = pair_classify(&f);
   unsigned acts = pair_actions(st);
 
-  static char rows[6][UI_ROW_LEN];
-  int map[6], n = 0;
+  static char rows[11][UI_ROW_LEN];
+  int map[11], n = 0;
 #define ADD(a, label)                                                          \
   if (acts & (a)) {                                                            \
     str_copy(rows[n], label, UI_ROW_LEN);                                      \
@@ -723,14 +976,55 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   ADD(ACT_REINSTALL, "Reinstall game (delete, then copy again)");
   ADD(ACT_DELETE, "Delete game");
 #undef ADD
+  if (f.resumable) {
+    snprintf(rows[n], UI_ROW_LEN, "Resume copy (%lu MiB already on the HDD)",
+             (unsigned long)(f.resume_bytes >> 20));
+    map[n++] = ROW_RESUME;
+  }
+  if (f.visible_exists && f.visible_valid) {
+    str_copy(rows[n], "Rename (title shown in the XMB)", UI_ROW_LEN);
+    map[n++] = ROW_RENAME;
+  }
+  /* Not while a copy is unfinished (offer Resume instead). */
+  if (f.hidden_exists && f.hidden_header_valid && !f.resumable &&
+      (!f.has_journal || f.journal_verified)) {
+    str_copy(rows[n], "Back up to USB (.iso)", UI_ROW_LEN);
+    map[n++] = ROW_BACKUP;
+  }
+  if (pair_can_verify(&f)) {
+    str_copy(rows[n], f.verify_skipped ? "Verify game data (was skipped)"
+                                       : "Verify game data again",
+             UI_ROW_LEN);
+    map[n++] = ROW_VERIFY;
+  }
+  str_copy(rows[n], "Details (why this state)", UI_ROW_LEN);
+  map[n++] = 0;
 
   char status[96];
-  snprintf(status, sizeof(status), "State: %s", pair_state_label(st));
+  snprintf(status, sizeof(status), "State: %s", pair_label(&f));
   ui_header("Existing installation", status);
   int c = ui_select("Existing installation", status, rows, n, 0, NULL, NULL);
   if (c < 0)
     return;
   switch (map[c]) {
+  case ROW_VERIFY:
+    do_verify(visible, hidden);
+    break;
+  case ROW_RENAME:
+    do_rename(visible);
+    break;
+  case ROW_RESUME:
+    do_resume(hidden);
+    break;
+  case ROW_BACKUP:
+    do_backup(hidden, 0);
+    break;
+  case 0: {
+    static char details[2048];
+    game_pair_details(visible, hidden, details, sizeof(details));
+    ui_text_view("Details", details);
+    break;
+  }
   case ACT_CREATE_CHANNEL:
     do_create_channel(hidden);
     break;
@@ -753,6 +1047,103 @@ void flow_pair_actions(const char *visible, const char *hidden) {
 }
 
 /* ------------------------------------------------------------------ */
+/* PS1 games (POPStarter)                                              */
+
+void flow_install_ps1(const char *path) {
+  static pops_plan_t plan;
+  int rc = 0;
+  ui_header("Checking", path);
+  ui_at(4, " Reading the VCD (ISO9660 + SYSTEM.CNF)...");
+  inst_err_t e = pops_plan_build(path, &plan, &rc);
+  if (e) {
+    char msg[500];
+    snprintf(msg, sizeof(msg),
+             "%s\n\n%s (%s), code %d.\n\n"
+             "Only PS1 games converted to .VCD (POPStarter format, e.g. with\n"
+             "cue2pops) are supported. Nothing was written to the HDD.",
+             path, err_text(e), err_name(e), rc);
+    ui_message("Cannot install", msg);
+    return;
+  }
+  for (;;) {
+    ui_header("Install PS1 game", NULL);
+    ui_at(3, " Title       %.60s", plan.title);
+    ui_at(4, " Game ID     %s   (PS1, POPStarter)", plan.vcd.boot_id);
+    ui_at(5, " Source      %.64s", plan.source_path);
+    ui_at(6, " Partition   %s (%s)", plan.partition, plan.size_str);
+    ui_at(7, " Size        %lu MiB", (unsigned long)(plan.vcd.bytes >> 20));
+    ui_at(9, " Needs POPSTARTER.KELF next to the VCD or in POPS/ on the same");
+    ui_at(10, " device; POPS.ELF and IOPRP252.IMG are copied to __common/POPS");
+    ui_at(11, " if they are not there yet.");
+    ui_footer("[X] install  [Square] edit title  [O] back");
+    int b;
+    do
+      b = ui_wait_button();
+    while (!(b & (UI_CROSS | UI_SQUARE | UI_CIRCLE | UI_TRIANGLE)));
+    if (b & (UI_CIRCLE | UI_TRIANGLE))
+      return;
+    if (b & UI_SQUARE) {
+      char t[64];
+      str_copy(t, plan.title, sizeof(t));
+      if (ui_edit_text("Edit title", "Display title (game ID cannot be changed):", t, 48) &&
+          pops_plan_set_title(&plan, t) != ERR_OK)
+        ui_message("Title", "Invalid title.");
+      continue;
+    }
+    break;
+  }
+  progress_ctx_t ctx = {NULL, STAGE_PREPARING, 0, 0, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify, cb_paused};
+  install_report_t rep;
+  ui_header("Installing PS1 game", plan.partition);
+  ui_at(3, " Title       %.60s", plan.title);
+  ui_at(4, " Game ID     %s", plan.vcd.boot_id);
+  ui_footer("Do not power off.");
+  pops_install(&plan, &ui, &rep);
+  if (rep.err) {
+    flow_show_error("PS1 install did not complete.", &rep,
+                    rep.visible_exists ? "delete the game with Remove Games, then retry."
+                                       : "nothing is left on the HDD; fix the cause and retry.");
+    return;
+  }
+  char msg[400];
+  snprintf(msg, sizeof(msg),
+           "%s installed as %s.\n\n"
+           "Copied %llu bytes, CRC-32 %08lx, read back: %s.\n\n"
+           "It appears in the XMB after it refreshes and starts through\n"
+           "POPStarter. Memory cards: __common/POPS/%s/",
+           plan.title, plan.partition, (unsigned long long)rep.bytes_written,
+           (unsigned long)rep.source_crc32, rep.verify_skipped ? "SKIPPED" : "equal",
+           plan.partition + 3);
+  ui_message("Finished", msg);
+}
+
+void flow_ps1_actions(const char *partition) {
+  static char rows[4][UI_ROW_LEN] = {"Rename (title shown in the XMB)",
+                                     "Back up to USB (.VCD)", "Delete game", "Back"};
+  int c = ui_select("PS1 game", partition, rows, 4, 0, NULL, NULL);
+  if (c == 0) {
+    do_rename(partition);
+  } else if (c == 1) {
+    do_backup(partition, 1);
+  } else if (c == 2) {
+    char txt[200];
+    snprintf(txt, sizeof(txt), "The PS1 game partition will be PERMANENTLY removed:\n\n  %s\n\n"
+                               "Its memory cards in __common/POPS stay.", partition);
+    if (!ui_confirm_destructive("Delete", txt))
+      return;
+    const char *failed;
+    int rc;
+    if (game_delete_pair(partition, NULL, &failed, &rc) != ERR_OK) {
+      snprintf(txt, sizeof(txt), "Could not remove %s (code %d).", partition, rc);
+      ui_message("Delete failed", txt);
+    } else {
+      ui_message("Deleted", "Done.");
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Installed games / repair                                            */
 
 #define MAX_PAIRS 128
@@ -764,6 +1155,8 @@ typedef struct {
 
 static pair_row_t pairs[MAX_PAIRS];
 static char pair_rows[MAX_PAIRS][UI_ROW_LEN];
+static lv_item_t pair_items[MAX_PAIRS];
+static listui_state_t rm_ls;
 static hdd_part_t parts[256];
 
 static int collect_pairs(void) {
@@ -799,8 +1192,11 @@ static int collect_pairs(void) {
     ui_at(4, " Checking %d/%d: %s", i + 1, n, pairs[i].hidden + 3);
     game_pair_facts(pairs[i].visible, pairs[i].hidden, &f);
     pairs[i].state = pair_classify(&f);
+    /* A channel without a __. partner may be a PS1 game (IMAGE0.VCD). */
+    if (pairs[i].state == PAIR_ORPHAN_CHANNEL && pops_partition_is_ps1(pairs[i].visible))
+      pairs[i].state = PAIR_PS1;
     snprintf(pair_rows[i], UI_ROW_LEN, "%-34.34s %s", pairs[i].visible + 3,
-             pair_state_label(pairs[i].state));
+             pairs[i].state == PAIR_PS1 ? pair_state_label(PAIR_PS1) : pair_label(&f));
   }
   return n;
 }
@@ -826,15 +1222,128 @@ static void pair_list(const char *title, int only_problems) {
     char status[96];
     snprintf(status, sizeof(status), "%d game%s%s", n, n == 1 ? "" : "s",
              only_problems ? " need attention" : "");
-    int c = ui_select(title, status, pair_rows, n, sel, NULL, NULL);
+    for (int i = 0; i < n; i++) {
+      pair_items[i].name = pairs[i].visible + 3; /* "SLUS-20312..TITLE" */
+      pair_items[i].size = 0;
+      /* Games that need attention first. */
+      pair_items[i].group = pairs[i].state == PAIR_COMPLETE ? 1 : 0;
+    }
+    static listui_state_t ls;
+    ls.item = sel;
+    int c = listui_pick(title, status, pair_items, pair_rows, n, &ls, NULL, 0, NULL);
     if (c < 0)
       return;
     sel = c;
-    flow_pair_actions(pairs[c].visible, pairs[c].hidden);
+    if (pairs[c].state == PAIR_PS1)
+      flow_ps1_actions(pairs[c].visible);
+    else
+      flow_pair_actions(pairs[c].visible, pairs[c].hidden);
   }
 }
 
 void flow_installed_games(void) { pair_list("Installed Games", 0); }
+
+/* ------------------------------------------------------------------ */
+/* Remove games (several at once)                                      */
+
+static remove_entry_t rm[MAX_PAIRS];
+static char rm_rows[MAX_PAIRS][UI_ROW_LEN];
+
+void flow_remove_games(void) {
+  int n = collect_pairs();
+  if (n < 0) {
+    ui_message("Remove Games", "Cannot read the HDD partition table.");
+    return;
+  }
+  if (n == 0) {
+    ui_message("Remove Games", "No installed games found.");
+    return;
+  }
+  for (int i = 0; i < n; i++)
+    remove_entry_init(&rm[i], pairs[i].visible, pairs[i].hidden, pairs[i].state);
+
+  /* Selection: Square toggles, Start selects all/none, X removes. */
+  int sel = 0;
+  for (;;) {
+    for (int i = 0; i < n; i++)
+      remove_format_row(&rm[i], rm_rows[i], UI_ROW_LEN);
+    uint32_t free_mb = 0;
+    hdd_space_mb(NULL, &free_mb, NULL);
+    char status[96];
+    snprintf(status, sizeof(status), "%d of %d selected, free %lu MiB",
+             remove_count_selected(rm, n), n, (unsigned long)free_mb);
+    int key = 0;
+    for (int i = 0; i < n; i++) {
+      pair_items[i].name = rm[i].visible + 3;
+      pair_items[i].size = 0;
+      pair_items[i].group = 0;
+    }
+    rm_ls.item = sel;
+    int c = listui_pick("Remove Games", status, pair_items, rm_rows, n, &rm_ls,
+                        "[Sq] toggle [Start] all [X] remove", UI_SQUARE | UI_START, &key);
+    if (c < 0)
+      return;
+    sel = c;
+    if (key & UI_SQUARE) {
+      remove_toggle(&rm[c]);
+      continue;
+    }
+    if (key & UI_START) {
+      remove_toggle_all(rm, n);
+      continue;
+    }
+    if (remove_count_selected(rm, n) == 0) {
+      ui_message("Remove Games", "Nothing selected. Square selects a game.");
+      continue;
+    }
+    break;
+  }
+
+  int count = remove_count_selected(rm, n), listed = 0;
+  char txt[900];
+  int off = snprintf(txt, sizeof(txt),
+                     "%d game(s) will be PERMANENTLY removed (XMB channel and\n"
+                     "game data partitions):\n\n",
+                     count);
+  for (int i = 0; i < n && listed < 10; i++)
+    if (rm[i].selected) {
+      off += snprintf(txt + off, sizeof(txt) - off, "  %.50s\n", rm[i].visible + 3);
+      listed++;
+    }
+  if (count > listed)
+    snprintf(txt + off, sizeof(txt) - off, "  ... and %d more\n", count - listed);
+  if (!ui_confirm_destructive("Remove Games", txt))
+    return;
+
+  int idx = 0;
+  for (int i = 0; i < n; i++) {
+    remove_entry_t *e = &rm[i];
+    if (!e->selected)
+      continue;
+    char st[64];
+    snprintf(st, sizeof(st), "Removing %d/%d - do not power off", ++idx, count);
+    ui_header("Remove Games", st);
+    ui_at(4, " %s", e->visible + 3);
+    e->err = game_delete_pair(e->visible, e->hidden, &e->failed, &e->rc);
+    /* Check with the partition table that both are really gone. */
+    if (e->err == ERR_OK && hdd_exists(e->visible) != 0) {
+      e->err = ERR_PARTITION_DELETE;
+      e->failed = e->visible;
+    } else if (e->err == ERR_OK && hdd_exists(e->hidden) != 0) {
+      e->err = ERR_PARTITION_DELETE;
+      e->failed = e->hidden;
+    }
+    e->result = e->err == ERR_OK ? REMOVE_DONE : REMOVE_FAILED;
+  }
+
+  static char summary[4096];
+  size_t len = remove_summary(rm, n, summary, sizeof(summary));
+  uint32_t free_mb = 0;
+  hdd_space_mb(NULL, &free_mb, NULL);
+  snprintf(summary + len, sizeof(summary) - len, "\nFree space now: %lu MiB\n",
+           (unsigned long)free_mb);
+  ui_text_view("Remove Games - summary", summary);
+}
 
 void flow_repair(void) {
   if (g_app.app_mounted) {
@@ -858,19 +1367,38 @@ void flow_repair(void) {
 /* ------------------------------------------------------------------ */
 
 void flow_network_settings(void) {
-  static char rows[4][UI_ROW_LEN];
+  static char rows[6][UI_ROW_LEN];
   for (;;) {
-    snprintf(rows[0], UI_ROW_LEN, "Local IP:  %s", g_app.settings.local_ip);
-    snprintf(rows[1], UI_ROW_LEN, "Save and restart network");
-    snprintf(rows[2], UI_ROW_LEN, "Restart network (retry discovery)");
-    int c = ui_select("Network Settings", network_status_line(), rows, 3, 0, NULL, NULL);
+    snprintf(rows[4], UI_ROW_LEN, "Copy engine: %s",
+             !g_app.iop.pump_ok        ? "basic (hddpump module not loaded)"
+             : g_app.settings.fast_copy ? "fast (network and HDD overlap)"
+                                        : "basic (one step after another)");
+    snprintf(rows[0], UI_ROW_LEN, "IP address:  %s",
+             g_app.settings.dhcp ? "automatic (DHCP from the router)" : "fixed (static)");
+    snprintf(rows[1], UI_ROW_LEN, "%s  %s", g_app.settings.dhcp ? "Fallback IP:" : "Local IP:   ",
+             g_app.settings.local_ip);
+    snprintf(rows[2], UI_ROW_LEN, "Save and restart network");
+    snprintf(rows[3], UI_ROW_LEN, "Restart network (retry discovery)");
+    int c = ui_select("Network Settings", network_status_line(), rows, 5, 0, NULL, NULL);
     if (c < 0)
       return;
+    if (c == 4) {
+      /* Takes effect now; Save keeps it. */
+      g_app.settings.fast_copy = !g_app.settings.fast_copy;
+      g_hdl_use_pump = g_app.iop.pump_ok && g_app.settings.fast_copy;
+      continue;
+    }
+    if (c == 0) {
+      g_app.settings.dhcp = !g_app.settings.dhcp;
+      continue;
+    }
+    c--; /* the rows below keep their former numbers */
     if (c == 0) {
       char ip[16];
       str_copy(ip, g_app.settings.local_ip, sizeof(ip));
       int oct = 0;
-      ui_header("Edit IP", "Static IP of this console (ministack has no DHCP)");
+      ui_header("Edit IP", g_app.settings.dhcp ? "Used when no DHCP server answers"
+                                                 : "Static IP of this console");
       ui_footer("[L/R] octet  [U/D] +1/-1  [L1/R1] -10/+10  [X] ok  [O] cancel");
       for (;;) {
         int o[4];

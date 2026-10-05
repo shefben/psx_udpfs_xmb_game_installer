@@ -15,7 +15,7 @@ typedef enum {
 
 typedef struct {
   iop_status_t iop;
-  net_state_t net;
+  volatile net_state_t net; /* set by the network thread (network.c) */
   net_settings_t settings;
   int app_mounted;    /* installer partition mounted at pfs0: */
   int app_exists;     /* partition present on the HDD */

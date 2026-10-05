@@ -13,6 +13,7 @@ typedef enum {
   PAIR_CHANNEL_BROKEN,       /* verified hidden game, PP invalid */
   PAIR_ORPHAN_CHANNEL,       /* PP exists, hidden missing */
   PAIR_HIDDEN_INVALID_WITH_CHANNEL, /* PP exists, hidden not verified */
+  PAIR_PS1, /* PP holds a PS1 game (IMAGE0.VCD, no __. partner); set by the scan */
 } pair_state_t;
 
 typedef enum {
@@ -32,6 +33,9 @@ typedef struct {
   int journal_matches_partition; /* tx_identity_matches() on the live partition */
   int visible_exists;
   int visible_valid; /* files + PPAA header verified */
+  int verify_skipped; /* journal: full read-back skipped by the user */
+  int resumable;      /* interrupted copy, checkpoint bound to this partition */
+  uint64_t resume_bytes; /* bytes already copied (when resumable) */
 } pair_facts_t;
 
 /* Hidden data is trusted only when its header is valid AND this
@@ -42,11 +46,22 @@ typedef struct {
  * data is UNKNOWN/UNVERIFIED. */
 int pair_hidden_trusted(const pair_facts_t *f);
 
+/* First check pair_hidden_trusted() fails, as text; NULL if trusted. */
+const char *pair_untrusted_reason(const pair_facts_t *f);
+
 pair_state_t pair_classify(const pair_facts_t *f);
 
 /* Bitmask of pair_action_t allowed in a state. */
 unsigned pair_actions(pair_state_t s);
 
 const char *pair_state_label(pair_state_t s);
+
+/* pair_state_label, plus "not verified" for a trusted install whose
+ * read-back was skipped. */
+const char *pair_label(const pair_facts_t *f);
+
+/* Offer "Verify game data": a completed install with a journal bound to
+ * the partition (verified or skipped). */
+int pair_can_verify(const pair_facts_t *f);
 
 #endif

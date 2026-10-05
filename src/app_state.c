@@ -6,6 +6,7 @@
 
 #include "app_state.h"
 #include "hdd_partitions.h"
+#include "hdl_install.h"
 #include "network.h"
 #include "ui.h"
 
@@ -51,6 +52,7 @@ void app_mount(void) {
 }
 
 void app_boot(void) {
+  network_wait_idle(); /* never reset the IOP under the network thread */
   ui_pad_close();
   app_unmount();
   g_app.net = NETWORK_DOWN;
@@ -66,6 +68,7 @@ void app_boot(void) {
   else if (!g_app.settings.local_ip[0])
     settings_parse(NULL, &g_app.settings);
 
+  g_hdl_use_pump = g_app.iop.pump_ok && g_app.settings.fast_copy;
   ui_pad_open();
-  network_start();
+  network_start(); /* background: the menu does not wait for udpfsd */
 }

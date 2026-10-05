@@ -40,6 +40,39 @@ TEST(pair_trust_requires_journal_bound_to_partition) {
   CHECK_EQ_INT(pair_classify(&f), PAIR_HIDDEN_UNVERIFIED);
 }
 
+TEST(pair_untrusted_reason_names_first_failed_check) {
+  pair_facts_t f = facts(1, 1, 1, 1, 1, 1);
+  CHECK(pair_untrusted_reason(&f) == NULL);
+  f = facts(0, 0, 0, 0, 1, 1);
+  CHECK_STR(pair_untrusted_reason(&f), "game data partition (__.) missing");
+  f = facts(1, 0, 1, 1, 1, 1);
+  CHECK_STR(pair_untrusted_reason(&f), "game data header unreadable or not HDL");
+  f = facts(1, 1, 0, 0, 1, 1);
+  CHECK_STR(pair_untrusted_reason(&f), "no install journal found for this game");
+  f = facts(1, 1, 1, 0, 1, 1);
+  CHECK_STR(pair_untrusted_reason(&f), "journal: copy not completed and CRC-verified");
+  f = facts(1, 1, 1, 1, 1, 1);
+  f.journal_matches_partition = 0;
+  CHECK_STR(pair_untrusted_reason(&f),
+            "partition start/size/header differ from the journal");
+}
+
+TEST(pair_label_marks_skipped_verification) {
+  pair_facts_t f = facts(1, 1, 1, 1, 1, 1);
+  CHECK_STR(pair_label(&f), "installed");
+  CHECK(pair_can_verify(&f));
+  f.verify_skipped = 1;
+  CHECK_STR(pair_label(&f), "installed, NOT VERIFIED");
+  CHECK(pair_can_verify(&f));
+  f = facts(1, 1, 1, 1, 0, 0);
+  f.verify_skipped = 1;
+  CHECK_STR(pair_label(&f), "not verified, channel pending");
+  f = facts(1, 1, 0, 0, 0, 0); /* no journal: nothing to compare with */
+  CHECK(!pair_can_verify(&f));
+  f = facts(1, 1, 1, 0, 1, 1); /* copy never completed */
+  CHECK(!pair_can_verify(&f));
+}
+
 TEST(pair_classify_all_states) {
   pair_facts_t f;
   f = facts(0, 0, 0, 0, 0, 0);
@@ -69,6 +102,9 @@ TEST(pair_actions_follow_plan) {
   CHECK_EQ_INT(pair_actions(PAIR_CHANNEL_BROKEN), ACT_CREATE_CHANNEL | ACT_DELETE);
   CHECK_EQ_INT(pair_actions(PAIR_ORPHAN_CHANNEL), ACT_REMOVE_CHANNEL);
   CHECK_EQ_INT(pair_actions(PAIR_HIDDEN_INVALID_WITH_CHANNEL), ACT_REMOVE_CHANNEL);
+  /* A PS1 (POPStarter) game is one partition: delete only. */
+  CHECK_EQ_INT(pair_actions(PAIR_PS1), ACT_DELETE);
+  CHECK_STR(pair_state_label(PAIR_PS1), "PS1 game (POPStarter)");
 }
 
 TEST(pair_labels_nonempty) {

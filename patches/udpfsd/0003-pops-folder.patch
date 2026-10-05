@@ -1,0 +1,71 @@
+diff --git a/cmd/udpfsd/main.go b/cmd/udpfsd/main.go
+index 69e161a..9c5ee71 100644
+--- a/cmd/udpfsd/main.go
++++ b/cmd/udpfsd/main.go
+@@ -88,6 +88,9 @@ func main() {
+ 	if cfg.ART != "" {
+ 		fsopts = append(fsopts, fs.WithMount("ART", cfg.ART))
+ 	}
++	if cfg.POPS != "" {
++		fsopts = append(fsopts, fs.WithMount("POPS", cfg.POPS))
++	}
+ 	if cfg.CFG != "" {
+ 		fsopts = append(fsopts, fs.WithMount("CFG", cfg.CFG))
+ 	}
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 74cd2f9..187eae4 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -15,6 +15,7 @@ type Config struct {
+ 	DVD, CD, Games, Install, CFG, ART     string
+ 	Gamelist, Cache, OPLLauncher, FSRoot  string
+ 	OPLElf                                string // OPL runtime offered to consoles without OPL
++	POPS                                  string // PS1 games (.VCD) + POPStarter files, served as /POPS
+ 	DownloadCovers, AutoInstall, ReadOnly bool
+ 	Port                                  int
+ 	Bind                                  string
+@@ -24,7 +25,7 @@ type Config struct {
+ }
+ 
+ // Keys lists every accepted key.
+-var Keys = []string{"dvd", "cd", "games", "install", "cfg", "art", "gamelist", "cache",
++var Keys = []string{"dvd", "cd", "games", "install", "cfg", "art", "pops", "gamelist", "cache",
+ 	"download_covers", "opl_launcher", "opl_elf", "auto_install", "fsroot", "read_only", "port", "bind"}
+ 
+ // Defaults returns the built-in defaults (relative paths not yet resolved).
+@@ -86,6 +87,8 @@ func (c *Config) Set(key, value, baseDir string) error {
+ 		return dir(&c.CFG)
+ 	case "art":
+ 		return dir(&c.ART)
++	case "pops":
++		return dir(&c.POPS)
+ 	case "fsroot":
+ 		return dir(&c.FSRoot)
+ 	case "gamelist":
+diff --git a/internal/config/config_test.go b/internal/config/config_test.go
+index e53ee49..6e2fc9c 100644
+--- a/internal/config/config_test.go
++++ b/internal/config/config_test.go
+@@ -134,3 +134,22 @@ func TestOPLElfKey(t *testing.T) {
+ 		t.Fatal("missing explicit opl_elf accepted")
+ 	}
+ }
++
++func TestPOPSFolderKey(t *testing.T) {
++	base := t.TempDir()
++	if err := os.Mkdir(filepath.Join(base, "POPS"), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	p := write(t, base, "udpfsd.cfg", "pops = POPS\n")
++	c, err := Load(p, base)
++	if err != nil || c.POPS != filepath.Join(base, "POPS") {
++		t.Fatalf("%v %q", err, c.POPS)
++	}
++	if c.HasGameFolders() != false {
++		t.Fatal("a POPS folder alone is not a PS2 game folder")
++	}
++	p = write(t, base, "udpfsd.cfg", "pops = nothere\n")
++	if _, err := Load(p, base); err == nil {
++		t.Fatal("missing pops folder accepted")
++	}
++}

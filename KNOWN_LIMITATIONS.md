@@ -16,12 +16,13 @@ level unless stated otherwise.
 * **KELF sizes.** The app KELF embeds the OPL-Launcher KELF, so it is
   roughly app + 1.6 MB. No size limit of the DESR loader is known to be
   exceeded, but none has been tested.
-* **Static IP only.** Neutrino's ministack has no DHCP. Changing the IP
-  restarts the IOP.
+* **DHCP is a simple client** (added to ministack): one lease at start-up,
+  no renewal (an installer session is far shorter than a lease), no
+  gateway (udpfsd must be on the same network). Without an answer within
+  ~12 s the fixed fallback IP is used. Changing IP settings restarts the IOP.
 * **One udpfsd server.** The first server that answers discovery is
   used. Discovery runs once, when udpfs_ioman loads (5 s); restart the
   network if udpfsd starts later.
-* **No resume.** An interrupted copy restarts from the beginning.
 * **Verification cost.** Every install reads the whole game back from
   the HDD (CRC-32), adding roughly the HDD read time of the game.
 * **Formats.** Plain `.iso` and udpfsd's virtual `.zso.iso` only. CSO/CHD
@@ -80,3 +81,24 @@ level unless stated otherwise.
   partition stays (the installer may not delete `+OPL`); remove it with
   another tool. OPL itself creates its folders (CFG, ART, ...) on first
   start.
+
+* **PS1 games (POPStarter), first version.** Only .VCD images (convert
+  BIN/CUE with cue2pops); multi-disc games (DISCS.TXT) are not set up;
+  PS1 games are not part of Install All / auto-install. POPStarter and
+  Sony's POPS.ELF / IOPRP252.IMG are not included and must be supplied.
+  Whether the DESR XMB boots krHACKen's POPSTARTER.KELF as distributed
+  is untested; `POPSTARTER_ELF=/path/POPSTARTER.ELF make dist` signs one
+  the same way as the other KELFs (checklist D35).
+* **USB installs** read FAT32/exFAT drives on the first USB device
+  (`mass0:`). Covers and OPL settings still come from udpfsd when it is
+  running; without it the default cover is used.
+* **Resume copy / pause.** Checkpoints every 64 MiB and where a copy stops
+  (pause, network error, abort), each with the HDD cache flushed. A resume
+  reads back up to the 4 newest checkpoint parts and continues after the
+  newest one that is still correct (else from the start of the same
+  partition); the whole game is read back afterwards (START cannot skip
+  that check).
+* **Fast copy (iop/hddpump)** is new and untested on hardware. It writes
+  through 4 IOP buffers of 128 KiB; if it cannot allocate two, or the
+  module does not load, the previous copy loop is used. Network Settings >
+  Copy engine: basic turns it off.

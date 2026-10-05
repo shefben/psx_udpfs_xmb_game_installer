@@ -35,6 +35,7 @@ typedef enum {
   ERR_PARTITION_DELETE,
   ERR_INTERNAL,
   ERR_HDL_PLAN,
+  ERR_PAUSED, /* the user paused a copy: Resume copy continues it */
   ERR__COUNT
 } inst_err_t;
 

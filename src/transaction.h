@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "errors.h"
+#include "resume_seg.h"
 
 /* Per-game install transaction (plan section 24). The journal for a
  * PP./__. pair is the authoritative record of whether its hidden game
@@ -51,6 +52,13 @@ typedef struct {
   char last_error[64];
   char launcher_source[24]; /* "server" | "embedded": channel KELF origin */
   char opl_cfg[8];          /* "copied" | "kept" | "failed" | "none" */
+  /* The user skipped the full read-back after a complete copy (header
+   * and PVD were still checked). "Verify game data" can do it later. */
+  int verify_skipped;
+  /* Copy checkpoint: CRC-32 of the first bytes_written source bytes,
+   * saved while streaming so an interrupted copy can resume there. */
+  int has_resume_crc;
+  uint32_t resume_crc32;
 } tx_journal_t;
 
 const char *tx_state_name(tx_state_t s); /* "TX_PLANNED" ... */
@@ -77,6 +85,15 @@ int tx_channel_creation_allowed(const tx_journal_t *j);
  * expected bytes were written and read back, both CRCs are recorded
  * and equal, and no delete was started. */
 int tx_hidden_data_verified(const tx_journal_t *j);
+/* (With verify_skipped, the read-back is waived: the copy must still be
+ * complete with its source CRC recorded.) */
+
+/* An interrupted copy (power cut or failure while streaming) with a
+ * checkpoint, bound to its partition: Resume copy can continue it. */
+int tx_resumable(const tx_journal_t *j);
+
+/* The full read-back ran and its CRC equals the source stream's. */
+int tx_hidden_data_read_back(const tx_journal_t *j);
 
 /* Field-by-field equality (what tx_save's read-back compares). */
 int tx_journal_equal(const tx_journal_t *a, const tx_journal_t *b);
@@ -102,6 +119,12 @@ int tx_parse(const char *text, tx_journal_t *out);
 inst_err_t tx_save(const char *dir, const tx_journal_t *j);
 inst_err_t tx_load(const char *dir, const char *partition, tx_journal_t *j);
 inst_err_t tx_remove(const char *dir, const char *partition);
+/* Copy checkpoints next to the journal (install-<name>.seg, resume_seg.h).
+ * tx_remove deletes them too. */
+inst_err_t tx_seg_save(const char *dir, const char *partition, const seg_list_t *l);
+/* Missing file: an empty list and ERR_OK. */
+inst_err_t tx_seg_load(const char *dir, const char *partition, seg_list_t *l);
+inst_err_t tx_seg_remove(const char *dir, const char *partition);
 /* Scan <dir> for journals not in TX_COMPLETE. Returns count (<= max). */
 int tx_scan_unfinished(const char *dir, tx_journal_t *out, int max);
 #endif

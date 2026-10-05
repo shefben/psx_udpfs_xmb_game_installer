@@ -20,7 +20,16 @@ typedef struct {
   /* Return non-zero to abort (polled with progress). */
   int (*should_abort)(void *ctx);
   void *ctx;
+  /* hdl_stream only, optional: a checkpoint - "bytes" are on the HDD
+   * (cache flushed), cum_crc = CRC-32 of source bytes [0, bytes),
+   * seg_crc = CRC-32 of the bytes since the previous checkpoint. Called
+   * every STREAM_CHECKPOINT bytes and once more where a copy stops early
+   * (error, abort, pause). Non-zero return stops the copy. */
+  int (*checkpoint)(void *cp_ctx, uint64_t bytes, uint32_t cum_crc, uint32_t seg_crc);
+  void *cp_ctx;
 } stream_cb_t;
+
+#define STREAM_CHECKPOINT (64ull * 1024 * 1024)
 
 /* Where the time of the running hdl_stream()/hdl_verify() goes, in EE
  * bus clock ticks (GetTimerSystemTime, STREAM_TIMER_HZ per second).
@@ -46,11 +55,17 @@ typedef struct {
 hdl_result_t hdl_create_and_format(const char *hidden, const hdl_alloc_t *alloc,
                                    const struct HDLFS_FormatArgs *args);
 
-/* Stream exactly `total` bytes from `src` into the formatted `hidden`
- * partition, computing the CRC-32 of every byte received. Always
- * closes and unmounts hdl0:. */
-hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
-                        const stream_cb_t *cb);
+/* Stream bytes [start, total) from `src` into the formatted `hidden`
+ * partition, computing the CRC-32 of every byte (continuing from
+ * `start_crc`, the CRC of the first `start` bytes; 0/0 for a new copy).
+ * `start` must be a multiple of 2048. Always closes and unmounts hdl0:.
+ * result.bytes counts from 0 (includes `start`). */
+/* Use hddpump.irx for hdl_stream when set (module loaded and enabled in
+ * Network Settings); otherwise, or if the pump cannot start, the EE loop. */
+extern int g_hdl_use_pump;
+
+hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total, uint64_t start,
+                        uint32_t start_crc, const stream_cb_t *cb);
 
 /* Verify without the source: APA type HDL, HDL header fields, then a
  * read-only remount and a sequential read of all installed data
@@ -58,6 +73,14 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
  * bytes == expected and crc32 == the stream CRC. */
 hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
                         int expected_parts, const stream_cb_t *cb);
+
+/* Read back `total` installed bytes (APA type HDL checked) and return
+ * their CRC-32: "Verify game data" for an install whose journal holds
+ * the source CRC. */
+hdl_result_t hdl_read_back(const char *hidden, uint64_t total, const stream_cb_t *cb);
+
+/* CRC-32 of installed bytes [start, end) (2048-aligned), read-only. 0 / <0. */
+int hdl_crc_range(const char *hidden, uint64_t start, uint64_t end, uint32_t *crc);
 
 /* Header-only read for repair/manage scans. 0 or <0. */
 int hdl_read_header(const char *hidden, hdl_header_info_t *out);

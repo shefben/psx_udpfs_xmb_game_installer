@@ -106,6 +106,58 @@ inst_err_t channel_quick_check(const char *partition) {
                                NULL);
 }
 
+#define INFO_SYS_MAX 2048
+
+int channel_get_title(const char *partition, char *out, size_t outsz) {
+  if (pfs_mount(W, partition, FIO_MT_RDONLY) < 0)
+    return -1;
+  void *buf = NULL;
+  int n = file_load(W "res/info.sys", &buf, INFO_SYS_MAX);
+  pfs_umount(W);
+  int r = -1;
+  if (n > 0) {
+    char *t = buf;
+    t[n < INFO_SYS_MAX ? n : INFO_SYS_MAX - 1] = 0;
+    r = xmb_info_sys_get(t, "title", out, outsz);
+  }
+  free(buf);
+  return r;
+}
+
+channel_result_t channel_set_title(const char *partition, const char *title) {
+  int r = pfs_mount(W, partition, FIO_MT_RDWR);
+  if (r < 0)
+    return cres(ERR_PFS_MOUNT, r, "mount");
+  channel_result_t out = cres(ERR_OK, 0, NULL);
+  void *buf = NULL;
+  static char next[INFO_SYS_MAX];
+  int n = file_load(W "res/info.sys", &buf, INFO_SYS_MAX);
+  if (n <= 0) {
+    out = cres(ERR_XMB_VERIFY, n, "read res/info.sys");
+    goto done;
+  }
+  ((char *)buf)[n < INFO_SYS_MAX ? n : INFO_SYS_MAX - 1] = 0;
+  size_t len = xmb_info_sys_retitle(buf, title, next, sizeof(next));
+  if (!len) {
+    out = cres(ERR_INVALID_ARG, 0, "title");
+    goto done;
+  }
+  if ((r = file_write_all(W "res/info.sys.tmp", next, (uint32_t)len)) < 0 ||
+      !file_matches(W "res/info.sys.tmp", next, (uint32_t)len)) {
+    fileXioRemove(W "res/info.sys.tmp");
+    out = cres(ERR_XMB_RESOURCE_WRITE, r, "res/info.sys.tmp");
+    goto done;
+  }
+  fileXioRemove(W "res/info.sys");
+  if ((r = fileXioRename(W "res/info.sys.tmp", W "res/info.sys")) < 0 ||
+      !file_matches(W "res/info.sys", next, (uint32_t)len))
+    out = cres(ERR_XMB_RESOURCE_WRITE, r, "rename res/info.sys");
+done:
+  free(buf);
+  pfs_umount(W);
+  return out;
+}
+
 channel_result_t channel_create(const char *partition,
                                 const channel_content_t *c) {
   int rc = 0;

@@ -31,7 +31,8 @@ BOOT_ELF := $(BUILD)/bootstrap/desr-udpfs-installer-bootstrap.elf
 DEV_ELF := $(BUILD)/dev/desr-udpfs-installer-dev.elf
 DRIVER := vendor/irx/ps2hdd-hdl.irx
 
-NEUTRINO_IRX := $(BUILD)/irx/smap.irx $(BUILD)/irx/ministack.irx $(BUILD)/irx/udpfs_ioman.irx
+NEUTRINO_IRX := $(BUILD)/irx/smap.irx $(BUILD)/irx/ministack.irx $(BUILD)/irx/udpfs_ioman.irx \
+                $(BUILD)/irx/hddpump.irx
 EE_DEPS := $(NEUTRINO_IRX) $(BUILD)/.driver-ok $(BUILD)/.refs-ok $(BUILD)/.gitid
 
 # KELF_MODE is part of every KELF's identity: switching it re-signs and
@@ -115,13 +116,17 @@ $(BUILD)/.driver-ok: $(DRIVER) reference/HDLGameInstaller/irx/hdlfs.irx tools/dr
 # patches/neutrino/*.patch applied; reference/ is never modified.
 irx: $(NEUTRINO_IRX)
 
-$(BUILD)/neutrino/.patched: $(wildcard patches/neutrino/*.patch) $(BUILD)/.refs-ok
+$(BUILD)/neutrino/.patched: $(wildcard patches/neutrino/*.patch) $(BUILD)/.refs-ok \
+                             src/dhcp_proto.c src/dhcp_proto.h
 	@test -d $(REF)/neutrino || { echo "reference/neutrino missing: run 'make references'"; exit 1; }
 	rm -rf $(BUILD)/neutrino
 	mkdir -p $(BUILD)/neutrino
 	cp -r $(REF)/neutrino/iop $(REF)/neutrino/common $(BUILD)/neutrino/
 	for p in $(sort $(wildcard patches/neutrino/*.patch)); do \
 	  patch -d $(BUILD)/neutrino -p1 --forward < $$p || exit 1; done
+	@# The DHCP client's message code is shared with the host tests.
+	cp src/dhcp_proto.c $(BUILD)/neutrino/iop/ministack/src/
+	cp src/dhcp_proto.h $(BUILD)/neutrino/iop/ministack/include/
 	touch $@
 
 $(BUILD)/irx/smap.irx: $(BUILD)/neutrino/.patched
@@ -131,6 +136,12 @@ $(BUILD)/irx/smap.irx: $(BUILD)/neutrino/.patched
 $(BUILD)/irx/ministack.irx: $(BUILD)/neutrino/.patched
 	$(MAKE) -C $(BUILD)/neutrino/iop/ministack all DEBUG=0
 	@mkdir -p $(@D) && cp $(BUILD)/neutrino/iop/ministack/irx/ministack.irx $@
+
+# Our own IOP module (overlapped installs), built in a scratch copy.
+$(BUILD)/irx/hddpump.irx: $(wildcard iop/hddpump/src/*) iop/hddpump/Makefile
+	rm -rf $(BUILD)/hddpump && mkdir -p $(BUILD)/hddpump && cp -r iop/hddpump/. $(BUILD)/hddpump/
+	$(MAKE) -C $(BUILD)/hddpump
+	@mkdir -p $(@D) && cp $(BUILD)/hddpump/irx/hddpump.irx $@
 
 $(BUILD)/irx/udpfs_ioman.irx: $(BUILD)/neutrino/.patched
 	$(MAKE) -C $(BUILD)/neutrino/iop/udpfs all DEBUG=0 UDPFS_IOMAN=1
@@ -186,6 +197,17 @@ $(BOOT_ELF): $(OPL_KELF) $(APP_KELF) $(EE_DEPS) FORCE
 	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) installer_kelf=$(APP_KELF)"
 	$(call STRIP_IF_CHANGED,$@,$(BUILD)/bootstrap/bootstrap-debug.elf)
 
+# ---- optional: POPStarter for PS1 games, signed like the other KELFs. The
+# ELF is never fetched: give its path explicitly, e.g.
+#   POPSTARTER_ELF=/path/POPSTARTER.ELF make dist
+# (krHACKen's POPStarter; PSBBN Definitive Project ships POPSTARTER.ELF).
+POPS_KELF := $(BUILD)/kelf/POPSTARTER.KELF
+ifneq ($(POPSTARTER_ELF),)
+$(POPS_KELF): $(POPSTARTER_ELF) tools/kelf-sign.sh $(BUILD)/.kelf-mode
+	bash tools/kelf-sign.sh $(POPSTARTER_ELF) $@
+DIST_POPS := $(POPS_KELF)
+endif
+
 kelfs: $(OPL_KELF) $(APP_KELF)
 
 # ---- dev (unsigned, nothing embedded) --------------------------------
@@ -197,7 +219,7 @@ dev: $(EE_DEPS) FORCE
 DIST_FILES := desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
               installer-EXECUTE.KELF opl-launcher-EXECUTE.KELF
 
-dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME)
+dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	@# Empty dist/ rather than delete it: an Explorer window open on a
 	@# folder in it locks the folder on Windows. No old file may survive,
 	@# except udpfsd's own state when it is run from dist/udpfsd: its
@@ -210,7 +232,8 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME)
 	  cmp -s "$$f" "$(BUILD)/udpfsd/$$(basename "$$f")" || \
 	    { echo "dist: cannot replace $$f (stop udpfsd first)"; exit 1; }; \
 	done
-	mkdir -p $(DIST)/udpfsd-example $(DIST)/docs $(DIST)/udpfsd
+	mkdir -p $(DIST)/udpfsd-example $(DIST)/docs $(DIST)/udpfsd $(DIST)/udpfsd/POPS
+	$(if $(DIST_POPS),cp $(DIST_POPS) $(DIST)/udpfsd/POPS/)
 	cp $(BOOT_ELF) $(APP_ELF) $(APP_KELF) $(OPL_KELF) $(DIST)/
 	for b in $(UDPFSD_BIN); do \
 	  cmp -s "$$b" $(DIST)/udpfsd/$$(basename "$$b") || cp "$$b" $(DIST)/udpfsd/; \
@@ -220,11 +243,12 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME)
 	cp docs/udpfsd-example/* $(DIST)/udpfsd-example/
 	cp docs/INSTALL.md docs/HARDWARE_TEST_CHECKLIST.md $(DIST)/docs/
 	cp docs/QUICKSTART.md $(DIST)/
-	cp KNOWN_LIMITATIONS.md $(DIST)/
+	cp KNOWN_LIMITATIONS.md CHANGELOG.md docs/SERVER_MANUAL.md $(DIST)/
 	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF) $(BUILD)/.kelf-mode
 
 # ---- 7. end-user zip (README, PS2 bootstrap ELF, PC/udpfsd folder) -----
-PACKAGE := $(ROOT)/PSX-UDPFS-Installer.zip
+VERSION := 2.0
+PACKAGE := $(ROOT)/PSX-UDPFS-Installer_V$(VERSION).zip
 package: dist
 	bash tools/make-package.sh $(DIST) $(PACKAGE)
 

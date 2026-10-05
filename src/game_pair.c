@@ -5,6 +5,20 @@ int pair_hidden_trusted(const pair_facts_t *f) {
          f->journal_verified && f->journal_matches_partition;
 }
 
+const char *pair_untrusted_reason(const pair_facts_t *f) {
+  if (!f->hidden_exists)
+    return "game data partition (__.) missing";
+  if (!f->hidden_header_valid)
+    return "game data header unreadable or not HDL";
+  if (!f->has_journal)
+    return "no install journal found for this game";
+  if (!f->journal_verified)
+    return "journal: copy not completed and CRC-verified";
+  if (!f->journal_matches_partition)
+    return "partition start/size/header differ from the journal";
+  return NULL;
+}
+
 pair_state_t pair_classify(const pair_facts_t *f) {
   int trusted = pair_hidden_trusted(f);
   if (!f->hidden_exists && !f->visible_exists)
@@ -33,9 +47,22 @@ unsigned pair_actions(pair_state_t s) {
   case PAIR_ORPHAN_CHANNEL:
   case PAIR_HIDDEN_INVALID_WITH_CHANNEL:
     return ACT_REMOVE_CHANNEL;
+  case PAIR_PS1:
+    return ACT_DELETE;
   }
   return 0;
 }
+
+const char *pair_label(const pair_facts_t *f) {
+  pair_state_t s = pair_classify(f);
+  if (f->verify_skipped && s == PAIR_COMPLETE)
+    return "installed, NOT VERIFIED";
+  if (f->verify_skipped && s == PAIR_HIDDEN_ONLY)
+    return "not verified, channel pending";
+  return pair_state_label(s);
+}
+
+int pair_can_verify(const pair_facts_t *f) { return pair_hidden_trusted(f); }
 
 const char *pair_state_label(pair_state_t s) {
   switch (s) {
@@ -53,6 +80,8 @@ const char *pair_state_label(pair_state_t s) {
     return "ORPHANED channel";
   case PAIR_HIDDEN_INVALID_WITH_CHANNEL:
     return "channel on UNVERIFIED data";
+  case PAIR_PS1:
+    return "PS1 game (POPStarter)";
   }
   return "?";
 }

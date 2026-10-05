@@ -32,6 +32,11 @@ IRX(ministack);
 IRX(udpfs_ioman);
 IRX(sio2man);
 IRX(padman);
+IRX(usbd);
+IRX(bdm);
+IRX(bdmfs_fatfs);
+IRX(usbmass_bd);
+IRX(hddpump);
 
 /* ps2hdd-hdl.irx: -o 4 -n 128 (as proven by ps2-usbhdl/HDLGameInstaller). */
 static const char PS2HDD_ARGS[] = "-o\0"
@@ -102,24 +107,66 @@ void iop_boot_base(iop_status_t *st) {
   hdd_fail |= LOAD(st, ps2fs, sizeof(PS2FS_ARGS), PS2FS_ARGS);
   hdd_fail |= LOAD(st, hdlfs, 0, NULL);
   st->hdd_ok = !hdd_fail;
+  /* Optional: overlapped installs (iop/hddpump). */
+  st->pump_ok = st->hdd_ok && LOAD(st, hddpump, 0, NULL) == 0;
 
   int pad_fail = 0;
   pad_fail |= LOAD(st, sio2man, 0, NULL);
   pad_fail |= LOAD(st, padman, 0, NULL);
   st->pad_ok = !pad_fail;
+
+  /* USB mass storage (FAT32/exFAT) as mass0: - an optional game source. */
+  int usb_fail = 0;
+  usb_fail |= LOAD(st, usbd, 0, NULL);
+  usb_fail |= LOAD(st, bdm, 0, NULL);
+  usb_fail |= LOAD(st, bdmfs_fatfs, 0, NULL);
+  usb_fail |= LOAD(st, usbmass_bd, 0, NULL);
+  st->usb_ok = !usb_fail;
 }
 
-void iop_boot_network(const char *local_ip, iop_status_t *st) {
+/* ministack's DHCP result, written here by SIF DMA (layout: ministack
+ * include/dhcp.h in patches/neutrino/0002-ministack-dhcp.patch). */
+typedef struct {
+  u32 magic, ip, server, status;
+} dhcp_result_t;
+#define DHCP_RESULT_MAGIC 0x50484344u
+/* A whole cache line of its own: it is invalidated after the DMA. */
+static union {
+  dhcp_result_t r;
+  u8 line[64];
+} dhcp_buf __attribute__((aligned(64)));
+#define dhcp_res dhcp_buf.r
+
+void iop_boot_network(const char *local_ip, int dhcp, iop_status_t *st) {
   st->net_ok = st->udpfs_ok = 0;
+  st->dhcp_status = 0;
+  st->ip = 0;
   /* Network: exactly one ip= argument to ministack. udpfs_ioman runs
    * server discovery (5 s) inside its device init; if that fails the
    * `udpfs:` device is simply not registered. */
-  char ip_arg[24];
+  /* ministack args: "ip=<a.b.c.d>\0[dhcp=1\0out=<hex>\0]". */
+  char ip_arg[64];
   int n = snprintf(ip_arg, sizeof(ip_arg), "ip=%s", local_ip);
+  if (dhcp) {
+    memset(&dhcp_buf, 0, sizeof(dhcp_buf));
+    SyncDCache(&dhcp_buf, (u8 *)&dhcp_buf + sizeof(dhcp_buf) - 1);
+    n++;
+    n += snprintf(ip_arg + n, sizeof(ip_arg) - n, "dhcp=1") + 1;
+    n += snprintf(ip_arg + n, sizeof(ip_arg) - n, "out=%x", (unsigned)&dhcp_res);
+  }
   int net_fail = 0;
   net_fail |= LOAD(st, smap, 0, NULL);
   net_fail |= LOAD(st, ministack, n + 1, ip_arg);
-  if (!net_fail) {
+  if (!net_fail && dhcp) {
+    /* ministack's DHCP exchange (in its _start) also waited for the link. */
+    InvalidDCache(&dhcp_buf, (u8 *)&dhcp_buf + sizeof(dhcp_buf) - 1);
+    if (dhcp_res.magic == DHCP_RESULT_MAGIC) {
+      st->dhcp_status = (int)dhcp_res.status;
+      st->ip = dhcp_res.ip;
+    } else {
+      st->dhcp_status = 3;
+    }
+  } else if (!net_fail) {
     /* Give the PHY time to negotiate before discovery starts. */
     DelayThread(3 * 1000 * 1000);
   }

@@ -10,6 +10,40 @@ TEST(crc32_standard_vectors) {
   CHECK_EQ_INT(crc32_update(0, "The quick brown fox jumps over the lazy dog", 43), 0x414FA339u);
 }
 
+static uint32_t crc32_bitwise(uint32_t crc, const uint8_t *p, size_t n) {
+  crc = ~crc;
+  while (n--) {
+    crc ^= *p++;
+    for (int k = 0; k < 8; k++)
+      crc = (crc & 1) ? 0xEDB88320u ^ (crc >> 1) : crc >> 1;
+  }
+  return ~crc;
+}
+
+TEST(crc32_matches_bitwise_reference_any_alignment_and_length) {
+  static uint8_t buf[4096 + 16];
+  uint32_t x = 12345;
+  for (size_t i = 0; i < sizeof(buf); i++) {
+    x = x * 1103515245u + 12345u;
+    buf[i] = (uint8_t)(x >> 16);
+  }
+  for (size_t off = 0; off < 9; off++)
+    for (size_t len = 0; len < 70; len++)
+      CHECK_EQ_INT(crc32_update(0x1234u, buf + off, len), crc32_bitwise(0x1234u, buf + off, len));
+  CHECK_EQ_INT(crc32_update(0, buf + 3, 4096), crc32_bitwise(0, buf + 3, 4096));
+}
+
+TEST(crc32_combine_equals_concatenation) {
+  static uint8_t buf[5000];
+  for (size_t i = 0; i < sizeof(buf); i++)
+    buf[i] = (uint8_t)(i * 31 + 7);
+  for (size_t cut = 0; cut <= sizeof(buf); cut += 777) {
+    uint32_t a = crc32_update(0, buf, cut), b = crc32_update(0, buf + cut, sizeof(buf) - cut);
+    CHECK_EQ_INT(crc32_combine(a, b, sizeof(buf) - cut), crc32_update(0, buf, sizeof(buf)));
+  }
+  CHECK_EQ_INT(crc32_combine(0x12345678u, 0, 0), 0x12345678u);
+}
+
 TEST(crc32_incremental_equals_oneshot) {
   static uint8_t buf[100000];
   for (size_t i = 0; i < sizeof(buf); i++)

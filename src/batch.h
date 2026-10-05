@@ -25,6 +25,7 @@ typedef enum {
   BATCH_DUPLICATE,     /* same partition pair as an earlier entry */
   BATCH_TOO_BIG,       /* does not fit the drive's APA limits */
   BATCH_NO_SPACE,      /* auto mode: does not fit the remaining free space */
+  BATCH_RESUME,        /* interrupted copy of this image: continue it */
 } batch_status_t;
 
 typedef enum {
@@ -33,6 +34,7 @@ typedef enum {
   BATCH_DATA_ONLY, /* verified data, channel pending (OPL missing) */
   BATCH_FAILED,
   BATCH_SKIPPED,  /* not run (batch stopped) */
+  BATCH_PAUSED,   /* paused by the user: Resume copy continues it */
 } batch_result_t;
 
 typedef struct {
@@ -55,7 +57,9 @@ typedef struct {
   const char *stage;
   const char *opl_cfg;    /* install_report_t.opl_cfg */
   const char *jacket;     /* install_report_t.jacket */
+  int verify_skipped;     /* install_report_t.verify_skipped */
   int id_on_hdd;          /* a partition with this game ID exists (any title) */
+  int resumable;          /* pair_facts_t.resumable: interrupted copy with checkpoint */
 } batch_entry_t;
 
 /* Set id_on_hdd for every entry whose game ID appears in one of the
@@ -66,6 +70,13 @@ void batch_mark_on_hdd(batch_entry_t *e, int n, const char *const *names, int nn
 /* Auto mode: wait while there is no manifest yet or the server is still
  * scanning (its manifest says scanning=1). */
 int auto_should_wait(int loaded, const manifest_t *m);
+
+/* The network comes up in the background, after the menu appears.
+ * Auto-install starts on its own once (udpfsd ready, manifest with
+ * auto_install, HDD usable), and only while nobody has used the menu:
+ * it never interrupts someone already managing games. */
+int auto_start_due(int hdd_ok, int net_ready, int manifest_loaded, int auto_install,
+                   int user_acted, int already_ran);
 
 typedef enum { AUTO_INSTALLER_OK = 0, AUTO_CREATE_INSTALLER, AUTO_STOP } auto_step_t;
 
@@ -81,6 +92,9 @@ void batch_classify(batch_entry_t *e, int n);
 /* Fill an entry (path, name, type, size, ID, title, probe result) from a
  * manifest entry; partition names and pair state are filled by the caller. */
 void batch_entry_from_manifest(batch_entry_t *e, const manifest_entry_t *m);
+
+/* New games and interrupted copies can be selected. */
+int batch_selectable(batch_status_t s);
 
 /* Toggle selection; only eligible entries can be selected. Returns the
  * new selected state (0 for ineligible). */

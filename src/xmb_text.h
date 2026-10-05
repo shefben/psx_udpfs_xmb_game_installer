@@ -25,6 +25,30 @@ void xmb_sanitize_value(const char *in, char *out, size_t outsz);
 size_t xmb_render_info_sys(char *out, size_t outsz, const char *title,
                            const char *title_id);
 
+/* XMB game info from udpfsd's /.udpfsd/info/<ID>.txt (key=value lines:
+ * release_date YYYYMMDD, developer, publisher, genre). */
+typedef struct {
+  char release_date[9];
+  char developer[64];
+  char publisher[64];
+  char genre[32];
+} xmb_game_info_t;
+
+/* Parse an info text; unknown keys are ignored, a release date that is
+ * not 8 digits is dropped. Returns the number of fields set. */
+int xmb_game_info_parse(const char *text, xmb_game_info_t *gi);
+
+/* xmb_game_info_sys with the info fields filled in (gi may be NULL). */
+size_t xmb_game_info_sys_ex(char *out, size_t outsz, const char *title, const char *boot_id,
+                            const xmb_game_info_t *gi);
+
+/* Value of "<key> = value" in an info.sys text (exact key). 0 or -1. */
+int xmb_info_sys_get(const char *text, const char *key, char *out, size_t outsz);
+
+/* The same info.sys with only its title line replaced (sanitized; an
+ * empty title is refused). Returns the new length, or 0. */
+size_t xmb_info_sys_retitle(const char *text, const char *title, char *out, size_t outsz);
+
 /* info.sys for a game: title_id = "<PART ID> (<REGION>)", e.g.
  * "SLUS-20312 (NTSC-U)". Returns length or 0. */
 size_t xmb_game_info_sys(char *out, size_t outsz, const char *title,

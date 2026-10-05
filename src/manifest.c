@@ -53,6 +53,8 @@ static int parse_header(const char *line, manifest_t *m) {
       m->has_opl = parse_sha_size(p + 4, n - 4, m->opl_sha, &m->opl_size);
     } else if (n == 6 && !strncmp(p, "auto=", 5)) {
       m->auto_install = p[5] == '1';
+    } else if (n == 10 && !strncmp(p, "poweroff=", 9)) {
+      m->power_off = p[9] == '1';
     } else if (n == 10 && !strncmp(p, "scanning=", 9)) {
       m->scanning = p[9] == '1';
     }

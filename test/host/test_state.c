@@ -288,9 +288,43 @@ TEST(settings_serialize_roundtrip) {
   settings_parse("local_ip=192.168.0.50\n", &s);
   char buf[128];
   CHECK(settings_serialize(&s, buf, sizeof(buf)) > 0);
-  CHECK_STR(buf, "local_ip=192.168.0.50\n");
+  CHECK_STR(buf, "local_ip=192.168.0.50\nip_mode=dhcp\nfast_copy=1\n");
   settings_parse(buf, &t);
   CHECK_STR(t.local_ip, "192.168.0.50");
+  CHECK_EQ_INT(t.dhcp, 1);
+  t.dhcp = 0;
+  settings_serialize(&t, buf, sizeof(buf));
+  CHECK_STR(buf, "local_ip=192.168.0.50\nip_mode=static\nfast_copy=1\n");
+  settings_parse("local_ip=10.0.0.9\nfast_copy=0\n", &t);
+  CHECK_EQ_INT(t.fast_copy, 0);
+  CHECK_EQ_INT(t.warning, 0);
+  settings_parse(NULL, &t);
+  CHECK_EQ_INT(t.fast_copy, 1);
+}
+
+TEST(settings_ip_mode) {
+  net_settings_t s;
+  settings_parse(NULL, &s); /* no file: DHCP, default IP as fallback */
+  CHECK_EQ_INT(s.dhcp, 1);
+  settings_parse("local_ip=10.0.0.7\n", &s); /* old file: DHCP first */
+  CHECK_EQ_INT(s.dhcp, 1);
+  CHECK_STR(s.local_ip, "10.0.0.7");
+  settings_parse("ip_mode=static\nlocal_ip=10.0.0.9\n", &s); /* order free */
+  CHECK_EQ_INT(s.dhcp, 0);
+  CHECK_STR(s.local_ip, "10.0.0.9");
+  CHECK_EQ_INT(s.warning, 0);
+  settings_parse("ip_mode=static\n", &s); /* no IP: default, no warning */
+  CHECK_EQ_INT(s.dhcp, 0);
+  CHECK_STR(s.local_ip, SETTINGS_DEFAULT_IP);
+  settings_parse("ip_mode=bogus\nlocal_ip=10.0.0.9\n", &s);
+  CHECK_EQ_INT(s.dhcp, 1);
+  CHECK_EQ_INT(s.warning, 1);
+}
+
+TEST(ip_from_u32) {
+  char ip[16];
+  ip_format(0xC0A8000Au, ip);
+  CHECK_STR(ip, "192.168.0.10");
 }
 
 TEST(ip_adjust_octet_wraps) {
@@ -339,6 +373,119 @@ TEST(opl_resolve_malformed) {
   CHECK_EQ_INT(opl_resolve_from_conf(
                    "hdd_partition=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n", &r),
                -1);
+}
+
+TEST(tx_verify_skipped_trusts_only_a_complete_copy) {
+  tx_journal_t j;
+  verified_journal(&j);
+  j.verify_skipped = 1; /* read-back skipped by the user */
+  j.has_installed_crc = 0;
+  j.installed_crc32 = 0;
+  j.bytes_verified = 0;
+  CHECK(tx_hidden_data_verified(&j));
+  CHECK(tx_hidden_data_read_back(&j) == 0);
+  j.bytes_written -= 2048; /* copy incomplete: never trusted */
+  CHECK(!tx_hidden_data_verified(&j));
+  j.bytes_written += 2048;
+  j.has_source_crc = 0;
+  CHECK(!tx_hidden_data_verified(&j));
+  j.has_source_crc = 1;
+  j.state = TX_HDL_COMPLETE; /* not yet at the verify decision */
+  CHECK(!tx_hidden_data_verified(&j));
+  j.state = TX_COMPLETE;
+  j.deleting = 1;
+  CHECK(!tx_hidden_data_verified(&j));
+
+  verified_journal(&j);
+  CHECK(tx_hidden_data_read_back(&j));
+}
+
+TEST(tx_verify_skipped_roundtrip_and_old_journals) {
+  tx_journal_t j, k;
+  verified_journal(&j);
+  j.verify_skipped = 1;
+  char buf[1200];
+  CHECK(tx_serialize(&j, buf, sizeof(buf)) > 0);
+  CHECK(strstr(buf, "verify_skipped=1\n") != NULL);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK(tx_journal_equal(&j, &k));
+  k.verify_skipped = 0;
+  CHECK(!tx_journal_equal(&j, &k));
+  /* A journal written before the field existed reads as verified. */
+  verified_journal(&j);
+  tx_serialize(&j, buf, sizeof(buf));
+  char *p = strstr(buf, "verify_skipped=0\n");
+  CHECK(p != NULL);
+  if (p)
+    memmove(p, p + 17, strlen(p + 17) + 1);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK_EQ_INT(k.verify_skipped, 0);
+  CHECK(tx_journal_equal(&j, &k));
+}
+
+static void streaming_journal(tx_journal_t *j) {
+  verified_journal(j);
+  j->state = TX_STREAMING;
+  j->bytes_written = 512ull * 1024 * 1024;
+  j->bytes_verified = 0;
+  j->has_source_crc = j->has_installed_crc = 0;
+  j->source_crc32 = j->installed_crc32 = 0; /* not yet known */
+  j->has_resume_crc = 1;
+  j->resume_crc32 = 0x1234ABCDu;
+  j->has_hdl_identity = 1;
+  j->hdl_start = 0x40000;
+  j->hdl_size = 0x800000;
+  j->hdl_header_crc32 = 0x55AA55AAu;
+}
+
+TEST(tx_resumable_rules) {
+  tx_journal_t j;
+  streaming_journal(&j);
+  CHECK(tx_resumable(&j)); /* power cut mid-copy */
+  tx_fail(&j, ERR_SOURCE_READ);
+  CHECK(tx_resumable(&j)); /* network failure mid-copy */
+  CHECK(tx_transition_allowed(j.state, TX_STREAMING));
+  streaming_journal(&j);
+  CHECK(tx_transition_allowed(TX_STREAMING, TX_STREAMING));
+  j.has_resume_crc = 0; /* no checkpoint yet: nothing to resume from */
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.bytes_written = 0;
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.bytes_written = j.bytes_expected; /* copy finished: verify, not resume */
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.bytes_written += 1; /* not on a sector boundary */
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.deleting = 1;
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.has_hdl_identity = 0;
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.state = TX_HDL_CREATED;
+  tx_fail(&j, ERR_HDL_WRITE); /* failed before any data */
+  CHECK(!tx_resumable(&j));
+  CHECK(!tx_transition_allowed(TX_HDL_COMPLETE, TX_STREAMING));
+  CHECK(!tx_transition_allowed(TX_COMPLETE, TX_STREAMING));
+}
+
+TEST(tx_resume_crc_roundtrip) {
+  tx_journal_t j, k;
+  streaming_journal(&j);
+  char buf[1200];
+  CHECK(tx_serialize(&j, buf, sizeof(buf)) > 0);
+  CHECK(strstr(buf, "resume_crc32=1234abcd\n") != NULL);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK(tx_journal_equal(&j, &k));
+  CHECK_EQ_INT(k.has_resume_crc, 1);
+  j.has_resume_crc = 0;
+  tx_serialize(&j, buf, sizeof(buf));
+  CHECK(strstr(buf, "resume_crc32=\n") != NULL);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK_EQ_INT(k.has_resume_crc, 0);
 }
 
 TEST(tx_launcher_and_opl_cfg_fields_roundtrip) {
