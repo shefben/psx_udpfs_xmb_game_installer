@@ -17,6 +17,8 @@
 #include "opl_dependency.h"
 #include "listui.h"
 #include "opl_launcher_payload.h"
+#include "partname.h"
+#include "pfs_channel.h"
 #include "remove_games.h"
 #include "settings.h"
 #include "transaction.h"
@@ -730,7 +732,30 @@ static void do_create_channel(const char *hidden) {
   }
 }
 
-#define ROW_VERIFY (1 << 16) /* menu row, not a pair_action_t */
+#define ROW_VERIFY (1 << 16) /* menu rows, not pair_action_t values */
+#define ROW_RENAME (1 << 17)
+
+static void do_rename(const char *visible) {
+  char t[64] = "";
+  if (channel_get_title(visible, t, sizeof(t)) < 0)
+    str_copy(t, visible + 3 + PART_ID_LEN + 2, sizeof(t)); /* "..TITLE" part */
+  if (!ui_edit_text("Rename", "Title shown in the XMB (the game ID stays the same):", t, 48))
+    return;
+  ui_header("Rename", visible);
+  channel_result_t r = channel_set_title(visible, t);
+  char msg[300];
+  if (r.err)
+    snprintf(msg, sizeof(msg),
+             "The title was not changed: %s (%s), step %s, code %d.\n\n"
+             "If the channel now shows no title, use Repair XMB channel.",
+             err_text(r.err), err_name(r.err), r.step ? r.step : "-", r.rc);
+  else
+    snprintf(msg, sizeof(msg),
+             "New title: %s\n\nIt appears after the XMB refreshes (return to the\n"
+             "XMB or reboot). The partition name and game data are unchanged.",
+             t);
+  ui_message("Rename", msg);
+}
 
 static void do_verify(const char *visible, const char *hidden) {
   progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0};
@@ -766,8 +791,8 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   pair_state_t st = pair_classify(&f);
   unsigned acts = pair_actions(st);
 
-  static char rows[8][UI_ROW_LEN];
-  int map[8], n = 0;
+  static char rows[9][UI_ROW_LEN];
+  int map[9], n = 0;
 #define ADD(a, label)                                                          \
   if (acts & (a)) {                                                            \
     str_copy(rows[n], label, UI_ROW_LEN);                                      \
@@ -782,6 +807,10 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   ADD(ACT_REINSTALL, "Reinstall game (delete, then copy again)");
   ADD(ACT_DELETE, "Delete game");
 #undef ADD
+  if (f.visible_exists && f.visible_valid) {
+    str_copy(rows[n], "Rename (title shown in the XMB)", UI_ROW_LEN);
+    map[n++] = ROW_RENAME;
+  }
   if (pair_can_verify(&f)) {
     str_copy(rows[n], f.verify_skipped ? "Verify game data (was skipped)"
                                        : "Verify game data again",
@@ -800,6 +829,9 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   switch (map[c]) {
   case ROW_VERIFY:
     do_verify(visible, hidden);
+    break;
+  case ROW_RENAME:
+    do_rename(visible);
     break;
   case 0: {
     static char details[2048];

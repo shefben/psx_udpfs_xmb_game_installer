@@ -58,6 +58,54 @@ size_t xmb_render_info_sys(char *out, size_t outsz, const char *title,
   return (size_t)n;
 }
 
+/* Start of the value of the line "<key> = ..." (CRLF or LF), or NULL. */
+static const char *find_key(const char *text, const char *key, const char **line_start) {
+  size_t kl = strlen(key);
+  for (const char *p = text; *p;) {
+    if (!strncmp(p, key, kl) && p[kl] == ' ' && p[kl + 1] == '=') {
+      if (line_start)
+        *line_start = p;
+      const char *v = p + kl + 2;
+      while (*v == ' ')
+        v++;
+      return v;
+    }
+    const char *nl = strchr(p, '\n');
+    if (!nl)
+      break;
+    p = nl + 1;
+  }
+  return NULL;
+}
+
+int xmb_info_sys_get(const char *text, const char *key, char *out, size_t outsz) {
+  const char *v = find_key(text, key, NULL);
+  if (!v || outsz == 0)
+    return -1;
+  size_t n = strcspn(v, "\r\n");
+  if (n >= outsz)
+    n = outsz - 1;
+  memcpy(out, v, n);
+  out[n] = 0;
+  return 0;
+}
+
+size_t xmb_info_sys_retitle(const char *text, const char *title, char *out, size_t outsz) {
+  char t[256];
+  xmb_sanitize_value(title, t, sizeof(t));
+  const char *line;
+  const char *v = find_key(text, "title", &line);
+  if (!t[0] || !v || outsz == 0)
+    return 0;
+  const char *rest = v + strcspn(v, "\r\n"); /* keeps this line's own ending */
+  int n = snprintf(out, outsz, "%.*stitle = %s%s", (int)(line - text), text, t, rest);
+  if (n < 0 || (size_t)n >= outsz) {
+    out[0] = 0;
+    return 0;
+  }
+  return (size_t)n;
+}
+
 size_t xmb_game_info_sys(char *out, size_t outsz, const char *title,
                          const char *boot_id) {
   char part_id[PART_ID_LEN + 1], title_id[48];

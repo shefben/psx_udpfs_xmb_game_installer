@@ -684,12 +684,16 @@ void game_create_channel(const char *hidden, const install_ui_t *ui,
     goto out;
   }
 
-  /* Rebuild: an existing (broken) PP. is removed first. */
+  /* Rebuild: an existing (broken) PP. is removed first. A title the user
+   * set with Rename is kept if the old info.sys is still readable. */
+  char title[64];
+  if (!f.visible_exists || channel_get_title(visible, title, sizeof(title)) < 0 || !title[0])
+    str_copy(title, h.title, sizeof(title));
   if (f.visible_exists && (rep->err = hdd_remove_exact(visible, &rep->rc))) {
     rep->detail = visible;
     goto out;
   }
-  build_channel(&j, h.title, &kelf, ui, rep);
+  build_channel(&j, title, &kelf, ui, rep);
   if (!rep->err)
     stage(ui, rep, STAGE_FINISHED);
 out:

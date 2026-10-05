@@ -80,6 +80,25 @@ TEST(system_cnf_fixture_is_lf_only) {
   CHECK(memchr(fx, '\r', n) == NULL);
 }
 
+TEST(info_sys_retitle_keeps_every_other_line) {
+  char buf[1024], out[1024], t[64];
+  size_t n = xmb_game_info_sys(buf, sizeof(buf), "Gran Turismo 4", "SLUS_203.12");
+  CHECK_EQ_INT(xmb_info_sys_get(buf, "title", t, sizeof(t)), 0);
+  CHECK_STR(t, "Gran Turismo 4");
+  CHECK_EQ_INT(xmb_info_sys_get(buf, "title_id", t, sizeof(t)), 0);
+  CHECK_STR(t, "SLUS-20312 (NTSC-U)");
+  size_t m = xmb_info_sys_retitle(buf, "GT4 \r\nnote = x", out, sizeof(out));
+  CHECK(m > 0);
+  CHECK_EQ_INT(xmb_info_sys_get(out, "title", t, sizeof(t)), 0);
+  CHECK_STR(t, "GT4 note = x"); /* control chars dropped: no injected line */
+  CHECK(strstr(out, "title = GT4 note = x\r\ntitle_id = SLUS-20312 (NTSC-U)\r\n") == out);
+  CHECK_EQ_INT((int)(m - strlen("title = GT4 note = x\r\n")),
+               (int)(n - strlen("title = Gran Turismo 4\r\n")));
+  CHECK_EQ_INT(xmb_info_sys_retitle(buf, "   ", out, sizeof(out)), 0); /* empty title */
+  CHECK_EQ_INT(xmb_info_sys_retitle("no title here\r\n", "X", out, sizeof(out)), 0);
+  CHECK_EQ_INT(xmb_info_sys_get(buf, "missing", t, sizeof(t)), -1);
+}
+
 TEST(info_sys_unknown_region_still_renders) {
   char buf[2048];
   CHECK(xmb_game_info_sys(buf, sizeof(buf), "X", "ABCD_123.45") > 0);

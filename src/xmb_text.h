@@ -25,6 +25,13 @@ void xmb_sanitize_value(const char *in, char *out, size_t outsz);
 size_t xmb_render_info_sys(char *out, size_t outsz, const char *title,
                            const char *title_id);
 
+/* Value of "<key> = value" in an info.sys text (exact key). 0 or -1. */
+int xmb_info_sys_get(const char *text, const char *key, char *out, size_t outsz);
+
+/* The same info.sys with only its title line replaced (sanitized; an
+ * empty title is refused). Returns the new length, or 0. */
+size_t xmb_info_sys_retitle(const char *text, const char *title, char *out, size_t outsz);
+
 /* info.sys for a game: title_id = "<PART ID> (<REGION>)", e.g.
  * "SLUS-20312 (NTSC-U)". Returns length or 0. */
 size_t xmb_game_info_sys(char *out, size_t outsz, const char *title,

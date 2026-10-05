@@ -38,6 +38,13 @@ channel_result_t channel_verify(const char *partition,
  * valid PPAA/system.cnf header. ERR_OK or ERR_XMB_VERIFY. */
 inst_err_t channel_quick_check(const char *partition);
 
+/* Current XMB title of a channel (res/info.sys), or -1. */
+int channel_get_title(const char *partition, char *out, size_t outsz);
+
+/* Replace only the title line of res/info.sys (written as .tmp, read
+ * back, renamed). Partition names and game data are not touched. */
+channel_result_t channel_set_title(const char *partition, const char *title);
+
 /* Create (128 MiB), populate and verify. On any failure the visible
  * partition is removed again so no broken channel is left behind. */
 channel_result_t channel_create(const char *partition,
