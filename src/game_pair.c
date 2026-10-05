@@ -38,6 +38,7 @@ unsigned pair_actions(pair_state_t s) {
   case PAIR_NONE:
     return ACT_INSTALL;
   case PAIR_COMPLETE:
+    return ACT_CREATE_CHANNEL | ACT_REMOVE_CHANNEL | ACT_REINSTALL | ACT_DELETE;
   case PAIR_HIDDEN_ONLY:
     return ACT_CREATE_CHANNEL | ACT_REINSTALL | ACT_DELETE;
   case PAIR_HIDDEN_UNVERIFIED:

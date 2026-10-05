@@ -138,4 +138,9 @@ void game_create_channel(const char *hidden, const install_ui_t *ui,
 inst_err_t game_delete_pair(const char *visible, const char *hidden,
                             const char **failed_name, int *rc_out);
 
+/* Remove only the PP. channel of a complete game. The hidden game and
+ * its journal stay as they are (still verified), so Create XMB channel
+ * restores the channel without copying again. */
+inst_err_t game_remove_channel(const char *visible, int *rc_out);
+
 #endif

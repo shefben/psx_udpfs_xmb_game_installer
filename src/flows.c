@@ -807,6 +807,28 @@ static void do_delete(const char *visible, const char *hidden, int pp_only,
   }
 }
 
+/* Complete game: drop only its XMB channel; the verified game data and
+ * journal stay, and Create XMB channel brings the channel back. */
+static void do_remove_channel(const char *visible) {
+  char txt[400];
+  snprintf(txt, sizeof(txt),
+           "The XMB channel will be removed:\n\n  %s\n\n"
+           "The game data stays installed and verified. Installed Games >\n"
+           "this game > Create XMB channel brings the channel back.",
+           visible);
+  if (!ui_confirm_destructive("Remove XMB channel", txt))
+    return;
+  int rc;
+  inst_err_t e = game_remove_channel(visible, &rc);
+  if (e) {
+    snprintf(txt, sizeof(txt), "Could not remove %s (code %d).\nNothing else was changed.",
+             visible, rc);
+    ui_message("Remove failed", txt);
+  } else {
+    ui_message("XMB channel removed", "Done. The game data was not touched.");
+  }
+}
+
 static void do_create_channel(const char *hidden) {
   progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0, 0};
   install_ui_t ui = {cb_stage, NULL, NULL, &ctx, NULL, NULL};
@@ -970,8 +992,9 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   ADD(ACT_CREATE_CHANNEL, st == PAIR_HIDDEN_ONLY ? "Create XMB channel"
                           : st == PAIR_COMPLETE  ? "Repair XMB channel"
                                                  : "Rebuild XMB channel");
-  ADD(ACT_REMOVE_CHANNEL, st == PAIR_ORPHAN_CHANNEL ? "Remove broken channel"
-                                                    : "Remove channel (game data invalid)");
+  ADD(ACT_REMOVE_CHANNEL, st == PAIR_COMPLETE       ? "Remove XMB channel (keep game data)"
+                          : st == PAIR_ORPHAN_CHANNEL ? "Remove broken channel"
+                                                      : "Remove channel (game data invalid)");
   ADD(ACT_DELETE_INCOMPLETE, "Delete incomplete game");
   ADD(ACT_REINSTALL, "Reinstall game (delete, then copy again)");
   ADD(ACT_DELETE, "Delete game");
@@ -1029,7 +1052,10 @@ void flow_pair_actions(const char *visible, const char *hidden) {
     do_create_channel(hidden);
     break;
   case ACT_REMOVE_CHANNEL:
-    do_delete(visible, hidden, 1, 0);
+    if (st == PAIR_COMPLETE)
+      do_remove_channel(visible);
+    else
+      do_delete(visible, hidden, 1, 0);
     break;
   case ACT_DELETE_INCOMPLETE:
     do_delete(visible, hidden, 0, 1);

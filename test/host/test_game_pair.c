@@ -95,7 +95,11 @@ TEST(pair_classify_all_states) {
 
 TEST(pair_actions_follow_plan) {
   CHECK_EQ_INT(pair_actions(PAIR_NONE), ACT_INSTALL);
-  CHECK_EQ_INT(pair_actions(PAIR_COMPLETE), ACT_CREATE_CHANNEL | ACT_REINSTALL | ACT_DELETE);
+  /* A complete game can drop only its channel (data kept, verified):
+   * it becomes PAIR_HIDDEN_ONLY, whose Create XMB channel restores it. */
+  CHECK_EQ_INT(pair_actions(PAIR_COMPLETE),
+               ACT_CREATE_CHANNEL | ACT_REMOVE_CHANNEL | ACT_REINSTALL | ACT_DELETE);
+  CHECK_EQ_INT(pair_actions(PAIR_HIDDEN_ONLY), ACT_CREATE_CHANNEL | ACT_REINSTALL | ACT_DELETE);
   CHECK_EQ_INT(pair_actions(PAIR_HIDDEN_ONLY), ACT_CREATE_CHANNEL | ACT_REINSTALL | ACT_DELETE);
   /* Unverified data never gets a channel. */
   CHECK_EQ_INT(pair_actions(PAIR_HIDDEN_UNVERIFIED), ACT_DELETE_INCOMPLETE | ACT_REINSTALL);

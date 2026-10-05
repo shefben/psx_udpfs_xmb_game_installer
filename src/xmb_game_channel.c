@@ -866,6 +866,14 @@ out:
   finish_report(rep, visible, hidden);
 }
 
+inst_err_t game_remove_channel(const char *visible, int *rc_out) {
+  *rc_out = 0;
+  if (!partition_is_game_channel(visible))
+    return ERR_INVALID_ARG;
+  pfs_umount(PFS_WORK); /* a mounted channel cannot be removed (-EBUSY) */
+  return hdd_remove_exact(visible, rc_out);
+}
+
 inst_err_t game_delete_pair(const char *visible, const char *hidden,
                             const char **failed_name, int *rc_out) {
   *failed_name = NULL;
