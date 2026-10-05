@@ -43,7 +43,7 @@ char xmb_area_letter(const char *boot_id) {
 }
 
 static size_t render(char *out, size_t outsz, const char *title, const char *title_id,
-                     char area, const xmb_game_info_t *gi) {
+                     char area, const xmb_game_info_t *gi, const char *today) {
   char t[256], id[64], rd[9] = "", dev[64] = "", pub[64] = "", gen[32] = "";
   xmb_sanitize_value(title, t, sizeof(t));
   xmb_sanitize_value(title_id, id, sizeof(id));
@@ -53,6 +53,9 @@ static size_t render(char *out, size_t outsz, const char *title, const char *tit
     xmb_sanitize_value(gi->publisher, pub, sizeof(pub));
     xmb_sanitize_value(gi->genre, gen, sizeof(gen));
   }
+  /* No release date known: the install date (YYYYMMDD) instead. */
+  if (!rd[0] && today && strlen(today) == 8 && strspn(today, "0123456789") == 8)
+    memcpy(rd, today, 9);
   /* "key = value", or "key =" when empty (the template's form). */
 #define KV(v) (v)[0] ? " " : "", (v)
   int n = snprintf(out, outsz,
@@ -137,8 +140,8 @@ size_t xmb_info_sys_retitle(const char *text, const char *title, char *out, size
 }
 
 size_t xmb_render_info_sys(char *out, size_t outsz, const char *title,
-                           const char *title_id) {
-  return render(out, outsz, title, title_id, 'X', NULL);
+                           const char *title_id, const char *today) {
+  return render(out, outsz, title, title_id, 'X', NULL, today);
 }
 
 size_t xmb_render_icon_sys(char *out, size_t outsz, const char *title0, const char *title1) {
@@ -171,6 +174,63 @@ size_t xmb_render_icon_sys(char *out, size_t outsz, const char *title0, const ch
     return 0;
   }
   return (size_t)n;
+}
+
+size_t xmb_render_man_xml(char *out, size_t outsz, const char *title) {
+  char t[256], esc[600];
+  xmb_sanitize_value(title, t, sizeof(t));
+  size_t e = 0;
+  for (const char *p = t; *p && e < sizeof(esc) - 7; p++) {
+    const char *r = *p == '&'   ? "&amp;"
+                    : *p == '<' ? "&lt;"
+                    : *p == '>' ? "&gt;"
+                    : *p == '"' ? "&quot;"
+                                : NULL;
+    if (r) {
+      memcpy(esc + e, r, strlen(r));
+      e += strlen(r);
+    } else {
+      esc[e++] = *p;
+    }
+  }
+  esc[e] = 0;
+  int n = snprintf(out, outsz,
+                   "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n"
+                   "\r\n"
+                   "<MANUAL version=\"1.0\">\r\n"
+                   "\r\n"
+                   "\t<IMG id=\"bg\" src=\"./image/0.png\" />\r\n"
+                   "\r\n"
+                   "\t<MENUGROUP id=\"TOP\">\r\n"
+                   "\t\t<TITLE id=\"TOP-TITLE\" label=\"%s\" />\r\n"
+                   "\t\t<ITEM id=\"M00\" label=\"Screenshots\"\tpage=\"PIC0000\" />\r\n"
+                   "\t</MENUGROUP>\r\n"
+                   "\r\n"
+                   "\t<PAGEGROUP>\r\n"
+                   "\t\t<PAGE id=\"PIC0000\" src=\"./image/1.png\" retitem=\"M00\" retgroup=\"TOP\" />\r\n"
+                   "\t\t<PAGE id=\"PIC0000\" src=\"./image/2.png\" retitem=\"M00\" retgroup=\"TOP\" />\r\n"
+                   "\t</PAGEGROUP>\r\n"
+                   "</MANUAL>\r\n",
+                   esc);
+  if (n < 0 || (size_t)n >= outsz) {
+    if (outsz)
+      out[0] = 0;
+    return 0;
+  }
+  return (size_t)n;
+}
+
+int xmb_date_str(int year, int month, int day, char out[9]) {
+  static const int DAYS[12] = {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (year < 2000 || year > 2099 || month < 1 || month > 12 || day < 1 ||
+      day > DAYS[month - 1] || (month == 2 && day == 29 && year % 4))
+    return -1;
+  int v[8] = {year / 1000, year / 100 % 10, year / 10 % 10, year % 10,
+              month / 10,  month % 10,      day / 10,       day % 10};
+  for (int i = 0; i < 8; i++)
+    out[i] = (char)('0' + v[i]);
+  out[8] = 0;
+  return 0;
 }
 
 int xmb_game_info_parse(const char *text, xmb_game_info_t *gi) {
@@ -208,17 +268,17 @@ int xmb_game_info_parse(const char *text, xmb_game_info_t *gi) {
 }
 
 size_t xmb_game_info_sys_ex(char *out, size_t outsz, const char *title, const char *boot_id,
-                            const xmb_game_info_t *gi) {
+                            const xmb_game_info_t *gi, const char *today) {
   char part_id[PART_ID_LEN + 1];
   if (boot_id_to_part_id(boot_id, part_id) < 0) {
     if (outsz)
       out[0] = 0;
     return 0;
   }
-  return render(out, outsz, title, part_id, xmb_area_letter(boot_id), gi);
+  return render(out, outsz, title, part_id, xmb_area_letter(boot_id), gi, today);
 }
 
 size_t xmb_game_info_sys(char *out, size_t outsz, const char *title,
                          const char *boot_id) {
-  return xmb_game_info_sys_ex(out, outsz, title, boot_id, NULL);
+  return xmb_game_info_sys_ex(out, outsz, title, boot_id, NULL, NULL);
 }

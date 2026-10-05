@@ -74,6 +74,11 @@ int png_basic_valid(const void *data, uint32_t size) {
   return w >= 1 && w <= 1024 && h >= 1 && h <= 1024;
 }
 
+int png_is_size(const void *data, uint32_t size, uint32_t w, uint32_t h) {
+  const uint8_t *b = data;
+  return png_basic_valid(data, size) && be32(b + 16) == w && be32(b + 20) == h;
+}
+
 void default_display_title(const iso_info_t *iso, const char *source_path,
                            char *out, size_t outsz) {
   int vol_is_id = iso->volume_id[0] == 0 ||

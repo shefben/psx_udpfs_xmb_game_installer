@@ -107,7 +107,7 @@ TEST(info_sys_game_info_fields) {
   CHECK_STR(gi.release_date, "20011217");
   CHECK_STR(gi.publisher, "Square = Enix");
   char buf[1024];
-  size_t n = xmb_game_info_sys_ex(buf, sizeof(buf), "Final Fantasy X", "SLUS_203.12", &gi);
+  size_t n = xmb_game_info_sys_ex(buf, sizeof(buf), "Final Fantasy X", "SLUS_203.12", &gi, "20261005");
   CHECK(n > 0);
   CHECK(strstr(buf, "release_date = 20011217\r\n") != NULL);
   CHECK(strstr(buf, "developer_id = Square Co. Ltd\r\n") != NULL);
@@ -115,11 +115,11 @@ TEST(info_sys_game_info_fields) {
   CHECK(strstr(buf, "genre = RPG\r\n") != NULL);
   /* bad date: left empty; no info: same bytes as the plain template */
   xmb_game_info_parse("release_date=2001\n", &gi);
-  xmb_game_info_sys_ex(buf, sizeof(buf), "X", "SLUS_203.12", &gi);
+  xmb_game_info_sys_ex(buf, sizeof(buf), "X", "SLUS_203.12", &gi, NULL);
   CHECK(strstr(buf, "release_date =\r\n") != NULL);
   char plain[1024];
   xmb_game_info_sys(plain, sizeof(plain), "X", "SLUS_203.12");
-  xmb_game_info_sys_ex(buf, sizeof(buf), "X", "SLUS_203.12", NULL);
+  xmb_game_info_sys_ex(buf, sizeof(buf), "X", "SLUS_203.12", NULL, NULL);
   CHECK_STR(buf, plain);
 }
 
@@ -133,7 +133,7 @@ TEST(info_sys_unknown_region_still_renders) {
 TEST(info_sys_strips_control_chars) {
   char buf[2048];
   CHECK(xmb_render_info_sys(buf, sizeof(buf), "Evil\r\ntitle_id = X\t!",
-                            "ID") > 0);
+                            "ID", NULL) > 0);
   CHECK(strncmp(buf, "title = Eviltitle_id = X!\r\n", 27) == 0);
   /* Exactly one "title_id" line. */
   CHECK(strstr(strstr(buf, "title_id = ID\r\n") + 1, "title_id =") == NULL);
@@ -141,7 +141,7 @@ TEST(info_sys_strips_control_chars) {
 
 TEST(info_sys_too_small_buffer) {
   char buf[32];
-  CHECK_EQ_INT(xmb_render_info_sys(buf, sizeof(buf), "T", "I"), 0);
+  CHECK_EQ_INT(xmb_render_info_sys(buf, sizeof(buf), "T", "I", NULL), 0);
 }
 
 TEST(sanitize_value_trims_and_keeps_utf8) {
@@ -305,4 +305,50 @@ TEST(ppaa_files_rejects_bad_sizes) {
   CHECK_EQ_INT(ppaa_files_span(&f), 0);
   f.icon_len = sizeof(ICON);
   CHECK_EQ_INT(ppaa_apply_files(region, 0x800, &f), ERR_INVALID_ARG); /* too small */
+}
+
+TEST(release_date_falls_back_to_today) {
+  char buf[1024];
+  /* No database entry: today's date. */
+  CHECK(xmb_game_info_sys_ex(buf, sizeof(buf), "X", "SLUS_203.12", NULL, "20261005") > 0);
+  CHECK(strstr(buf, "release_date = 20261005\r\n") != NULL);
+  /* A database date wins over today. */
+  xmb_game_info_t gi;
+  xmb_game_info_parse("release_date=20011217\n", &gi);
+  xmb_game_info_sys_ex(buf, sizeof(buf), "X", "SLUS_203.12", &gi, "20261005");
+  CHECK(strstr(buf, "release_date = 20011217\r\n") != NULL);
+  /* Invalid database date: today. Invalid "today": empty. */
+  xmb_game_info_parse("release_date=2001\n", &gi);
+  xmb_game_info_sys_ex(buf, sizeof(buf), "X", "SLUS_203.12", &gi, "20261005");
+  CHECK(strstr(buf, "release_date = 20261005\r\n") != NULL);
+  xmb_game_info_sys_ex(buf, sizeof(buf), "X", "SLUS_203.12", NULL, "2026-1-5");
+  CHECK(strstr(buf, "release_date =\r\n") != NULL);
+  CHECK(xmb_render_info_sys(buf, sizeof(buf), "Installer", "UDPFS-INSTALLER", "20261005") > 0);
+  CHECK(strstr(buf, "release_date = 20261005\r\n") != NULL);
+}
+
+TEST(date_str_validates) {
+  char d[9];
+  CHECK_EQ_INT(xmb_date_str(2026, 10, 5, d), 0);
+  CHECK_STR(d, "20261005");
+  CHECK_EQ_INT(xmb_date_str(2024, 2, 29, d), 0);
+  CHECK_STR(d, "20240229");
+  CHECK_EQ_INT(xmb_date_str(2025, 2, 29, d), -1);
+  CHECK_EQ_INT(xmb_date_str(1999, 12, 31, d), -1); /* clock not set */
+  CHECK_EQ_INT(xmb_date_str(2026, 13, 1, d), -1);
+  CHECK_EQ_INT(xmb_date_str(2026, 4, 31, d), -1);
+  CHECK_EQ_INT(xmb_date_str(2026, 1, 0, d), -1);
+}
+
+TEST(man_xml_default_template) {
+  char buf[2048];
+  size_t n = xmb_render_man_xml(buf, sizeof(buf), "Tom & Jerry <\"War\">\r\n");
+  CHECK(n > 0);
+  CHECK_EQ_INT(n, strlen(buf));
+  CHECK(strncmp(buf, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n", 40) == 0);
+  CHECK(strstr(buf, "<TITLE id=\"TOP-TITLE\" label=\"Tom &amp; Jerry &lt;&quot;War&quot;&gt;\" />") != NULL);
+  CHECK(strstr(buf, "<IMG id=\"bg\" src=\"./image/0.png\" />") != NULL);
+  CHECK(strstr(buf, "src=\"./image/1.png\"") != NULL && strstr(buf, "src=\"./image/2.png\"") != NULL);
+  CHECK(strstr(buf, "</MANUAL>\r\n") != NULL);
+  CHECK_EQ_INT(xmb_render_man_xml(buf, 64, "T"), 0);
 }

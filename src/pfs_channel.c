@@ -1,6 +1,7 @@
 #include <malloc.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
@@ -49,6 +50,48 @@ inst_err_t osd_header_verify(const char *partition, const char *syscnf, const ch
   return ppaa_verify_partition_files(partition, &f, rc_out);
 }
 
+int install_date(char out[9]) {
+  time_t now = time(NULL);
+  struct tm *tm = gmtime(&now);
+  out[0] = 0;
+  return tm ? xmb_date_str(tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, out) : -1;
+}
+
+static char g_man[2048];
+
+channel_result_t channel_write_res(const char *title, const char *info_sys, uint32_t info_len,
+                                   const jacket_pair_t *j) {
+  int r = fileXioMkdir(W "res", 0777);
+  if (r < 0 && r != -17 /* EEXIST */)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "mkdir res");
+  if ((r = file_write_all(W "res/info.sys", info_sys, info_len)) < 0)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "res/info.sys");
+  if ((r = file_write_all(W "res/jkt_001.png", j->large, j->large_size)) < 0)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_001.png");
+  if ((r = file_write_all(W "res/jkt_002.png", j->small, j->small_size)) < 0)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_002.png");
+  /* A manual the channel already has is kept; otherwise the blank one. */
+  if (file_size(W "res/man.xml") > 0)
+    return cres(ERR_OK, 0, NULL);
+  size_t n = xmb_render_man_xml(g_man, sizeof(g_man), title);
+  if (!n)
+    return cres(ERR_XMB_RESOURCE_WRITE, 0, "res/man.xml");
+  const uint8_t *page;
+  uint32_t page_len;
+  payload_manual_page(&page, &page_len);
+  r = fileXioMkdir(W "res/image", 0777);
+  if (r < 0 && r != -17)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "mkdir res/image");
+  static const char *const PAGES[3] = {W "res/image/0.png", W "res/image/1.png",
+                                       W "res/image/2.png"};
+  for (int i = 0; i < 3; i++)
+    if (file_size(PAGES[i]) <= 0 && (r = file_write_all(PAGES[i], page, page_len)) < 0)
+      return cres(ERR_XMB_RESOURCE_WRITE, r, PAGES[i] + strlen(W));
+  if ((r = file_write_all(W "res/man.xml", g_man, (uint32_t)n)) < 0)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "res/man.xml");
+  return cres(ERR_OK, 0, NULL);
+}
+
 channel_result_t channel_populate(const char *partition,
                                   const channel_content_t *c) {
   int r = pfs_mount(W, partition, FIO_MT_RDWR);
@@ -56,28 +99,10 @@ channel_result_t channel_populate(const char *partition,
     return cres(ERR_PFS_MOUNT, r, "mount");
 
   channel_result_t out = cres(ERR_OK, 0, NULL);
-  r = fileXioMkdir(W "res", 0777);
-  if (r < 0 && r != -17 /* EEXIST */) {
-    out = cres(ERR_XMB_RESOURCE_WRITE, r, "mkdir res");
-    goto done;
-  }
-  if ((r = file_write_all(W "EXECUTE.KELF", c->kelf, c->kelf_size)) < 0) {
+  if ((r = file_write_all(W "EXECUTE.KELF", c->kelf, c->kelf_size)) < 0)
     out = cres(ERR_XMB_RESOURCE_WRITE, r, "EXECUTE.KELF");
-    goto done;
-  }
-  if ((r = file_write_all(W "res/info.sys", c->info_sys, c->info_sys_len)) < 0) {
-    out = cres(ERR_XMB_RESOURCE_WRITE, r, "res/info.sys");
-    goto done;
-  }
-  if ((r = file_write_all(W "res/jkt_001.png", c->jacket, c->jacket_size)) < 0) {
-    out = cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_001.png");
-    goto done;
-  }
-  if ((r = file_write_all(W "res/jkt_002.png", c->jacket, c->jacket_size)) < 0) {
-    out = cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_002.png");
-    goto done;
-  }
-done:
+  else
+    out = channel_write_res(c->osd_title0, c->info_sys, c->info_sys_len, &c->jkt);
   pfs_umount(W);
   if (out.err)
     return out;
@@ -107,10 +132,12 @@ channel_result_t channel_verify(const char *partition,
     out = cres(ERR_XMB_VERIFY, 0, "EXECUTE.KELF");
   else if (!file_matches(W "res/info.sys", c->info_sys, c->info_sys_len))
     out = cres(ERR_XMB_VERIFY, 0, "res/info.sys");
-  else if (!file_matches(W "res/jkt_001.png", c->jacket, c->jacket_size))
+  else if (!file_matches(W "res/jkt_001.png", c->jkt.large, c->jkt.large_size))
     out = cres(ERR_XMB_VERIFY, 0, "res/jkt_001.png");
-  else if (!file_matches(W "res/jkt_002.png", c->jacket, c->jacket_size))
+  else if (!file_matches(W "res/jkt_002.png", c->jkt.small, c->jkt.small_size))
     out = cres(ERR_XMB_VERIFY, 0, "res/jkt_002.png");
+  else if (file_size(W "res/man.xml") <= 0 || file_size(W "res/image/0.png") <= 0)
+    out = cres(ERR_XMB_VERIFY, 0, "res/man.xml");
   pfs_umount(W);
   if (out.err)
     return out;
@@ -121,7 +148,6 @@ channel_result_t channel_verify(const char *partition,
     return cres(e, r, "OSD header (system.cnf, icon.sys, icon)");
   return out;
 }
-
 inst_err_t channel_quick_check(const char *partition) {
   if (pfs_mount(W, partition, FIO_MT_RDONLY) < 0)
     return ERR_XMB_VERIFY;

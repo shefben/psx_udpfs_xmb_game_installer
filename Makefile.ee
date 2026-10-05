@@ -40,8 +40,11 @@ BLOBS := $(foreach m,$(SDK_IRX),$(m)_irx=$(PS2SDK)/iop/irx/$(m).irx) \
          ministack_irx=$(IRX_DIR)/ministack.irx \
          udpfs_ioman_irx=$(IRX_DIR)/udpfs_ioman.irx \
          hddpump_irx=$(IRX_DIR)/hddpump.irx \
-         default_jkt_png=assets/game/default_jkt_001.png \
-         installer_jkt_png=assets/installer/jkt_001.png \
+         default_jkt1_png=assets/game/default_jkt_001.png \
+         default_jkt2_png=assets/game/default_jkt_002.png \
+         installer_jkt1_png=assets/installer/jkt_001.png \
+         installer_jkt2_png=assets/installer/jkt_002.png \
+         manual_blank_png=assets/manual/blank.png \
          osd_icon_ico=reference/HDLGameInstaller/res/icon.ico \
          $(EMBED_KELFS)
 

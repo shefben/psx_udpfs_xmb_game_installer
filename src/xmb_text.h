@@ -23,7 +23,7 @@ void xmb_sanitize_value(const char *in, char *out, size_t outsz);
  * `title` and `title_id` are sanitized. Returns the byte length, or 0
  * if `outsz` is too small. */
 size_t xmb_render_info_sys(char *out, size_t outsz, const char *title,
-                           const char *title_id);
+                           const char *title_id, const char *today);
 
 /* XMB game info from udpfsd's /.udpfsd/info/<ID>.txt (key=value lines:
  * release_date YYYYMMDD, developer, publisher, genre). */
@@ -38,9 +38,11 @@ typedef struct {
  * not 8 digits is dropped. Returns the number of fields set. */
 int xmb_game_info_parse(const char *text, xmb_game_info_t *gi);
 
-/* xmb_game_info_sys with the info fields filled in (gi may be NULL). */
+/* xmb_game_info_sys with the info fields filled in (gi may be NULL).
+ * `today` ("YYYYMMDD", may be NULL) is the release date when none is
+ * known, so the XMB never gets an empty one. */
 size_t xmb_game_info_sys_ex(char *out, size_t outsz, const char *title, const char *boot_id,
-                            const xmb_game_info_t *gi);
+                            const xmb_game_info_t *gi, const char *today);
 
 /* Value of "<key> = value" in an info.sys text (exact key). 0 or -1. */
 int xmb_info_sys_get(const char *text, const char *key, char *out, size_t outsz);
@@ -72,5 +74,14 @@ char xmb_area_letter(const char *boot_id);
  * title1 = second line (game ID), hdl_dump's default colours and
  * lights. LF line endings. Returns length or 0. */
 size_t xmb_render_icon_sys(char *out, size_t outsz, const char *title0, const char *title1);
+
+/* Default res/man.xml (the XMB "Manual" entry), as PFS-BatchKit-Manager's
+ * template: background image/0.png, pages image/1.png and image/2.png
+ * (written blank when the channel has no manual). The title is
+ * XML-escaped. Returns length or 0. */
+size_t xmb_render_man_xml(char *out, size_t outsz, const char *title);
+
+/* "YYYYMMDD" for a valid date (year 2000-2099), else -1. */
+int xmb_date_str(int year, int month, int day, char out[9]);
 
 #endif

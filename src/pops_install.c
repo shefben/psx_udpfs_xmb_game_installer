@@ -226,7 +226,7 @@ static void stage(const install_ui_t *ui, install_report_t *rep, install_stage_t
 
 void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep) {
   memset(rep, 0, sizeof(*rep));
-  void *kelf = NULL, *jkt_owned = NULL;
+  void *kelf = NULL, *jkt_owned[2] = {NULL, NULL};
   int created = 0;
   stage(ui, rep, STAGE_PREPARING);
 
@@ -286,22 +286,22 @@ void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep)
     rep->detail = "EXECUTE.KELF";
     goto out;
   }
-  char info[1024];
+  char info[1024], today[9];
   xmb_game_info_t gi;
   int have_gi = game_load_info(p->vcd.boot_id, &gi);
+  install_date(today);
   uint32_t info_len = (uint32_t)xmb_game_info_sys_ex(info, sizeof(info), p->title, p->vcd.boot_id,
-                                                     have_gi ? &gi : NULL);
-  const uint8_t *jkt;
-  uint32_t jkt_size;
-  rep->jacket = game_load_jacket(p->vcd.boot_id, p->source_path, &jkt, &jkt_size, &jkt_owned);
-  if (!info_len || file_write_all(W "res/info.sys", info, info_len) < 0 ||
-      file_write_all(W "res/jkt_001.png", jkt, jkt_size) < 0 ||
-      file_write_all(W "res/jkt_002.png", jkt, jkt_size) < 0) {
-    rep->err = ERR_XMB_RESOURCE_WRITE;
-    rep->detail = "res/";
+                                                     have_gi ? &gi : NULL, today);
+  jacket_pair_t jkt;
+  rep->jacket = game_load_jackets(p->vcd.boot_id, &jkt, jkt_owned);
+  channel_result_t cr = info_len ? channel_write_res(p->title, info, info_len, &jkt)
+                                 : (channel_result_t){ERR_XMB_RESOURCE_WRITE, 0, "res/info.sys"};
+  if (cr.err) {
+    rep->err = cr.err;
+    rep->rc = cr.rc;
+    rep->detail = cr.step;
     goto out;
-  }
-  stage(ui, rep, STAGE_COPYING);
+  }  stage(ui, rep, STAGE_COPYING);
   if ((rep->err = copy_vcd(p, ui, rep)))
     goto out;
   source_close(&g_src);
@@ -347,7 +347,8 @@ out:
   }
   rep->visible_exists = hdd_exists(p->partition) > 0;
   free(kelf);
-  free(jkt_owned);
+  free(jkt_owned[0]);
+  free(jkt_owned[1]);
 }
 
 int pops_partition_is_ps1(const char *partition) {

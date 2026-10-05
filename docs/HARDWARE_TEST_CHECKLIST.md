@@ -78,7 +78,7 @@ Run in this order. Nothing here creates or deletes a game partition.
 | D15 | Delete refused for `__common` etc. (cannot be selected in the UI) | | NOT RUN |
 | D16 | Reboot after successful installs | channels remain | NOT RUN |
 | D18 | Install All: 2+ games (one ISO, one ZSO) in one batch | each completes the acceptance chain; summary correct; abort mid-batch leaves aborted game UNVERIFIED and the rest skipped | NOT RUN |
-| D19 | Jackets prepared by the server (ART `_COV` and a downloaded cover) appear in the XMB | | NOT RUN |
+| D19 | Jackets prepared by the server (ART `_COV` and a downloaded cover) appear in the XMB; `udpfsd-cache/served/jkt/` has `<ID>.png` 74x108 and `<ID>_L.png` 140x200; the channel has `res/man.xml` + `res/image/0..2.png` (XMB Manual entry opens a blank page); a game not in `gamedb` shows the install date as release date | | NOT RUN |
 | D20 | OPL cfg copied to `<OPL partition>/CFG/<ID>.cfg`; its compatibility modes take effect when the channel boots; behaviour of a `$VMC_0=` entry whose VMC does not exist yet; an existing cfg is kept | | NOT RUN |
 | D21 | Channels use the server OPL-Launcher (Diagnostics: "OPL-Launcher KELF from server", journal `launcher_source=server`); a mismatching server copy falls back to the embedded one | | NOT RUN |
 | D22 | Fresh console (no `PP.UDPF-00001..INSTALLER`), `auto_install = yes`, one ISO + one ZSO on the server: start the bootstrap ELF, no further input | installer partition created, both games complete the acceptance chain, console returns to the XMB, both games boot | NOT RUN |

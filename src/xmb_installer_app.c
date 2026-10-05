@@ -18,16 +18,14 @@
 
 static void build_content(channel_content_t *c, const payload_t *kelf,
                           char *info, size_t infosz) {
-  const uint8_t *jkt;
-  uint32_t jkt_size;
-  payload_installer_jacket(&jkt, &jkt_size);
+  char today[9];
+  install_date(today);
+  payload_installer_jackets(&c->jkt);
   c->kelf = kelf->data;
   c->kelf_size = kelf->size;
   c->info_sys = info;
-  c->info_sys_len =
-      (uint32_t)xmb_render_info_sys(info, infosz, INSTALLER_TITLE, INSTALLER_TITLE_ID);
-  c->jacket = jkt;
-  c->jacket_size = jkt_size;
+  c->info_sys_len = (uint32_t)xmb_render_info_sys(info, infosz, INSTALLER_TITLE,
+                                                  INSTALLER_TITLE_ID, today);
   c->osd_title0 = INSTALLER_TITLE;
   c->osd_title1 = INSTALLER_TITLE_ID;
 }

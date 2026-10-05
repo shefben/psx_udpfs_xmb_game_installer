@@ -47,9 +47,14 @@ def main(argv):
     if len(argv) == 3 and argv[1] == "--kelf":
         print("kelf ok:", argv[2], check_kelf(argv[2]))
         return 0
-    for rel in ("assets/game/default_jkt_001.png", "assets/game/default_jkt_002.png",
-                "assets/installer/jkt_001.png", "assets/installer/jkt_002.png"):
-        print("png ok:", rel, check_png(os.path.join(ROOT, rel)))
+    for rel, size in (("assets/game/default_jkt_001.png", "140x200"),
+                      ("assets/game/default_jkt_002.png", "74x108"),
+                      ("assets/installer/jkt_001.png", "140x200"),
+                      ("assets/installer/jkt_002.png", "74x108"),
+                      ("assets/manual/blank.png", "640x350")):
+        info = check_png(os.path.join(ROOT, rel))
+        assert info.startswith(size + " "), "%s: %s, expected %s" % (rel, info, size)
+        print("png ok:", rel, info)
     fx = open(os.path.join(ROOT, "test/fixtures/ppaa_hdldump.bin"), "rb").read()
     assert len(fx) == 2048 and fx[:9] == b"PS2ICON3D", "PPAA fixture invalid"
     print("fixture ok: test/fixtures/ppaa_hdldump.bin")

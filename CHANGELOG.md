@@ -85,6 +85,13 @@ check.
   header now has all three (the icon is HDLGameInstaller's default).
   `info.sys` now matches those tools too: `title_id = SLUS-20312`
   without the region, `area` from the game ID, `copyright_imgcount = 1`.
+  Each channel also gets the files those tools give it: covers at both
+  DESR sizes (`jkt_001.png` 140x200, `jkt_002.png` 74x108; udpfsd now
+  makes both), a default manual page (`res/man.xml` with blank pages)
+  when the channel has none, and a release date in every `info.sys`
+  (the install date when the game database has none). The console no
+  longer copies unresized `ART\<ID>.png` / `<game>.png` images itself;
+  udpfsd resizes those.
   Channels made by an earlier build show as needing repair: choose
   *Repair XMB Channels* (or *Installed Games > game > Rebuild XMB channel*) for each, and reinstall
   the installer channel from the bootstrap ELF.
@@ -100,6 +107,9 @@ check.
   - `gamedb` (XMB game info)
   - `power_off_after_install`
 - The `udpfsd.cfg` in the release now has these keys.
+- Covers are prepared at both XMB sizes (`jkt/<ID>.png` 74x108 and
+  `jkt/<ID>_L.png` 140x200). Restart the server once after updating so
+  it adds the large covers to its cache.
 
 ### Upgrading from 1.0
 

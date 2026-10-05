@@ -9,6 +9,7 @@
 #include "hdl_plan.h"
 #include "iso9660.h"
 #include "manifest.h"
+#include "opl_launcher_payload.h"
 #include "partname.h"
 #include "source.h"
 
@@ -102,11 +103,11 @@ inst_err_t game_resume_plan(const char *hidden, game_plan_t *p, int *rc_out);
  * prepared from its game database; 0 if none (server down, no entry). */
 int game_load_info(const char *boot_id, xmb_game_info_t *gi);
 
-/* XMB cover for a game: udpfsd's prepared jacket, then <source>.png, then
- * the built-in default. *owned (if set) must be freed. Returns where it
- * came from: "server" | "missing" | "default". */
-const char *game_load_jacket(const char *boot_id, const char *source_path,
-                             const uint8_t **data, uint32_t *size, void **owned);
+/* XMB covers for a game: udpfsd's prepared pair (jkt/<ID>_L.png 140x200
+ * and jkt/<ID>.png 74x108), used only at exactly those sizes; else the
+ * built-in default pair. owned[0..1] (if set) must be freed. Returns
+ * where they came from: "server" | "missing" | "default". */
+const char *game_load_jackets(const char *boot_id, jacket_pair_t *j, void *owned[2]);
 
 /* Gather on-disk facts for a pair (exists/valid/journal). */
 void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f);

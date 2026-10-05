@@ -268,9 +268,7 @@ size_t game_pair_details(const char *visible, const char *hidden, char *out, siz
   return (size_t)off < outsz ? (size_t)off : outsz - 1;
 }
 
-/* Jacket: udpfsd's prepared jkt/<BOOT_ID>.png, then udpfs:/ART/<BOOT_ID>.png,
- * then <source>.png, then the built-in default. Returns where it came
- * from (install_report_t.jacket). */
+
 int game_load_info(const char *boot_id, xmb_game_info_t *gi) {
   if (g_app.net != NETWORK_READY || !boot_id_is_valid(boot_id))
     return 0;
@@ -289,51 +287,34 @@ int game_load_info(const char *boot_id, xmb_game_info_t *gi) {
   return ok;
 }
 
-const char *game_load_jacket(const char *boot_id, const char *source_path,
-                               const uint8_t **data, uint32_t *size, void **owned) {
-  char path[SOURCE_PATH_MAX + 8];
-  const char *fallback = "default";
-  *owned = NULL;
-  if (g_app.net == NETWORK_READY) {
-    const manifest_entry_t *me = g_manifest_loaded ? manifest_find_id(&g_manifest, boot_id) : NULL;
-    if (me && me->jacket[0]) {
-      void *buf = NULL;
-      snprintf(path, sizeof(path), MANIFEST_DIR "/%s", me->jacket);
-      int n = file_load(path, &buf, JACKET_MAX);
-      if (n > 0 && png_basic_valid(buf, (uint32_t)n)) {
-        *data = buf;
-        *size = (uint32_t)n;
-        *owned = buf;
-        return "server";
-      }
-      free(buf);
-      fallback = "missing";
-    }
-    const char *cands[2] = {path, NULL};
-    snprintf(path, sizeof(path), "udpfs:/ART/%s.png", boot_id);
-    char alt[SOURCE_PATH_MAX + 8];
-    if (source_path && source_path[0]) {
-      snprintf(alt, sizeof(alt), "%s.png", source_path);
-      cands[1] = alt;
-    }
-    for (int i = 0; i < 2; i++) {
-      void *buf = NULL;
-      if (!cands[i])
-        continue;
-      int n = file_load(cands[i], &buf, JACKET_MAX);
-      if (n > 0 && png_basic_valid(buf, (uint32_t)n)) {
-        *data = buf;
-        *size = (uint32_t)n;
-        *owned = buf;
-        return "server";
-      }
-      free(buf);
-    }
+const char *game_load_jackets(const char *boot_id, jacket_pair_t *j, void *owned[2]) {
+  owned[0] = owned[1] = NULL;
+  payload_default_jackets(j);
+  const manifest_entry_t *me = g_app.net == NETWORK_READY && g_manifest_loaded
+                                   ? manifest_find_id(&g_manifest, boot_id)
+                                   : NULL;
+  if (!me || !me->jacket[0])
+    return "default";
+  /* udpfsd: jkt/<ID>.png (74x108) and jkt/<ID>_L.png (140x200). */
+  char small[SOURCE_PATH_MAX + 8], large[SOURCE_PATH_MAX + 16];
+  snprintf(small, sizeof(small), MANIFEST_DIR "/%s", me->jacket);
+  size_t n = strlen(small);
+  if (n < 5 || strcmp(small + n - 4, ".png"))
+    return "missing";
+  snprintf(large, sizeof(large), "%.*s_L.png", (int)(n - 4), small);
+  void *a = NULL, *b = NULL;
+  int na = file_load(large, &a, JACKET_MAX), nb = file_load(small, &b, JACKET_MAX);
+  if (na > 0 && nb > 0 && png_is_size(a, (uint32_t)na, JKT_LARGE_W, JKT_LARGE_H) &&
+      png_is_size(b, (uint32_t)nb, JKT_SMALL_W, JKT_SMALL_H)) {
+    *j = (jacket_pair_t){a, (uint32_t)na, b, (uint32_t)nb};
+    owned[0] = a;
+    owned[1] = b;
+    return "server";
   }
-  payload_default_jacket(data, size);
-  return fallback;
+  free(a);
+  free(b);
+  return "missing"; /* an older udpfsd (no large cover) or a bad file */
 }
-
 /* Journal writes are part of the transaction: a destructive step never
  * runs unless the state before it is on disk. */
 static inst_err_t persist(const tx_journal_t *j) {
@@ -484,20 +465,19 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
   str_copy(j->launcher_source, !strcmp(kelf->origin, "server") ? "server" : "embedded",
            sizeof(j->launcher_source));
   stage(ui, rep, STAGE_CREATING_CHANNEL);
-  char info[1024];
+  char info[1024], today[9];
   xmb_game_info_t gi;
   int have_gi = game_load_info(j->startup_id, &gi);
+  install_date(today);
   uint32_t info_len = (uint32_t)xmb_game_info_sys_ex(info, sizeof(info), title, j->startup_id,
-                                                     have_gi ? &gi : NULL);
-  const uint8_t *jkt;
-  uint32_t jkt_size;
-  void *jkt_owned;
-  rep->jacket = game_load_jacket(j->startup_id, j->source_path, &jkt, &jkt_size, &jkt_owned);
+                                                     have_gi ? &gi : NULL, today);
+  jacket_pair_t jkt;
+  void *jkt_owned[2];
+  rep->jacket = game_load_jackets(j->startup_id, &jkt, jkt_owned);
 
   char part_id[PART_ID_LEN + 1] = "";
   boot_id_to_part_id(j->startup_id, part_id);
-  channel_content_t c = {kelf->data, kelf->size, info, info_len, jkt, jkt_size, title, part_id};
-  int rc = 0;
+  channel_content_t c = {kelf->data, kelf->size, info, info_len, jkt, title, part_id};  int rc = 0;
   /* The hidden game gets the OSD header PFS-BatchKit-Manager and
    * HDLGameInstaller give it (BOOT2 = PATINFO, icon.sys, icon). It sits
    * below the HDL game header and the game data, which stay untouched. */
@@ -539,7 +519,8 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
     str_copy(j->opl_cfg, rep->opl_cfg, sizeof(j->opl_cfg));
     persist(j);
   }
-  free(jkt_owned);
+  free(jkt_owned[0]);
+  free(jkt_owned[1]);
   payload_release(kelf);
 }
 

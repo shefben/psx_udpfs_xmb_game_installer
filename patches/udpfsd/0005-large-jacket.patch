@@ -1,0 +1,182 @@
+diff --git a/internal/prep/art.go b/internal/prep/art.go
+index c8497e0..d11d5e0 100644
+--- a/internal/prep/art.go
++++ b/internal/prep/art.go
+@@ -11,12 +11,22 @@ import (
+ 	"strings"
+ )
+ 
+-// JacketW/JacketH is the DESR XMB jacket size (as PSX-XMB-Manager writes).
++// DESR XMB jacket sizes, as PSX-XMB-Manager writes them: res/jkt_002.png
++// (the XMB list cover) is JacketW x JacketH, res/jkt_001.png (the large
++// cover) is LargeJacketW x LargeJacketH.
+ const (
+-	JacketW = 74
+-	JacketH = 108
++	JacketW      = 74
++	JacketH      = 108
++	LargeJacketW = 140
++	LargeJacketH = 200
+ )
+ 
++// LargeJacketPath is where MakeJacket writes the large cover for dst:
++// jkt/<ID>.png -> jkt/<ID>_L.png.
++func LargeJacketPath(dst string) string {
++	return strings.TrimSuffix(dst, ".png") + "_L.png"
++}
++
+ var artExts = []string{".png", ".jpg", ".jpeg", ".gif"}
+ 
+ func firstExisting(base string) string {
+@@ -49,8 +59,9 @@ func FindArt(artDir, id, imagePath string) string {
+ 	return ""
+ }
+ 
+-// MakeJacket decodes src (PNG/JPEG/GIF), box-filters it to 74x108 and
+-// writes an opaque, non-interlaced PNG to dst (temp file + rename).
++// MakeJacket decodes src (PNG/JPEG/GIF) and writes it box-filtered as
++// opaque, non-interlaced PNGs: 74x108 to dst and 140x200 to
++// LargeJacketPath(dst) (each temp file + rename).
+ func MakeJacket(src, dst string) error {
+ 	f, err := os.Open(src)
+ 	if err != nil {
+@@ -65,13 +76,24 @@ func MakeJacket(src, dst string) error {
+ 	if b.Dx() == 0 || b.Dy() == 0 {
+ 		return fmt.Errorf("%s: empty image", src)
+ 	}
+-	out := image.NewRGBA(image.Rect(0, 0, JacketW, JacketH))
+-	for y := 0; y < JacketH; y++ {
+-		y0 := b.Min.Y + y*b.Dy()/JacketH
+-		y1 := max(y0+1, b.Min.Y+(y+1)*b.Dy()/JacketH)
+-		for x := 0; x < JacketW; x++ {
+-			x0 := b.Min.X + x*b.Dx()/JacketW
+-			x1 := max(x0+1, b.Min.X+(x+1)*b.Dx()/JacketW)
++	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
++		return err
++	}
++	if err := writePNG(LargeJacketPath(dst), boxResize(img, LargeJacketW, LargeJacketH)); err != nil {
++		return err
++	}
++	return writePNG(dst, boxResize(img, JacketW, JacketH))
++}
++
++func boxResize(img image.Image, w, h int) *image.RGBA {
++	b := img.Bounds()
++	out := image.NewRGBA(image.Rect(0, 0, w, h))
++	for y := 0; y < h; y++ {
++		y0 := b.Min.Y + y*b.Dy()/h
++		y1 := max(y0+1, b.Min.Y+(y+1)*b.Dy()/h)
++		for x := 0; x < w; x++ {
++			x0 := b.Min.X + x*b.Dx()/w
++			x1 := max(x0+1, b.Min.X+(x+1)*b.Dx()/w)
+ 			var r, g, bl, n uint64
+ 			for sy := y0; sy < y1; sy++ {
+ 				for sx := x0; sx < x1; sx++ {
+@@ -84,15 +106,16 @@ func MakeJacket(src, dst string) error {
+ 				uint8(r/n>>8), uint8(g/n>>8), uint8(bl/n>>8), 255
+ 		}
+ 	}
+-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+-		return err
+-	}
++	return out
++}
++
++func writePNG(dst string, img image.Image) error {
+ 	tmp := dst + ".tmp"
+ 	w, err := os.Create(tmp)
+ 	if err != nil {
+ 		return err
+ 	}
+-	if err := png.Encode(w, out); err != nil {
++	if err := png.Encode(w, img); err != nil {
+ 		w.Close()
+ 		os.Remove(tmp)
+ 		return err
+diff --git a/internal/prep/art_test.go b/internal/prep/art_test.go
+index 143855a..74e79fd 100644
+--- a/internal/prep/art_test.go
++++ b/internal/prep/art_test.go
+@@ -68,14 +68,19 @@ func TestMakeJacket(t *testing.T) {
+ 		if err := MakeJacket(src, dst); err != nil {
+ 			t.Fatal(err)
+ 		}
+-		f, _ := os.Open(dst)
+-		cfg, format, err := image.DecodeConfig(f)
+-		f.Close()
+-		if err != nil || format != "png" || cfg.Width != JacketW || cfg.Height != JacketH {
+-			t.Fatalf("%v %s %+v", err, format, cfg)
+-		}
+-		if cfg.ColorModel != color.RGBAModel && cfg.ColorModel != color.NRGBAModel {
+-			t.Fatalf("model %v", cfg.ColorModel)
++		for _, c := range []struct {
++			path string
++			w, h int
++		}{{dst, JacketW, JacketH}, {LargeJacketPath(dst), LargeJacketW, LargeJacketH}} {
++			f, _ := os.Open(c.path)
++			cfg, format, err := image.DecodeConfig(f)
++			f.Close()
++			if err != nil || format != "png" || cfg.Width != c.w || cfg.Height != c.h {
++				t.Fatalf("%s: %v %s %+v", c.path, err, format, cfg)
++			}
++			if cfg.ColorModel != color.RGBAModel && cfg.ColorModel != color.NRGBAModel {
++				t.Fatalf("model %v", cfg.ColorModel)
++			}
+ 		}
+ 	}
+ 	os.WriteFile(filepath.Join(dir, "bad"), []byte("not an image"), 0644)
+@@ -85,4 +90,10 @@ func TestMakeJacket(t *testing.T) {
+ 	if _, err := os.Stat(filepath.Join(dir, "x.png")); err == nil {
+ 		t.Fatal("output written for a bad image")
+ 	}
++	if _, err := os.Stat(filepath.Join(dir, "x_L.png")); err == nil {
++		t.Fatal("large output written for a bad image")
++	}
++	if got := LargeJacketPath("jkt/SLUS_203.12.png"); got != "jkt/SLUS_203.12_L.png" {
++		t.Fatal(got)
++	}
+ }
+diff --git a/internal/prep/scan.go b/internal/prep/scan.go
+index 6f782cc..5e60a93 100644
+--- a/internal/prep/scan.go
++++ b/internal/prep/scan.go
+@@ -264,13 +264,13 @@ func Run(o Options) (Result, error) {
+ 		}
+ 		jkt := filepath.Join(served, "jkt", e.Info.ID+".png")
+ 		if src := FindArt(o.ARTDir, e.Info.ID, e.Host); src != "" {
+-			if fresh(jkt, src) || MakeJacket(src, jkt) == nil {
++			if fresh(jkt, src) && fresh(LargeJacketPath(jkt), src) || MakeJacket(src, jkt) == nil {
+ 				e.Jacket = true
+ 			} else {
+ 				log.Printf("prep: jacket for %s from %s failed", e.Info.ID, src)
+ 			}
+-		} else if _, err := os.Stat(jkt); err == nil {
+-			e.Jacket = true // downloaded earlier
++		} else if bothJackets(jkt) {
++			e.Jacket = true // downloaded earlier (a cache without the large one downloads again)
+ 		}
+ 	}
+ 	newCache := map[string]entry{}
+@@ -330,7 +330,7 @@ func Run(o Options) (Result, error) {
+ 	for i := range entries {
+ 		e := &entries[i]
+ 		if e.Err == "" && !e.Jacket {
+-			if _, err := os.Stat(filepath.Join(served, "jkt", e.Info.ID+".png")); err == nil {
++			if bothJackets(filepath.Join(served, "jkt", e.Info.ID+".png")) {
+ 				e.Jacket = true
+ 			}
+ 		}
+@@ -338,6 +338,13 @@ func Run(o Options) (Result, error) {
+ 	return res, writeAtomic(filepath.Join(served, "manifest.txt"), o.manifest(entries, launcher))
+ }
+ 
++// bothJackets reports whether the list jacket and its large cover exist.
++func bothJackets(jkt string) bool {
++	_, err1 := os.Stat(jkt)
++	_, err2 := os.Stat(LargeJacketPath(jkt))
++	return err1 == nil && err2 == nil
++}
++
+ // fresh reports whether dst exists and is newer than src.
+ func fresh(dst, src string) bool {
+ 	d, err1 := os.Stat(dst)

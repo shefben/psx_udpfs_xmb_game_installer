@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Generate the embedded jacket PNGs (74x108, 8-bit RGB, no interlace).
+"""Generate the embedded jacket PNGs (8-bit RGB, no interlace).
 
-74x108 is the jacket size PSX-XMB-Manager writes for DESR channels.
+Sizes as PSX-XMB-Manager writes them for DESR channels: res/jkt_001.png
+140x200 (large cover), res/jkt_002.png 74x108 (XMB list cover). Also the
+blank 640x350 page the default res/man.xml points at.
 The images are deterministic so rebuilding never changes their bytes.
 Only the standard library is used (zlib + struct).
 """
@@ -10,7 +12,6 @@ import struct
 import sys
 import zlib
 
-W, H = 74, 108
 
 # 5x7 glyphs, rows top to bottom, 5 bits each (MSB = left).
 FONT = {
@@ -25,7 +26,7 @@ FONT = {
 }
 
 
-def png(pixels):
+def png(pixels, W, H):
     raw = b"".join(b"\x00" + bytes(row) for row in pixels)
 
     def chunk(t, d):
@@ -38,7 +39,7 @@ def png(pixels):
             + chunk(b"IEND", b""))
 
 
-def render(top, bottom, lines):
+def render(top, bottom, lines, W=74, H=108, scale=2):
     px = []
     for y in range(H):
         t = y / (H - 1)
@@ -56,7 +57,6 @@ def render(top, bottom, lines):
         for x in (0, 1, W - 2, W - 1):
             put(x, y, (220, 220, 220))
 
-    scale = 2
     y0 = (H - len(lines) * 8 * scale) // 2
     for li, text in enumerate(lines):
         width = len(text) * 6 * scale - scale
@@ -70,17 +70,20 @@ def render(top, bottom, lines):
                                 put(x0 + (ci * 6 + rx) * scale + dx,
                                     y0 + (li * 8 + ry) * scale + dy,
                                     (255, 255, 255))
-    return png([bytes(r) for r in px])
+    return png([bytes(r) for r in px], W, H)
 
 
 def main():
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
+    game = ((20, 40, 110), (5, 10, 40), ["PS2", "GAME"])
+    inst = ((10, 90, 60), (5, 25, 20), ["UDPFS", "INST"])
     out = {
-        "game/default_jkt_001.png": render((20, 40, 110), (5, 10, 40), ["PS2", "GAME"]),
-        "installer/jkt_001.png": render((10, 90, 60), (5, 25, 20), ["UDPFS", "INST"]),
+        "game/default_jkt_001.png": render(*game, W=140, H=200, scale=4),
+        "game/default_jkt_002.png": render(*game),
+        "installer/jkt_001.png": render(*inst, W=140, H=200, scale=4),
+        "installer/jkt_002.png": render(*inst),
+        "manual/blank.png": png([bytes([16, 16, 24] * 640)] * 350, 640, 350),
     }
-    out["game/default_jkt_002.png"] = out["game/default_jkt_001.png"]
-    out["installer/jkt_002.png"] = out["installer/jkt_001.png"]
     for rel, data in out.items():
         p = os.path.join(root, rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)

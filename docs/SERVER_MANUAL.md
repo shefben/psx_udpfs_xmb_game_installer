@@ -50,7 +50,7 @@ itself; for blocks it cannot unpack, the server unpacks them instead.
 | `cfg = CFG` | OPL per-game settings, `<GAME-ID>.cfg` (e.g. `SLUS_203.12.cfg`). Copied to the DESR's OPL folder at install, and only if OPL has none there yet. Its `Title=` line is used as the game title. |
 | `art = ART` | Covers: `<GAME-ID>_COV.png/.jpg`, `<GAME-ID>_COV2.*` or `<GAME-ID>.*` |
 | `gamelist = GameListPS2.txt` | List of game IDs and names (PFS-BatchKit-Manager format), used for titles |
-| `gamedb = PS2DB.xml` | Game database (PFS-BatchKit-Manager `BAT\PS2DB.xml`). Adds the release date, developer, publisher and genre shown in the XMB game info. |
+| `gamedb = PS2DB.xml` | Game database (PFS-BatchKit-Manager `BAT\PS2DB.xml`). Adds the release date, developer, publisher and genre shown in the XMB game info. A game not in the database gets its install date as the release date. |
 | `download_covers = yes` | Downloads covers missing from `art` (from xlenore/ps2-covers on GitHub) |
 
 **Title order:** `Title=` in the game's CFG, then the game list, then the
@@ -58,8 +58,9 @@ file name. Trailing tags such as `(USA)` and `[!]` are removed from file
 names.
 
 **Cover order:** the ART folder, then an image next to the game with the
-same name (`Game.iso` + `Game.png`), then a download. Covers are
-resized for the XMB automatically. If the console reports "cover not
+same name (`Game.iso` + `Game.png`), then a download. Each cover is
+resized to the two sizes the DESR XMB uses: 140x200 (`jkt_001`) and
+74x108 (`jkt_002`), kept in `udpfsd-cache/served/jkt/`. If the console reports "cover not
 found on server", restart the server so it rebuilds them.
 
 ### Files the DESR receives
