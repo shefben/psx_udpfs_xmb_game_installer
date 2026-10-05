@@ -260,8 +260,31 @@ void ui_footer(const char *keys) {
   put_row(UI_ROWS - 1, buf, C_ACCENT, C_BG);
 }
 
-int ui_select(const char *title, const char *status, char rows[][UI_ROW_LEN],
-              int n, int start, const char *footer, int *key_out) {
+static volatile int wake_seq;
+
+void ui_wake(void) { wake_seq++; }
+
+/* ui_wait_button(), but 0 as soon as ui_wake() is called (wake != 0). */
+static int wait_button_or_wake(int wake, int seq) {
+  if (!wake)
+    return ui_wait_button();
+  for (;;) {
+    if (seq != wake_seq)
+      return 0;
+    if (!pad_open) {
+      ui_delay_ms(50);
+      continue; /* without a pad, wait for the wake only */
+    }
+    int b = ui_poll_button();
+    if (b)
+      return b;
+    ui_delay_ms(30);
+  }
+}
+
+static int select_impl(const char *title, const char *status, char rows[][UI_ROW_LEN],
+                       int n, int start, const char *footer, int *key_out, int wake) {
+  int seq = wake_seq;
   int idx = (start >= 0 && start < n) ? start : 0, top = 0, dirty = 1;
   if (key_out)
     *key_out = 0;
@@ -294,7 +317,9 @@ int ui_select(const char *title, const char *status, char rows[][UI_ROW_LEN],
       ui_footer(footer ? footer : "[Up/Down] move  [L1/R1] page  [X] select  [O] back");
       dirty = 0;
     }
-    int b = ui_wait_button();
+    int b = wait_button_or_wake(wake, seq);
+    if (wake && seq != wake_seq)
+      return UI_SELECT_WOKEN;
     if (n > 0 && (b & UI_UP)) {
       idx = (idx + n - 1) % n;
       dirty = 1;
@@ -316,6 +341,16 @@ int ui_select(const char *title, const char *status, char rows[][UI_ROW_LEN],
       return -1;
     }
   }
+}
+
+int ui_select(const char *title, const char *status, char rows[][UI_ROW_LEN],
+              int n, int start, const char *footer, int *key_out) {
+  return select_impl(title, status, rows, n, start, footer, key_out, 0);
+}
+
+int ui_select_live(const char *title, const char *status, char rows[][UI_ROW_LEN],
+                   int n, int start, const char *footer) {
+  return select_impl(title, status, rows, n, start, footer, NULL, 1);
 }
 
 static void print_block(int row, const char *text) {

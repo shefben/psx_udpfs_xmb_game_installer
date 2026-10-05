@@ -141,6 +141,16 @@ TEST(batch_from_manifest_duplicate_iso_and_zso) {
   CHECK_EQ_INT(batch_count_selected(e, 3), 1);
 }
 
+TEST(auto_start_only_when_idle_and_ready) {
+  CHECK(auto_start_due(1, 1, 1, 1, 0, 0));
+  CHECK(!auto_start_due(1, 1, 1, 1, 1, 0)); /* user already in the menu */
+  CHECK(!auto_start_due(1, 1, 1, 1, 0, 1)); /* only once */
+  CHECK(!auto_start_due(1, 0, 1, 1, 0, 0)); /* still discovering */
+  CHECK(!auto_start_due(1, 1, 0, 1, 0, 0)); /* no manifest */
+  CHECK(!auto_start_due(1, 1, 1, 0, 0, 0)); /* auto_install = no */
+  CHECK(!auto_start_due(0, 1, 1, 1, 0, 0)); /* HDD unusable */
+}
+
 TEST(batch_summary_mentions_opl_cfg_failure) {
   batch_entry_t e[1];
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);

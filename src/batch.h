@@ -67,6 +67,13 @@ void batch_mark_on_hdd(batch_entry_t *e, int n, const char *const *names, int nn
  * scanning (its manifest says scanning=1). */
 int auto_should_wait(int loaded, const manifest_t *m);
 
+/* The network comes up in the background, after the menu appears.
+ * Auto-install starts on its own once (udpfsd ready, manifest with
+ * auto_install, HDD usable), and only while nobody has used the menu:
+ * it never interrupts someone already managing games. */
+int auto_start_due(int hdd_ok, int net_ready, int manifest_loaded, int auto_install,
+                   int user_acted, int already_ran);
+
 typedef enum { AUTO_INSTALLER_OK = 0, AUTO_CREATE_INSTALLER, AUTO_STOP } auto_step_t;
 
 /* Auto mode only creates a missing installer partition; one that exists

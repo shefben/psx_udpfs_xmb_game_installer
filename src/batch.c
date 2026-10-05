@@ -62,6 +62,12 @@ int auto_should_wait(int loaded, const manifest_t *m) {
   return !loaded || !m || m->scanning;
 }
 
+int auto_start_due(int hdd_ok, int net_ready, int manifest_loaded, int auto_install,
+                   int user_acted, int already_ran) {
+  return hdd_ok && net_ready && manifest_loaded && auto_install && !user_acted &&
+         !already_ran;
+}
+
 auto_step_t auto_installer_step(int exists, int mounted) {
   if (!exists)
     return AUTO_CREATE_INSTALLER;

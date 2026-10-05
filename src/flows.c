@@ -379,7 +379,7 @@ static void batch_run_selected(int n, int allow_without_opl, const char *label) 
 
 void flow_batch_install(void) {
   if (g_app.net != NETWORK_READY) {
-    ui_message("Install All", "The network is not ready. See Network Settings.");
+    ui_message("Install All Games", network_not_ready_text());
     return;
   }
   int n = batch_load_entries("Install All Games");
@@ -477,6 +477,7 @@ static void auto_show(const char *title, const char *text, int ms) {
 }
 
 static void exit_to_system_menu(void) {
+  network_wait_idle();
   app_unmount();
   ui_pad_close();
   LoadExecPS2("rom0:OSDSYS", 0, NULL);

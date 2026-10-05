@@ -80,9 +80,13 @@ DESR. Back up the HDD partition table before the first run (e.g.
 1. **Copy** `desr-udpfs-installer-bootstrap.elf` to a USB stick and start
    it with wLaunchELF.
 
-2. **Network.** The installer uses a fixed IP (default `192.168.1.10`).
-   * If your PC is on `192.168.1.x`, nothing to do: the status line shows
-     `NETWORK_READY`.
+2. **Network.** The main menu appears at once; the installer looks for
+   udpfsd in the background (status line: `looking for udpfsd...`, up to
+   about 8 seconds). Installed Games, Remove Games, Repair and
+   Diagnostics work meanwhile, and without a server at all.
+   It uses a fixed IP (default `192.168.1.10`).
+   * If your PC is on `192.168.1.x`, nothing to do: the status line
+     changes to `NETWORK_READY`.
    * Otherwise the status shows `udpfsd not found`. Go to
      **Network Settings > Local IP**, set a free address in the PC's
      range (e.g. `192.168.0.200`; Left/Right picks a number, Up/Down
@@ -102,8 +106,9 @@ DESR. Back up the HDD partition table before the first run (e.g.
 
 4. **Install games.**
    * **Automatic** (`auto_install = yes`): start the ELF (or the
-     installer from the XMB). A 10-second countdown starts; press **O**
-     to cancel. Every game not yet on the HDD that fits is copied, read
+     installer from the XMB). When udpfsd answers, a 10-second countdown
+     starts; press **O** to cancel. (It only starts if you have not chosen
+     a menu entry yet.) Every game not yet on the HDD that fits is copied, read
      back, CRC-checked and given its own XMB channel. A summary shows for
      15 seconds, then the console returns to the XMB.
    * **Manual**: **Install All Games from the server** (Square toggles a

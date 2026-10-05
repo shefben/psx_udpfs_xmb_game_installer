@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "app_state.h"
+#include "batch.h"
 #include "browser.h"
 #include "diagnostics.h"
 #include "flows.h"
@@ -52,11 +53,7 @@ int main(int argc, char *argv[]) {
   (void)argv;
   ui_init();
   memset(&g_app, 0, sizeof(g_app));
-  app_boot();
-  /* udpfsd.cfg auto_install = yes: no input needed from here on. */
-  if (g_app.iop.hdd_ok && g_app.hdd_state == ERR_OK && g_app.net == NETWORK_READY &&
-      g_manifest_loaded && g_manifest.auto_install)
-    flow_auto_install();
+  app_boot(); /* the network keeps starting in the background */
   startup_notices();
 
   static char rows[9][UI_ROW_LEN] = {
@@ -70,18 +67,27 @@ int main(int argc, char *argv[]) {
       "Diagnostics",
       "Exit",
   };
-  int sel = 0;
+  int sel = 0, user_acted = 0, auto_ran = 0;
   for (;;) {
     int hdd_ok = g_app.iop.hdd_ok && g_app.hdd_state == ERR_OK;
+    /* udpfsd.cfg auto_install = yes: once the server answers, install
+     * without input - unless someone is already using the menu. */
+    if (auto_start_due(hdd_ok, g_app.net == NETWORK_READY, g_manifest_loaded,
+                       g_manifest_loaded && g_manifest.auto_install, user_acted, auto_ran)) {
+      auto_ran = 1;
+      flow_auto_install();
+    }
     enum {
       M_BROWSE, M_BATCH, M_INSTALLED, M_REMOVE, M_REPAIR, M_NET, M_SELF, M_DIAG, M_EXIT,
       M_COUNT
     };
-    int c = ui_select("Main menu", network_status_line(), rows, M_COUNT, sel,
-                      "[Up/Down] move  [X] select", NULL);
+    /* Returns early when the network state changes, to redraw it. */
+    int c = ui_select_live("Main menu", network_status_line(), rows, M_COUNT, sel,
+                           "[Up/Down] move  [X] select");
     if (c < 0)
       continue;
     sel = c;
+    user_acted = 1;
     int needs_games = c == M_BROWSE || c == M_BATCH || c == M_INSTALLED || c == M_REMOVE ||
                       c == M_REPAIR;
     if (!hdd_ok && (needs_games || c == M_SELF)) {
@@ -125,6 +131,7 @@ int main(int argc, char *argv[]) {
       break;
     case M_EXIT:
       if (ui_confirm("Exit", "Return to the system menu?")) {
+        network_wait_idle();
         app_unmount();
         ui_pad_close();
         LoadExecPS2("rom0:OSDSYS", 0, NULL);

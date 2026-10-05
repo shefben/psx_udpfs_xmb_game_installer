@@ -57,6 +57,15 @@ int ui_held_buttons(void);
 int ui_select(const char *title, const char *status, char rows[][UI_ROW_LEN],
               int n, int start, const char *footer, int *key_out);
 
+/* Like ui_select (no Square/Start), but returns UI_SELECT_WOKEN as soon
+ * as ui_wake() is called, so the caller can redraw a changed status
+ * (background network start-up). */
+#define UI_SELECT_WOKEN (-2)
+int ui_select_live(const char *title, const char *status, char rows[][UI_ROW_LEN],
+                   int n, int start, const char *footer);
+/* Wake a waiting ui_select_live(); safe to call from another thread. */
+void ui_wake(void);
+
 /* Show lines and wait for any button. */
 void ui_message(const char *title, const char *text);
 

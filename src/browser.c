@@ -110,11 +110,7 @@ void browser_run(void) {
   int sel = 0;
   for (;;) {
     if (g_app.net != NETWORK_READY) {
-      ui_message("Install Games from UDPFS",
-                 "The network is not ready, so the game browser cannot run.\n\n"
-                 "Check that udpfsd is running on the PC, that UDP port 62966\n"
-                 "is allowed through its firewall, and the DESR IP in\n"
-                 "Network Settings. Then use Network Settings > Restart.");
+      ui_message("Install Games from UDPFS", network_not_ready_text());
       return;
     }
     int n = 0;

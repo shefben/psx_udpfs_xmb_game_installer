@@ -79,8 +79,14 @@ DESR SIDE
      (e.g. 192.168.0.200: Left/Right selects a digit, Up/Down changes it,
      X accepts), then choose "Save and restart network".
 
+   The main menu appears at once; the installer looks for udpfsd in the
+   background (top line: "looking for udpfsd..."), so Installed Games,
+   Remove Games, Repair and Diagnostics work even without the server.
+
 3. With auto_install = yes (the default) the rest is automatic:
-   - a 10-second countdown starts (press O to cancel and use the menu);
+   - when udpfsd answers, a 10-second countdown starts (press O to
+     cancel and use the menu). It only starts if no menu entry was
+     chosen yet;
    - the installer creates its own XMB channel, installs OPL if missing,
      then copies every game that is not on the DESR yet and fits;
    - every game is read back and checked before its XMB icon is made;

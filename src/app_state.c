@@ -51,6 +51,7 @@ void app_mount(void) {
 }
 
 void app_boot(void) {
+  network_wait_idle(); /* never reset the IOP under the network thread */
   ui_pad_close();
   app_unmount();
   g_app.net = NETWORK_DOWN;
@@ -67,5 +68,5 @@ void app_boot(void) {
     settings_parse(NULL, &g_app.settings);
 
   ui_pad_open();
-  network_start();
+  network_start(); /* background: the menu does not wait for udpfsd */
 }
