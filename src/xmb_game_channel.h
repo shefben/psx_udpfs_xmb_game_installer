@@ -5,6 +5,7 @@
 
 #include "errors.h"
 #include "game_pair.h"
+#include "xmb_text.h"
 #include "hdl_plan.h"
 #include "iso9660.h"
 #include "manifest.h"
@@ -91,6 +92,10 @@ inst_err_t game_plan_from_manifest(const manifest_entry_t *m, game_plan_t *p);
  * image at the journal's source path (server must be up) and sets
  * p->resume. game_install() re-checks everything before writing. */
 inst_err_t game_resume_plan(const char *hidden, game_plan_t *p, int *rc_out);
+
+/* XMB game info (release date, developer, publisher, genre) that udpfsd
+ * prepared from its game database; 0 if none (server down, no entry). */
+int game_load_info(const char *boot_id, xmb_game_info_t *gi);
 
 /* XMB cover for a game: udpfsd's prepared jacket, then <source>.png, then
  * the built-in default. *owned (if set) must be freed. Returns where it

@@ -8,7 +8,7 @@
 
 /* udpfsd's prepared game list, udpfs:/.udpfsd/manifest.txt:
  *   udpfsd-manifest 1 [launcher=<sha256 hex>:<bytes>] [opl=<sha256 hex>:<bytes>]
- *                     [auto=0|1] [scanning=1]
+ *                     [auto=0|1] [poweroff=1] [scanning=1]
  *   path \t status \t id \t title \t bytes \t disc \t layer1 \t jacket \t cfg
  * status is "ok" or "invalid:<reason>"; "-" marks an empty field. */
 
@@ -37,6 +37,7 @@ typedef struct {
   char opl_sha[65];
   uint32_t opl_size;
   int auto_install;
+  int power_off; /* udpfsd.cfg power_off_after_install: switch off after auto-install */
   int scanning; /* server still preparing: no entries yet */
   int n, n_bad;
   manifest_entry_t e[MANIFEST_MAX];

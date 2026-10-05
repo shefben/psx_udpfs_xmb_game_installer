@@ -1,10 +1,12 @@
 #include <kernel.h>
+#include <libpwroff.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
+#include <hdd-ioctl.h>
 #include <io_common.h>
 
 #include "app_state.h"
@@ -26,6 +28,10 @@
 #include "ui.h"
 #include "util.h"
 #include "xmb_installer_app.h"
+
+static void auto_show(const char *title, const char *text, int ms);
+static void power_off_now(void);
+static int power_off_countdown(const char *title);
 
 /* ------------------------------------------------------------------ */
 /* Install progress screen                                             */
@@ -482,18 +488,34 @@ void flow_batch_install(void) {
       return;
     allow_without_opl = 1;
   }
-  char txt[300];
-  snprintf(txt, sizeof(txt),
-           "Install %d game(s), one after another (%lu MiB).\n\n"
-           "Each game is copied, read back and CRC-checked before its XMB\n"
-           "channel is created. Hold SELECT + O to abort the current game.",
-           batch_count_selected(batch, n), (unsigned long)batch_needed_mb(batch, n));
-  if (!ui_confirm("Install All Games", txt))
-    return;
+  /* Confirm; Square toggles switching the console off when done. */
+  int power_off = g_manifest_loaded && g_manifest.power_off;
+  for (;;) {
+    ui_header("Install All Games", NULL);
+    ui_at(3, " Install %d game(s), one after another (%lu MiB).",
+          batch_count_selected(batch, n), (unsigned long)batch_needed_mb(batch, n));
+    ui_at(5, " Each game is copied, read back and CRC-checked before its XMB");
+    ui_at(6, " channel is created. Hold SELECT + O to abort the current game.");
+    ui_at(8, " When all games are done:  %s",
+          power_off ? "switch the DESR OFF" : "stay on (show the summary)");
+    ui_footer("[X] install   [Square] power off when done: on/off   [O] back");
+    int b = ui_wait_button();
+    if (b & (UI_CIRCLE | UI_TRIANGLE))
+      return;
+    if (b & UI_SQUARE)
+      power_off = !power_off;
+    if (b & UI_CROSS)
+      break;
+  }
 
   batch_run_selected(n, allow_without_opl, "Install All");
   static char summary[4096];
   batch_summary(batch, n, summary, sizeof(summary));
+  if (power_off) {
+    auto_show("Install All Games - summary", summary, 15000);
+    if (power_off_countdown("Install All Games"))
+      power_off_now();
+  }
   ui_text_view("Install All Games - summary", summary);
 }
 
@@ -510,6 +532,35 @@ static void auto_show(const char *title, const char *text, int ms) {
   }
   ui_footer("[any button] continue");
   ui_wait_button_timeout(ms);
+}
+
+/* Switch the console off cleanly: no copy is running (callers are past
+ * their install loop), PFS files closed and unmounted, HDD cache flushed,
+ * DEV9 (HDD + network) off, then the power. */
+static void power_off_now(void) {
+  network_wait_idle();
+  ui_header("Power off", "Switching the DESR off...");
+  app_unmount();
+  fileXioDevctl("pfs:", PDIOC_CLOSEALL, NULL, 0, NULL, 0);
+  fileXioDevctl("hdd0:", HDIOC_FLUSH, NULL, 0, NULL, 0);
+  fileXioDevctl("dev9x:", DDIOC_OFF, NULL, 0, NULL, 0);
+  ui_pad_close();
+  poweroffShutdown();
+  for (;;)
+    ui_delay_ms(1000);
+}
+
+/* Last chance to keep the console on: any button cancels (returns 0). */
+static int power_off_countdown(const char *title) {
+  for (int s = 15; s > 0; s--) {
+    char st[64];
+    snprintf(st, sizeof(st), "Switching off in %d s - any button cancels", s);
+    ui_header(title, st);
+    ui_at(4, " All games are done. The DESR switches itself off.");
+    if (ui_wait_button_timeout(1000))
+      return 0;
+  }
+  return 1;
 }
 
 static void exit_to_system_menu(void) {
@@ -617,6 +668,9 @@ void flow_auto_install(void) {
   static char summary[4096];
   batch_summary(batch, n, summary, sizeof(summary));
   auto_show("Auto-install finished", summary, 15000);
+  /* udpfsd.cfg power_off_after_install = yes: switch off (cancellable). */
+  if (g_manifest.power_off && power_off_countdown("Auto-install finished"))
+    power_off_now();
   exit_to_system_menu();
 }
 

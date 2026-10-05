@@ -265,6 +265,23 @@ size_t game_pair_details(const char *visible, const char *hidden, char *out, siz
 /* Jacket: udpfsd's prepared jkt/<BOOT_ID>.png, then udpfs:/ART/<BOOT_ID>.png,
  * then <source>.png, then the built-in default. Returns where it came
  * from (install_report_t.jacket). */
+int game_load_info(const char *boot_id, xmb_game_info_t *gi) {
+  if (g_app.net != NETWORK_READY || !boot_id_is_valid(boot_id))
+    return 0;
+  char path[64];
+  snprintf(path, sizeof(path), MANIFEST_DIR "/info/%s.txt", boot_id);
+  void *buf = NULL;
+  int n = file_load(path, &buf, 2048);
+  int ok = 0;
+  if (n > 0) {
+    char *s = buf;
+    s[n < 2048 ? n : 2047] = 0;
+    ok = xmb_game_info_parse(s, gi) > 0;
+  }
+  free(buf);
+  return ok;
+}
+
 const char *game_load_jacket(const char *boot_id, const char *source_path,
                                const uint8_t **data, uint32_t *size, void **owned) {
   char path[SOURCE_PATH_MAX + 8];
@@ -421,8 +438,10 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
            sizeof(j->launcher_source));
   stage(ui, rep, STAGE_CREATING_CHANNEL);
   char info[1024];
-  uint32_t info_len = (uint32_t)xmb_game_info_sys(info, sizeof(info), title,
-                                                  j->startup_id);
+  xmb_game_info_t gi;
+  int have_gi = game_load_info(j->startup_id, &gi);
+  uint32_t info_len = (uint32_t)xmb_game_info_sys_ex(info, sizeof(info), title, j->startup_id,
+                                                     have_gi ? &gi : NULL);
   const uint8_t *jkt;
   uint32_t jkt_size;
   void *jkt_owned;

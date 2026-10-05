@@ -40,6 +40,9 @@ PC SIDE
 2. Put your games in it:
      DVD games (.iso or .zso)  ->  udpfsd\DVD
      CD games  (.iso or .zso)  ->  udpfsd\CD
+   Optional: game info shown in the XMB (release date, developer,
+             genre): copy PFS-BatchKit-Manager's BAT\PS2DB.xml next to
+             udpfsd and set gamedb = PS2DB.xml in udpfsd.cfg.
    Optional: OPL game settings (<GAME-ID>.cfg) -> udpfsd\CFG,
              covers (<GAME-ID>_COV.png / .jpg)  -> udpfsd\ART.
    Covers you don't have are downloaded automatically.
@@ -93,7 +96,10 @@ DESR SIDE
      made. To save time, press START during "validating" to skip this
      check; the game is still installed and marked "NOT VERIFIED", and
      Installed Games > the game > Verify game data checks it later;
-   - a summary is shown, then the DESR returns to the XMB.
+   - a summary is shown, then the DESR returns to the XMB (or switches
+     itself off with power_off_after_install = yes in udpfsd.cfg; any
+     button within 15 s cancels). Install All asks the same: Square on
+     its confirm screen toggles "power off when done".
    Do not switch the DESR off while it is copying.
 
    With auto_install = no, use the menu:

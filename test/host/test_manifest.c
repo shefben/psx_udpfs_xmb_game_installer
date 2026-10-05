@@ -49,6 +49,16 @@ TEST(manifest_header_variants) {
   CHECK_EQ_INT(manifest_parse("", 0, &m), -1);
 }
 
+TEST(manifest_poweroff_flag) {
+  static manifest_t m;
+  const char *t = "udpfsd-manifest 1 auto=1 poweroff=1\n";
+  CHECK_EQ_INT(manifest_parse(t, strlen(t), &m), 0);
+  CHECK(m.auto_install && m.power_off);
+  t = "udpfsd-manifest 1 auto=1\n";
+  CHECK_EQ_INT(manifest_parse(t, strlen(t), &m), 0);
+  CHECK(!m.power_off);
+}
+
 TEST(manifest_rejects_bad_lines) {
   const char *t =
       "udpfsd-manifest 1 auto=0\n"

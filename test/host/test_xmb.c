@@ -99,6 +99,30 @@ TEST(info_sys_retitle_keeps_every_other_line) {
   CHECK_EQ_INT(xmb_info_sys_get(buf, "missing", t, sizeof(t)), -1);
 }
 
+TEST(info_sys_game_info_fields) {
+  xmb_game_info_t gi;
+  const char *txt = "release_date=20011217\r\ndeveloper=Square Co. Ltd\ngenre=RPG\nnote=ignored\n"
+                    "publisher=Square = Enix\n";
+  CHECK_EQ_INT(xmb_game_info_parse(txt, &gi), 4);
+  CHECK_STR(gi.release_date, "20011217");
+  CHECK_STR(gi.publisher, "Square = Enix");
+  char buf[1024];
+  size_t n = xmb_game_info_sys_ex(buf, sizeof(buf), "Final Fantasy X", "SLUS_203.12", &gi);
+  CHECK(n > 0);
+  CHECK(strstr(buf, "release_date = 20011217\r\n") != NULL);
+  CHECK(strstr(buf, "developer_id = Square Co. Ltd\r\n") != NULL);
+  CHECK(strstr(buf, "publisher_id = Square = Enix\r\n") != NULL);
+  CHECK(strstr(buf, "genre = RPG\r\n") != NULL);
+  /* bad date: left empty; no info: same bytes as the plain template */
+  xmb_game_info_parse("release_date=2001\n", &gi);
+  xmb_game_info_sys_ex(buf, sizeof(buf), "X", "SLUS_203.12", &gi);
+  CHECK(strstr(buf, "release_date =\r\n") != NULL);
+  char plain[1024];
+  xmb_game_info_sys(plain, sizeof(plain), "X", "SLUS_203.12");
+  xmb_game_info_sys_ex(buf, sizeof(buf), "X", "SLUS_203.12", NULL);
+  CHECK_STR(buf, plain);
+}
+
 TEST(info_sys_unknown_region_still_renders) {
   char buf[2048];
   CHECK(xmb_game_info_sys(buf, sizeof(buf), "X", "ABCD_123.45") > 0);

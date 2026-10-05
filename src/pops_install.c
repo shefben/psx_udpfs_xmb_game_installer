@@ -286,7 +286,10 @@ void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep)
     goto out;
   }
   char info[1024];
-  uint32_t info_len = (uint32_t)xmb_game_info_sys(info, sizeof(info), p->title, p->vcd.boot_id);
+  xmb_game_info_t gi;
+  int have_gi = game_load_info(p->vcd.boot_id, &gi);
+  uint32_t info_len = (uint32_t)xmb_game_info_sys_ex(info, sizeof(info), p->title, p->vcd.boot_id,
+                                                     have_gi ? &gi : NULL);
   const uint8_t *jkt;
   uint32_t jkt_size;
   rep->jacket = game_load_jacket(p->vcd.boot_id, p->source_path, &jkt, &jkt_size, &jkt_owned);
