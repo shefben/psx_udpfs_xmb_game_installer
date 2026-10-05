@@ -44,3 +44,19 @@ tools/      fetch, sign, fixture and asset scripts
 patches/    patches applied to upstream build copies
 assets/     embedded jacket PNGs
 ```
+
+## Credits
+
+| Component | Author / project |
+|---|---|
+| UDPFS / udpfsd, Neutrino network modules (smap, ministack, udpfs_ioman) | Maximus32 |
+| Open PS2 Loader, OPL-Launcher | ps2homebrew and contributors |
+| APA/HDL driver (`ps2hdd-hdl.irx`), `hdlfs.irx` | HDLGameInstaller (sp193) |
+| PS2SDK | ps2dev |
+| Cover art downloads | xlenore/ps2-covers |
+| Partition naming, CFG/ART layout, `GameListPS2.txt` | PFS-BatchKit-Manager (GDX-X) |
+
+Open PS2 Loader is distributed under the AFL-3.0 licence (shipped as
+`udpfsd/OPL-LICENSE.txt`). Pinned upstream revisions:
+[reference/REVISIONS.txt](reference/REVISIONS.txt) and
+[provenance](docs/PROVENANCE.md).

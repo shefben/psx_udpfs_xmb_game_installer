@@ -118,3 +118,19 @@ IF SOMETHING GOES WRONG
                            delete and reinstall them.
   Anything else            Diagnostics on the DESR shows PASS / FAIL for
                            every part.
+
+
+CREDITS
+-------
+
+  UDPFS / udpfsd and the Neutrino
+  network modules (smap, ministack)   Maximus32
+  Open PS2 Loader, OPL-Launcher       ps2homebrew and contributors
+  APA/HDL driver (ps2hdd-hdl), hdlfs  HDLGameInstaller (sp193)
+  PS2SDK                              ps2dev
+  Cover art downloads                 xlenore/ps2-covers
+  Partition naming, CFG/ART layout,
+  GameListPS2.txt                     PFS-BatchKit-Manager (GDX-X)
+
+Open PS2 Loader is distributed under the AFL-3.0 licence
+(PC\udpfsd\OPL-LICENSE.txt).
