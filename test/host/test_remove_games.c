@@ -1,4 +1,5 @@
 #include "../../src/remove_games.h"
+#include "../../src/source.h"
 #include "test.h"
 
 static remove_entry_t rent(const char *hidden, pair_state_t st) {
@@ -56,6 +57,16 @@ TEST(remove_summary_counts_and_lists_failures) {
   CHECK(strstr(sum, "FAILED    SLUS-20313..B") != NULL);
   CHECK(strstr(sum, "__.SLUS-20313..B still exists (code -5)") != NULL);
   CHECK(strstr(sum, "SLUS-20314..C") == NULL);
+}
+
+TEST(backup_path_is_fat_safe_and_opl_style) {
+  char p[SOURCE_PATH_MAX];
+  CHECK_EQ_INT(backup_path(p, sizeof(p), "mass0:/", 1, "SLUS_203.12", "Final Fantasy X", 0, ".iso"), 0);
+  CHECK_STR(p, "mass0:/DVD/SLUS_203.12.Final Fantasy X.iso");
+  backup_path(p, sizeof(p), "mass0:/", 0, "SCUS_944.26", "A/B: C*D?\"<>|", 2, ".iso");
+  CHECK_STR(p, "mass0:/CD/SCUS_944.26.A_B_ C_D_____ (2).iso");
+  backup_path(p, sizeof(p), "mass0:/", -1, "SLUS_005.94", "  ", 0, ".VCD");
+  CHECK_STR(p, "mass0:/POPS/SLUS_005.94.VCD"); /* PS1: POPStarter folder, no title */
 }
 
 TEST(remove_summary_truncates_safely) {

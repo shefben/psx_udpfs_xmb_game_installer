@@ -113,7 +113,9 @@ DESR SIDE
                                          USB stick
      Installed Games / Repair XMB Channels   delete, fix, reinstall,
                                          rename the XMB title, resume an
-                                         interrupted copy, verify, details
+                                         interrupted copy, verify, details,
+                                         back up to USB (DVD\ CD\ or POPS\
+                                         folder, OPL-style names)
      Remove Games                        delete several games at once
                                          (Square toggles, Start = all,
                                          hold R1 + X to confirm)

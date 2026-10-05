@@ -10,7 +10,9 @@
 #include <io_common.h>
 
 #include "app_state.h"
+#include "backup.h"
 #include "batch.h"
+#include "browser.h"
 #include "flows.h"
 #include "hdd_partitions.h"
 #include "hdl_install.h"
@@ -796,6 +798,43 @@ static void do_create_channel(const char *hidden) {
 #define ROW_VERIFY (1 << 16) /* menu rows, not pair_action_t values */
 #define ROW_RENAME (1 << 17)
 #define ROW_RESUME (1 << 18)
+#define ROW_BACKUP (1 << 19)
+
+/* ps1: "name" is the PS1 channel, else the hidden PS2 partition. */
+static void do_backup(const char *name, int ps1) {
+  if (!g_app.iop.usb_ok) {
+    ui_message("Back up to USB", "The USB drivers failed to load (see Diagnostics).");
+    return;
+  }
+  char txt[300];
+  snprintf(txt, sizeof(txt),
+           "Copy %s to the USB drive (%s/%s folder)?\n\n"
+           "Use a FAT32 or exFAT drive; games over 4 GiB need exFAT.\n"
+           "The copy is checked against the HDD data afterwards.",
+           name + 3, USB_ROOT, ps1 ? "POPS" : "DVD or CD");
+  if (!ui_confirm("Back up to USB", txt))
+    return;
+  progress_ctx_t ctx = {NULL, STAGE_PREPARING, 0, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify};
+  install_report_t rep;
+  ui_header("Back up to USB", name);
+  ui_footer("Do not unplug the USB drive.");
+  if (ps1)
+    backup_ps1_game(name, &ui, &rep);
+  else
+    backup_ps2_game(name, &ui, &rep);
+  if (rep.err == ERR_USER_ABORT) {
+    ui_message("Back up to USB", "Stopped. The partial file was removed.");
+  } else if (rep.err) {
+    flow_show_error("Backup did not complete.", &rep,
+                    "the partial file was removed; the game on the HDD is unchanged.");
+  } else {
+    snprintf(txt, sizeof(txt), "Saved as\n  %s\n\n%llu bytes, CRC-32 %08lx, read back: %s.",
+             rep.detail, (unsigned long long)rep.bytes_written, (unsigned long)rep.source_crc32,
+             rep.verify_skipped ? "SKIPPED" : "equal");
+    ui_message("Back up to USB", txt);
+  }
+}
 
 
 static void do_resume(const char *hidden) {
@@ -887,8 +926,8 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   pair_state_t st = pair_classify(&f);
   unsigned acts = pair_actions(st);
 
-  static char rows[10][UI_ROW_LEN];
-  int map[10], n = 0;
+  static char rows[11][UI_ROW_LEN];
+  int map[11], n = 0;
 #define ADD(a, label)                                                          \
   if (acts & (a)) {                                                            \
     str_copy(rows[n], label, UI_ROW_LEN);                                      \
@@ -911,6 +950,10 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   if (f.visible_exists && f.visible_valid) {
     str_copy(rows[n], "Rename (title shown in the XMB)", UI_ROW_LEN);
     map[n++] = ROW_RENAME;
+  }
+  if (f.hidden_exists && f.hidden_header_valid) {
+    str_copy(rows[n], "Back up to USB (.iso)", UI_ROW_LEN);
+    map[n++] = ROW_BACKUP;
   }
   if (pair_can_verify(&f)) {
     str_copy(rows[n], f.verify_skipped ? "Verify game data (was skipped)"
@@ -936,6 +979,9 @@ void flow_pair_actions(const char *visible, const char *hidden) {
     break;
   case ROW_RESUME:
     do_resume(hidden);
+    break;
+  case ROW_BACKUP:
+    do_backup(hidden, 0);
     break;
   case 0: {
     static char details[2048];
@@ -1037,12 +1083,14 @@ void flow_install_ps1(const char *path) {
 }
 
 void flow_ps1_actions(const char *partition) {
-  static char rows[3][UI_ROW_LEN] = {"Rename (title shown in the XMB)", "Delete game",
-                                     "Back"};
-  int c = ui_select("PS1 game", partition, rows, 3, 0, NULL, NULL);
+  static char rows[4][UI_ROW_LEN] = {"Rename (title shown in the XMB)",
+                                     "Back up to USB (.VCD)", "Delete game", "Back"};
+  int c = ui_select("PS1 game", partition, rows, 4, 0, NULL, NULL);
   if (c == 0) {
     do_rename(partition);
   } else if (c == 1) {
+    do_backup(partition, 1);
+  } else if (c == 2) {
     char txt[200];
     snprintf(txt, sizeof(txt), "The PS1 game partition will be PERMANENTLY removed:\n\n  %s\n\n"
                                "Its memory cards in __common/POPS stay.", partition);

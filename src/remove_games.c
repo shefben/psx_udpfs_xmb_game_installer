@@ -39,6 +39,26 @@ void remove_format_row(const remove_entry_t *e, char *out, size_t outsz) {
            pair_state_label(e->state));
 }
 
+int backup_path(char *out, size_t outsz, const char *root, int dvd, const char *boot_id,
+                const char *title, int n, const char *ext) {
+  char t[64];
+  size_t k = 0;
+  for (const char *p = title; *p && k < sizeof(t) - 1; p++)
+    t[k++] = (strchr("\\/:*?\"<>|", *p) || (unsigned char)*p < 0x20) ? '_' : *p;
+  t[k] = 0;
+  while (k > 0 && (t[k - 1] == ' ' || t[k - 1] == '.'))
+    t[--k] = 0;
+  const char *s = t;
+  while (*s == ' ')
+    s++;
+  char num[16] = "";
+  if (n > 0)
+    snprintf(num, sizeof(num), " (%d)", n);
+  int r = snprintf(out, outsz, "%s%s/%s%s%s%s%s", root, dvd < 0 ? "POPS" : dvd ? "DVD" : "CD",
+                   boot_id, *s ? "." : "", s, num, ext);
+  return r < 0 || (size_t)r >= outsz ? -1 : 0;
+}
+
 size_t remove_summary(const remove_entry_t *e, int n, char *out, size_t outsz) {
   int done = 0, failed = 0;
   for (int i = 0; i < n; i++) {

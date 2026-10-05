@@ -41,4 +41,11 @@ void remove_format_row(const remove_entry_t *e, char *out, size_t outsz);
 /* Summary text: counts, then one line per selected entry. */
 size_t remove_summary(const remove_entry_t *e, int n, char *out, size_t outsz);
 
+/* Back up to USB: "<root>DVD|CD/<ID>.<title>[ (n)]<ext>" (OPL's USB
+ * layout; dvd < 0 = PS1: "<root>POPS/<ID>[.<title>]<ext>"). Characters
+ * FAT cannot store become '_'. n > 0 adds " (n)" for a name that is
+ * taken. Returns 0, or -1 if it does not fit. */
+int backup_path(char *out, size_t outsz, const char *root, int dvd, const char *boot_id,
+                const char *title, int n, const char *ext);
+
 #endif
