@@ -84,6 +84,7 @@ Run in this order. Nothing here creates or deletes a game partition.
 | D26 | Text readable on the DESR's TV output: bold letters, nothing cut off at the screen edges, colours as in `docs/ui-preview-*.png` | | NOT RUN |
 | D27 | Install speed: Diagnostics shows `PASS fileXio transfer buffer 64 KiB`; copy screen line `network / CRC / HDD write` MiB/s and validate line `HDD read / CRC` (16 KiB buffer: 3.5 MiB/s total, 64 KiB: 4.0) | note all four numbers | NOT RUN |
 | D17 | Remove one of two games, reboot | other game and installer still work | NOT RUN |
+| D28 | Remove Games: select 2 of 3 games (Square), hold R1 + X | summary `2 removed, 0 failed`; both `PP.` and `__.` partitions of each gone (Installed Games no longer lists them, free space grows); third game and installer still boot; O / no R1 removes nothing | NOT RUN |
 
 ### Acceptance chain for D4 / D5 (each must be observed)
 

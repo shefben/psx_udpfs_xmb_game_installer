@@ -29,6 +29,8 @@ void flow_batch_install(void);
 void flow_auto_install(void);
 
 void flow_installed_games(void);
+/* Select several installed games and delete both partitions of each. */
+void flow_remove_games(void);
 void flow_repair(void);
 void flow_network_settings(void);
 void flow_self_install(void);

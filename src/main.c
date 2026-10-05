@@ -59,10 +59,11 @@ int main(int argc, char *argv[]) {
     flow_auto_install();
   startup_notices();
 
-  static char rows[8][UI_ROW_LEN] = {
+  static char rows[9][UI_ROW_LEN] = {
       "Install Games from UDPFS",
       "Install All Games from the server",
       "Installed Games",
+      "Remove Games",
       "Repair XMB Channels",
       "Network Settings",
       "Install Installer as XMB Channel",
@@ -72,13 +73,17 @@ int main(int argc, char *argv[]) {
   int sel = 0;
   for (;;) {
     int hdd_ok = g_app.iop.hdd_ok && g_app.hdd_state == ERR_OK;
-    enum { M_BROWSE, M_BATCH, M_INSTALLED, M_REPAIR, M_NET, M_SELF, M_DIAG, M_EXIT, M_COUNT };
+    enum {
+      M_BROWSE, M_BATCH, M_INSTALLED, M_REMOVE, M_REPAIR, M_NET, M_SELF, M_DIAG, M_EXIT,
+      M_COUNT
+    };
     int c = ui_select("Main menu", network_status_line(), rows, M_COUNT, sel,
                       "[Up/Down] move  [X] select", NULL);
     if (c < 0)
       continue;
     sel = c;
-    int needs_games = c == M_BROWSE || c == M_BATCH || c == M_INSTALLED || c == M_REPAIR;
+    int needs_games = c == M_BROWSE || c == M_BATCH || c == M_INSTALLED || c == M_REMOVE ||
+                      c == M_REPAIR;
     if (!hdd_ok && (needs_games || c == M_SELF)) {
       ui_message("HDD unavailable",
                  "The internal HDD is not usable or a required HDD module failed\n"
@@ -102,6 +107,9 @@ int main(int argc, char *argv[]) {
       break;
     case M_INSTALLED:
       flow_installed_games();
+      break;
+    case M_REMOVE:
+      flow_remove_games();
       break;
     case M_REPAIR:
       flow_repair();

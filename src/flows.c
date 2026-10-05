@@ -16,6 +16,7 @@
 #include "network.h"
 #include "opl_dependency.h"
 #include "opl_launcher_payload.h"
+#include "remove_games.h"
 #include "settings.h"
 #include "transaction.h"
 #include "ui.h"
@@ -835,6 +836,102 @@ static void pair_list(const char *title, int only_problems) {
 }
 
 void flow_installed_games(void) { pair_list("Installed Games", 0); }
+
+/* ------------------------------------------------------------------ */
+/* Remove games (several at once)                                      */
+
+static remove_entry_t rm[MAX_PAIRS];
+static char rm_rows[MAX_PAIRS][UI_ROW_LEN];
+
+void flow_remove_games(void) {
+  int n = collect_pairs();
+  if (n < 0) {
+    ui_message("Remove Games", "Cannot read the HDD partition table.");
+    return;
+  }
+  if (n == 0) {
+    ui_message("Remove Games", "No installed games found.");
+    return;
+  }
+  for (int i = 0; i < n; i++)
+    remove_entry_init(&rm[i], pairs[i].visible, pairs[i].hidden, pairs[i].state);
+
+  /* Selection: Square toggles, Start selects all/none, X removes. */
+  int sel = 0;
+  for (;;) {
+    for (int i = 0; i < n; i++)
+      remove_format_row(&rm[i], rm_rows[i], UI_ROW_LEN);
+    uint32_t free_mb = 0;
+    hdd_space_mb(NULL, &free_mb, NULL);
+    char status[96];
+    snprintf(status, sizeof(status), "%d of %d selected, free %lu MiB",
+             remove_count_selected(rm, n), n, (unsigned long)free_mb);
+    int key = 0;
+    int c = ui_select("Remove Games", status, rm_rows, n, sel,
+                      "[Sq] toggle  [Start] all/none  [X] remove  [O] back", &key);
+    if (c < 0)
+      return;
+    sel = c;
+    if (key & UI_SQUARE) {
+      remove_toggle(&rm[c]);
+      continue;
+    }
+    if (key & UI_START) {
+      remove_toggle_all(rm, n);
+      continue;
+    }
+    if (remove_count_selected(rm, n) == 0) {
+      ui_message("Remove Games", "Nothing selected. Square selects a game.");
+      continue;
+    }
+    break;
+  }
+
+  int count = remove_count_selected(rm, n), listed = 0;
+  char txt[900];
+  int off = snprintf(txt, sizeof(txt),
+                     "%d game(s) will be PERMANENTLY removed (XMB channel and\n"
+                     "game data partitions):\n\n",
+                     count);
+  for (int i = 0; i < n && listed < 10; i++)
+    if (rm[i].selected) {
+      off += snprintf(txt + off, sizeof(txt) - off, "  %.50s\n", rm[i].visible + 3);
+      listed++;
+    }
+  if (count > listed)
+    snprintf(txt + off, sizeof(txt) - off, "  ... and %d more\n", count - listed);
+  if (!ui_confirm_destructive("Remove Games", txt))
+    return;
+
+  int idx = 0;
+  for (int i = 0; i < n; i++) {
+    remove_entry_t *e = &rm[i];
+    if (!e->selected)
+      continue;
+    char st[64];
+    snprintf(st, sizeof(st), "Removing %d/%d - do not power off", ++idx, count);
+    ui_header("Remove Games", st);
+    ui_at(4, " %s", e->visible + 3);
+    e->err = game_delete_pair(e->visible, e->hidden, &e->failed, &e->rc);
+    /* Check with the partition table that both are really gone. */
+    if (e->err == ERR_OK && hdd_exists(e->visible) != 0) {
+      e->err = ERR_PARTITION_DELETE;
+      e->failed = e->visible;
+    } else if (e->err == ERR_OK && hdd_exists(e->hidden) != 0) {
+      e->err = ERR_PARTITION_DELETE;
+      e->failed = e->hidden;
+    }
+    e->result = e->err == ERR_OK ? REMOVE_DONE : REMOVE_FAILED;
+  }
+
+  static char summary[4096];
+  size_t len = remove_summary(rm, n, summary, sizeof(summary));
+  uint32_t free_mb = 0;
+  hdd_space_mb(NULL, &free_mb, NULL);
+  snprintf(summary + len, sizeof(summary) - len, "\nFree space now: %lu MiB\n",
+           (unsigned long)free_mb);
+  ui_text_view("Remove Games - summary", summary);
+}
 
 void flow_repair(void) {
   if (g_app.app_mounted) {

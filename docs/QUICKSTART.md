@@ -123,6 +123,6 @@ DESR. Back up the HDD partition table before the first run (e.g.
 | "No games found on the server" | Check the game folder lines in `udpfsd.cfg` and the server log. |
 | "OPL runtime not found" | Keep `OPNPS2LD.ELF` next to udpfsd (shipped); if `__common/OPL/conf_hdd.cfg` names a partition that does not exist, fix or delete that file. |
 | A game shows `duplicate` | Two images have the same game ID (e.g. `.iso` and `.zso` of one game); only one is installed. |
-| A game shows `already on HDD` | Use **Installed Games** to delete it first if you want to reinstall. |
+| A game shows `already on HDD` | Use **Installed Games** (one game) or **Remove Games** (several: Square toggles, Start selects all, hold R1 + X) to delete it first if you want to reinstall. |
 | Install failed / power cut | **Repair XMB Channels** lists unfinished installs; delete and reinstall. |
 | Installer channel missing from the XMB after a reboot | Report it: this tests whether the DESR accepts the KELF signing mode (checklist D1/D2). |

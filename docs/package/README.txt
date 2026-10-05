@@ -94,6 +94,9 @@ DESR SIDE
                                          XMB, so you no longer need the
                                          USB stick
      Installed Games / Repair XMB Channels   delete, fix, reinstall
+     Remove Games                        delete several games at once
+                                         (Square toggles, Start = all,
+                                         hold R1 + X to confirm)
 
 4. Go back to the XMB (or restart the DESR). Each game and the installer
    ("UDPFS Game Installer") have their own icon. Selecting a game starts
