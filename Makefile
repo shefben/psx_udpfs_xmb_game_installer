@@ -31,7 +31,8 @@ BOOT_ELF := $(BUILD)/bootstrap/desr-udpfs-installer-bootstrap.elf
 DEV_ELF := $(BUILD)/dev/desr-udpfs-installer-dev.elf
 DRIVER := vendor/irx/ps2hdd-hdl.irx
 
-NEUTRINO_IRX := $(BUILD)/irx/smap.irx $(BUILD)/irx/ministack.irx $(BUILD)/irx/udpfs_ioman.irx
+NEUTRINO_IRX := $(BUILD)/irx/smap.irx $(BUILD)/irx/ministack.irx $(BUILD)/irx/udpfs_ioman.irx \
+                $(BUILD)/irx/hddpump.irx
 EE_DEPS := $(NEUTRINO_IRX) $(BUILD)/.driver-ok $(BUILD)/.refs-ok $(BUILD)/.gitid
 
 # KELF_MODE is part of every KELF's identity: switching it re-signs and
@@ -135,6 +136,12 @@ $(BUILD)/irx/smap.irx: $(BUILD)/neutrino/.patched
 $(BUILD)/irx/ministack.irx: $(BUILD)/neutrino/.patched
 	$(MAKE) -C $(BUILD)/neutrino/iop/ministack all DEBUG=0
 	@mkdir -p $(@D) && cp $(BUILD)/neutrino/iop/ministack/irx/ministack.irx $@
+
+# Our own IOP module (overlapped installs), built in a scratch copy.
+$(BUILD)/irx/hddpump.irx: $(wildcard iop/hddpump/src/*) iop/hddpump/Makefile
+	rm -rf $(BUILD)/hddpump && mkdir -p $(BUILD)/hddpump && cp -r iop/hddpump/. $(BUILD)/hddpump/
+	$(MAKE) -C $(BUILD)/hddpump
+	@mkdir -p $(@D) && cp $(BUILD)/hddpump/irx/hddpump.irx $@
 
 $(BUILD)/irx/udpfs_ioman.irx: $(BUILD)/neutrino/.patched
 	$(MAKE) -C $(BUILD)/neutrino/iop/udpfs all DEBUG=0 UDPFS_IOMAN=1

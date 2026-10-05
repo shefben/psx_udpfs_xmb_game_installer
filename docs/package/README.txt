@@ -163,6 +163,8 @@ IF SOMETHING GOES WRONG
   Copy failed / power cut  Installed Games > the game > Resume copy
                            continues where it stopped (the image must still
                            be at the same place); Install All resumes it too.
+  Install hangs or fails   Network Settings > Copy engine: basic (turns off
+  with the fast copy       the overlapped network + HDD copy), Save.
   Anything else            Diagnostics on the DESR shows PASS / FAIL for
                            every part.
 

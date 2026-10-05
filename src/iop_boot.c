@@ -36,6 +36,7 @@ IRX(usbd);
 IRX(bdm);
 IRX(bdmfs_fatfs);
 IRX(usbmass_bd);
+IRX(hddpump);
 
 /* ps2hdd-hdl.irx: -o 4 -n 128 (as proven by ps2-usbhdl/HDLGameInstaller). */
 static const char PS2HDD_ARGS[] = "-o\0"
@@ -106,6 +107,8 @@ void iop_boot_base(iop_status_t *st) {
   hdd_fail |= LOAD(st, ps2fs, sizeof(PS2FS_ARGS), PS2FS_ARGS);
   hdd_fail |= LOAD(st, hdlfs, 0, NULL);
   st->hdd_ok = !hdd_fail;
+  /* Optional: overlapped installs (iop/hddpump). */
+  st->pump_ok = st->hdd_ok && LOAD(st, hddpump, 0, NULL) == 0;
 
   int pad_fail = 0;
   pad_fail |= LOAD(st, sio2man, 0, NULL);

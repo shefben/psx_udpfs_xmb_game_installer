@@ -94,3 +94,7 @@ level unless stated otherwise.
   running; without it the default cover is used.
 * **Resume copy** continues from the last 256 MiB checkpoint and always
   reads the whole game back afterwards (START cannot skip that check).
+* **Fast copy (iop/hddpump)** is new and untested on hardware. It writes
+  through 4 IOP buffers of 128 KiB; if it cannot allocate two, or the
+  module does not load, the previous copy loop is used. Network Settings >
+  Copy engine: basic turns it off.

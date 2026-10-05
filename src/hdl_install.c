@@ -13,6 +13,7 @@
 #include "hdd_partitions.h"
 #include "hdl_install.h"
 #include "partname.h"
+#include "pump.h"
 #include "util.h"
 
 static uint8_t stream_buf[STREAM_BUF_SIZE] __attribute__((aligned(64)));
@@ -74,6 +75,93 @@ static void report(const stream_cb_t *cb, time_t start, time_t *last, uint64_t d
     *abort = 1;
 }
 
+int g_hdl_use_pump;
+
+#define PUMP_SLOT (128 * 1024)
+#define PUMP_SLOTS 4
+
+/* Copy loop with hddpump.irx: the IOP writes block n on its own thread
+ * while the EE reads block n+1 from the source (fileXio's IOP thread),
+ * so network and HDD work at the same time. hdl0: is already mounted.
+ * Returns 1 and fills *out when it ran, 0 if the pump is unavailable
+ * (nothing written; the caller uses its own loop). */
+static int stream_pumped(GameSource *src, uint64_t total, uint64_t start, uint32_t start_crc,
+                         const stream_cb_t *cb, hdl_result_t *out) {
+  uint32_t slot = 0;
+  if (!g_hdl_use_pump ||
+      pump_begin("hdl0:", (uint32_t)(start / ISO_SECTOR), PUMP_SLOT, PUMP_SLOTS, &slot) < 0)
+    return 0;
+  if (slot > STREAM_BUF_SIZE)
+    slot = STREAM_BUF_SIZE;
+  *out = res(ERR_OK, 0);
+  if (src->ops->seek(src, (int64_t)start, SRC_SEEK_SET) != (int64_t)start) {
+    out->err = ERR_SOURCE_READ;
+    pump_end(NULL);
+    return 1;
+  }
+  time_t t_start = time(NULL), last = 0;
+  uint64_t done = start, next_cp = start + STREAM_CHECKPOINT;
+  uint32_t crc = start_crc;
+  int abort = 0;
+  memset(&g_stream_timing, 0, sizeof(g_stream_timing));
+  while (done < total) {
+    uint32_t want = total - done > slot ? slot : (uint32_t)(total - done);
+    u64 t0 = GetTimerSystemTime();
+    inst_err_t e = source_read_exact(src, stream_buf, want);
+    if (e) {
+      out->err = e;
+      out->rc = src->last_rc;
+      break;
+    }
+    u64 t1 = GetTimerSystemTime();
+    crc = crc32_update(crc, stream_buf, want);
+    u64 t2 = GetTimerSystemTime();
+    /* Waits only while every IOP buffer is still queued for the HDD. */
+    int w = pump_put(stream_buf, want);
+    if (w < 0) {
+      out->err = ERR_HDL_WRITE;
+      out->rc = w;
+      break;
+    }
+    done += want;
+    g_stream_timing.read_ticks += t1 - t0;
+    g_stream_timing.crc_ticks += t2 - t1;
+    g_stream_timing.write_ticks += GetTimerSystemTime() - t2; /* HDD wait only */
+    g_stream_timing.bytes = done - start;
+    report(cb, t_start, &last, done, total, &abort);
+    if (done >= next_cp && done < total && cb && cb->checkpoint) {
+      next_cp = done + STREAM_CHECKPOINT;
+      /* A checkpoint may only cover bytes that are on the HDD. */
+      int f = pump_flush();
+      if (f < 0) {
+        out->err = ERR_HDL_WRITE;
+        out->rc = f;
+        break;
+      }
+      if (cb->checkpoint(cb->cp_ctx, done, crc)) {
+        out->err = ERR_JOURNAL;
+        break;
+      }
+    }
+    if (abort) {
+      out->err = ERR_USER_ABORT;
+      break;
+    }
+  }
+  uint64_t wrote = 0;
+  int r = pump_end(&wrote);
+  if (r < 0 && out->err == ERR_OK) {
+    out->err = ERR_HDL_WRITE;
+    out->rc = r;
+  }
+  /* bytes = what is really on the HDD (from the start of the game). */
+  out->bytes = start + wrote;
+  out->crc32 = crc;
+  if (out->err == ERR_OK && out->bytes != total)
+    out->err = ERR_HDL_WRITE;
+  return 1;
+}
+
 hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total, uint64_t start,
                         uint32_t start_crc, const stream_cb_t *cb) {
   char dev[48];
@@ -87,6 +175,10 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total, uin
   int r = fileXioMount("hdl0:", dev, FIO_MT_RDWR);
   if (r < 0)
     return res(ERR_HDL_MOUNT, r);
+  if (stream_pumped(src, total, start, start_crc, cb, &out)) {
+    fileXioUmount("hdl0:");
+    return out;
+  }
   int fd = fileXioOpen("hdl0:", FIO_O_RDWR);
   if (fd < 0) {
     fileXioUmount("hdl0:");

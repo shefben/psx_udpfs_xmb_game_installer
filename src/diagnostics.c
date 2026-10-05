@@ -8,6 +8,7 @@
 #include <io_common.h>
 
 #include "app_state.h"
+#include "hdl_install.h"
 #include "settings.h"
 #include "build_info.h"
 #include "diagnostics.h"
@@ -127,6 +128,9 @@ static void check_network(void) {
     line("INFO", "DHCP off (ip_mode=static)");
   }
   line(g_app.iop.udpfs_ok ? "PASS" : "FAIL", "UDPFS connected (%s)", net_state_name(g_app.net));
+  line(g_app.iop.pump_ok ? "PASS" : "WARN", "hddpump (overlapped installs) %s, %s",
+       g_app.iop.pump_ok ? "loaded" : "NOT loaded",
+       g_hdl_use_pump ? "in use" : "basic copy loop in use");
   line(g_app.iop.rw_buffer == RW_BUFFER_FAST ? "PASS" : "WARN",
        "fileXio transfer buffer %d KiB (64 KiB = full-speed install)",
        g_app.iop.rw_buffer / 1024);

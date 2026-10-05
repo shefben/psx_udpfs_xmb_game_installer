@@ -42,6 +42,7 @@ static void set_default(net_settings_t *out, int warning) {
 void settings_parse(const char *text, net_settings_t *out) {
   memset(out, 0, sizeof(*out));
   out->dhcp = 1;
+  out->fast_copy = 1;
   if (!text) {
     set_default(out, 0);
     return;
@@ -70,6 +71,8 @@ void settings_parse(const char *text, net_settings_t *out) {
           } else {
             bad = 1;
           }
+        } else if (strcmp(line, "fast_copy") == 0) {
+          out->fast_copy = strcmp(v, "0") != 0;
         } else if (strcmp(line, "ip_mode") == 0) {
           if (!strcmp(v, "dhcp") || !strcmp(v, "static")) {
             out->dhcp = v[0] == 'd';
@@ -85,9 +88,10 @@ void settings_parse(const char *text, net_settings_t *out) {
   if (!have_ip) {
     /* Without a usable address: default (as fallback for DHCP). Only a
      * file that says nothing usable at all is reported. */
-    int dhcp = out->dhcp;
+    int dhcp = out->dhcp, fast = out->fast_copy;
     set_default(out, bad || !have_mode);
     out->dhcp = dhcp;
+    out->fast_copy = fast;
   } else {
     out->warning = bad;
   }
@@ -99,8 +103,8 @@ void ip_format(uint32_t ip, char out[16]) {
 }
 
 size_t settings_serialize(const net_settings_t *s, char *out, size_t outsz) {
-  int n = snprintf(out, outsz, "local_ip=%s\nip_mode=%s\n", s->local_ip,
-                   s->dhcp ? "dhcp" : "static");
+  int n = snprintf(out, outsz, "local_ip=%s\nip_mode=%s\nfast_copy=%d\n", s->local_ip,
+                   s->dhcp ? "dhcp" : "static", s->fast_copy ? 1 : 0);
   if (n < 0 || (size_t)n >= outsz)
     return 0;
   return (size_t)n;

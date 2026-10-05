@@ -1331,17 +1331,27 @@ void flow_repair(void) {
 /* ------------------------------------------------------------------ */
 
 void flow_network_settings(void) {
-  static char rows[5][UI_ROW_LEN];
+  static char rows[6][UI_ROW_LEN];
   for (;;) {
+    snprintf(rows[4], UI_ROW_LEN, "Copy engine: %s",
+             !g_app.iop.pump_ok        ? "basic (hddpump module not loaded)"
+             : g_app.settings.fast_copy ? "fast (network and HDD overlap)"
+                                        : "basic (one step after another)");
     snprintf(rows[0], UI_ROW_LEN, "IP address:  %s",
              g_app.settings.dhcp ? "automatic (DHCP from the router)" : "fixed (static)");
     snprintf(rows[1], UI_ROW_LEN, "%s  %s", g_app.settings.dhcp ? "Fallback IP:" : "Local IP:   ",
              g_app.settings.local_ip);
     snprintf(rows[2], UI_ROW_LEN, "Save and restart network");
     snprintf(rows[3], UI_ROW_LEN, "Restart network (retry discovery)");
-    int c = ui_select("Network Settings", network_status_line(), rows, 4, 0, NULL, NULL);
+    int c = ui_select("Network Settings", network_status_line(), rows, 5, 0, NULL, NULL);
     if (c < 0)
       return;
+    if (c == 4) {
+      /* Takes effect now; Save keeps it. */
+      g_app.settings.fast_copy = !g_app.settings.fast_copy;
+      g_hdl_use_pump = g_app.iop.pump_ok && g_app.settings.fast_copy;
+      continue;
+    }
     if (c == 0) {
       g_app.settings.dhcp = !g_app.settings.dhcp;
       continue;

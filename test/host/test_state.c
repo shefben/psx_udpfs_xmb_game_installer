@@ -288,13 +288,18 @@ TEST(settings_serialize_roundtrip) {
   settings_parse("local_ip=192.168.0.50\n", &s);
   char buf[128];
   CHECK(settings_serialize(&s, buf, sizeof(buf)) > 0);
-  CHECK_STR(buf, "local_ip=192.168.0.50\nip_mode=dhcp\n");
+  CHECK_STR(buf, "local_ip=192.168.0.50\nip_mode=dhcp\nfast_copy=1\n");
   settings_parse(buf, &t);
   CHECK_STR(t.local_ip, "192.168.0.50");
   CHECK_EQ_INT(t.dhcp, 1);
   t.dhcp = 0;
   settings_serialize(&t, buf, sizeof(buf));
-  CHECK_STR(buf, "local_ip=192.168.0.50\nip_mode=static\n");
+  CHECK_STR(buf, "local_ip=192.168.0.50\nip_mode=static\nfast_copy=1\n");
+  settings_parse("local_ip=10.0.0.9\nfast_copy=0\n", &t);
+  CHECK_EQ_INT(t.fast_copy, 0);
+  CHECK_EQ_INT(t.warning, 0);
+  settings_parse(NULL, &t);
+  CHECK_EQ_INT(t.fast_copy, 1);
 }
 
 TEST(settings_ip_mode) {

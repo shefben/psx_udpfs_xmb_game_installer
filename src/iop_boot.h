@@ -11,7 +11,7 @@
  *   iop_boot_base():    reset/sync IOP, RPC, sbv patches, iomanX,
  *                       fileXio, poweroff, ps2dev9, ps2atad,
  *                       ps2hdd-hdl, ps2fs, hdlfs, sio2man, padman,
- *                       usbd, bdm, bdmfs_fatfs, usbmass_bd
+ *                       hddpump, usbd, bdm, bdmfs_fatfs, usbmass_bd
  *   iop_boot_network(): smap, ministack ip=<ip>, udpfs_ioman, then the
  *                       64 KiB fileXio transfer buffer (rw_buffer.h)
  *
@@ -22,7 +22,7 @@
  */
 
 #define IOP_MAX_FAILS 16
-#define IOP_MAX_MODS 20
+#define IOP_MAX_MODS 24
 
 typedef struct {
   /* Every load attempt, in order (diagnostics; `data`/`size` is the
@@ -37,6 +37,7 @@ typedef struct {
   int hdd_ok;   /* iomanX..hdlfs all loaded: HDD writes allowed */
   int pad_ok;   /* sio2man + padman loaded */
   int usb_ok;   /* usbd + bdm + bdmfs_fatfs + usbmass_bd loaded (mass0:) */
+  int pump_ok;  /* hddpump loaded (overlapped network + HDD writes) */
   int net_ok;   /* smap + ministack + udpfs_ioman loaded */
   int udpfs_ok; /* udpfs: device registered (server discovered) */
   int rw_buffer; /* fileXio IOP transfer buffer in bytes (rw_buffer.h) */

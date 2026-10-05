@@ -17,6 +17,7 @@
 typedef struct {
   int dhcp;
   char local_ip[16]; /* static address, or the DHCP fallback */
+  int fast_copy;     /* 1 (default): overlapped installs via hddpump.irx */
   int using_default; /* 1 if the compiled default is in effect */
   int warning;       /* 1 if a config existed but was invalid */
 } net_settings_t;

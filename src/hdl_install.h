@@ -58,6 +58,10 @@ hdl_result_t hdl_create_and_format(const char *hidden, const hdl_alloc_t *alloc,
  * `start_crc`, the CRC of the first `start` bytes; 0/0 for a new copy).
  * `start` must be a multiple of 2048. Always closes and unmounts hdl0:.
  * result.bytes counts from 0 (includes `start`). */
+/* Use hddpump.irx for hdl_stream when set (module loaded and enabled in
+ * Network Settings); otherwise, or if the pump cannot start, the EE loop. */
+extern int g_hdl_use_pump;
+
 hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total, uint64_t start,
                         uint32_t start_crc, const stream_cb_t *cb);
 
