@@ -109,8 +109,11 @@ DESR. Back up the HDD partition table before the first run (e.g.
      installer from the XMB). When udpfsd answers, a 10-second countdown
      starts; press **O** to cancel. (It only starts if you have not chosen
      a menu entry yet.) Every game not yet on the HDD that fits is copied, read
-     back, CRC-checked and given its own XMB channel. A summary shows for
-     15 seconds, then the console returns to the XMB.
+     back, CRC-checked and given its own XMB channel. Press **START**
+     during the read-back to skip it for that game (listed as
+     `installed, NOT VERIFIED`; **Installed Games > game > Verify game
+     data** runs it later). A summary shows for 15 seconds, then the
+     console returns to the XMB.
    * **Manual**: **Install All Games from the server** (Square toggles a
      game, X starts), or **Install Games from UDPFS** for one game.
    * Hold **SELECT + O** to abort the game being copied.
