@@ -13,6 +13,8 @@ Back up anything important on the DESR's hard disk before the first run.
 WHAT IS IN THIS ZIP
 -------------------
 
+  CHANGELOG.txt                          what is new since 1.0
+
   PS2\
     desr-udpfs-installer-bootstrap.elf   the installer, started on the DESR
 

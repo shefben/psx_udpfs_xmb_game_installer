@@ -243,7 +243,7 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	cp docs/udpfsd-example/* $(DIST)/udpfsd-example/
 	cp docs/INSTALL.md docs/HARDWARE_TEST_CHECKLIST.md $(DIST)/docs/
 	cp docs/QUICKSTART.md $(DIST)/
-	cp KNOWN_LIMITATIONS.md $(DIST)/
+	cp KNOWN_LIMITATIONS.md CHANGELOG.md $(DIST)/
 	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF) $(BUILD)/.kelf-mode
 
 # ---- 7. end-user zip (README, PS2 bootstrap ELF, PC/udpfsd folder) -----

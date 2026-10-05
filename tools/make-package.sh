@@ -19,6 +19,7 @@ trap 'rm -rf "$STAGE"' EXIT
 P=$STAGE/$NAME
 mkdir -p "$P/PS2" "$P/PC/udpfsd"
 cp "$ROOT/docs/package/README.txt" "$P/"
+cp "$ROOT/CHANGELOG.md" "$P/CHANGELOG.txt"
 cp "$DIST/desr-udpfs-installer-bootstrap.elf" "$P/PS2/"
 cp "$DIST/udpfsd/udpfsd-windows-amd64.exe" "$DIST/udpfsd/udpfsd-linux-amd64" \
    "$DIST/udpfsd/opl-launcher-EXECUTE.KELF" "$DIST/udpfsd/OPNPS2LD.ELF" \
@@ -39,7 +40,7 @@ echo "Optional: OPL per-game settings named <GAME-ID>.cfg, e.g. SLUS_203.12.cfg.
 echo "Optional: covers named <GAME-ID>_COV.png or .jpg, e.g. SLUS_203.12_COV.jpg." > "$P/PC/udpfsd/ART/_optional_covers_here.txt"
 printf '%s\n' "PS1 games: put .VCD files here (convert BIN/CUE with cue2pops)." "" `n  "Also needed here (not included, see README.txt):" `n  "  POPSTARTER.KELF   POPStarter, signed for the PS2" `n  "  POPS.ELF          Sony POPS emulator (from your own console/files)" `n  "  IOPRP252.IMG      Sony POPS IOP image" > "$P/PC/udpfsd/POPS/_put_PS1_VCD_games_here.txt"
 # Windows line endings for the files people open in Notepad.
-for f in "$P/README.txt" "$P/PC/udpfsd/udpfsd.cfg" "$P"/PC/udpfsd/*/_*.txt; do
+for f in "$P/README.txt" "$P/CHANGELOG.txt" "$P/PC/udpfsd/udpfsd.cfg" "$P"/PC/udpfsd/*/_*.txt; do
   sed -i 's/\r$//; s/$/\r/' "$f"
 done
 
