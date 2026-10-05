@@ -25,6 +25,7 @@ typedef enum {
   BATCH_DUPLICATE,     /* same partition pair as an earlier entry */
   BATCH_TOO_BIG,       /* does not fit the drive's APA limits */
   BATCH_NO_SPACE,      /* auto mode: does not fit the remaining free space */
+  BATCH_RESUME,        /* interrupted copy of this image: continue it */
 } batch_status_t;
 
 typedef enum {
@@ -57,6 +58,7 @@ typedef struct {
   const char *jacket;     /* install_report_t.jacket */
   int verify_skipped;     /* install_report_t.verify_skipped */
   int id_on_hdd;          /* a partition with this game ID exists (any title) */
+  int resumable;          /* pair_facts_t.resumable: interrupted copy with checkpoint */
 } batch_entry_t;
 
 /* Set id_on_hdd for every entry whose game ID appears in one of the
@@ -89,6 +91,9 @@ void batch_classify(batch_entry_t *e, int n);
 /* Fill an entry (path, name, type, size, ID, title, probe result) from a
  * manifest entry; partition names and pair state are filled by the caller. */
 void batch_entry_from_manifest(batch_entry_t *e, const manifest_entry_t *m);
+
+/* New games and interrupted copies can be selected. */
+int batch_selectable(batch_status_t s);
 
 /* Toggle selection; only eligible entries can be selected. Returns the
  * new selected state (0 for ineligible). */

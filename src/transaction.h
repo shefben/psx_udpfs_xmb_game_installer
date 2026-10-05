@@ -54,6 +54,10 @@ typedef struct {
   /* The user skipped the full read-back after a complete copy (header
    * and PVD were still checked). "Verify game data" can do it later. */
   int verify_skipped;
+  /* Copy checkpoint: CRC-32 of the first bytes_written source bytes,
+   * saved while streaming so an interrupted copy can resume there. */
+  int has_resume_crc;
+  uint32_t resume_crc32;
 } tx_journal_t;
 
 const char *tx_state_name(tx_state_t s); /* "TX_PLANNED" ... */
@@ -82,6 +86,10 @@ int tx_channel_creation_allowed(const tx_journal_t *j);
 int tx_hidden_data_verified(const tx_journal_t *j);
 /* (With verify_skipped, the read-back is waived: the copy must still be
  * complete with its source CRC recorded.) */
+
+/* An interrupted copy (power cut or failure while streaming) with a
+ * checkpoint, bound to its partition: Resume copy can continue it. */
+int tx_resumable(const tx_journal_t *j);
 
 /* The full read-back ran and its CRC equals the source stream's. */
 int tx_hidden_data_read_back(const tx_journal_t *j);

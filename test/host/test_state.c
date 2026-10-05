@@ -389,6 +389,71 @@ TEST(tx_verify_skipped_roundtrip_and_old_journals) {
   CHECK(tx_journal_equal(&j, &k));
 }
 
+static void streaming_journal(tx_journal_t *j) {
+  verified_journal(j);
+  j->state = TX_STREAMING;
+  j->bytes_written = 512ull * 1024 * 1024;
+  j->bytes_verified = 0;
+  j->has_source_crc = j->has_installed_crc = 0;
+  j->source_crc32 = j->installed_crc32 = 0; /* not yet known */
+  j->has_resume_crc = 1;
+  j->resume_crc32 = 0x1234ABCDu;
+  j->has_hdl_identity = 1;
+  j->hdl_start = 0x40000;
+  j->hdl_size = 0x800000;
+  j->hdl_header_crc32 = 0x55AA55AAu;
+}
+
+TEST(tx_resumable_rules) {
+  tx_journal_t j;
+  streaming_journal(&j);
+  CHECK(tx_resumable(&j)); /* power cut mid-copy */
+  tx_fail(&j, ERR_SOURCE_READ);
+  CHECK(tx_resumable(&j)); /* network failure mid-copy */
+  CHECK(tx_transition_allowed(j.state, TX_STREAMING));
+  streaming_journal(&j);
+  CHECK(tx_transition_allowed(TX_STREAMING, TX_STREAMING));
+  j.has_resume_crc = 0; /* no checkpoint yet: nothing to resume from */
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.bytes_written = 0;
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.bytes_written = j.bytes_expected; /* copy finished: verify, not resume */
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.bytes_written += 1; /* not on a sector boundary */
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.deleting = 1;
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.has_hdl_identity = 0;
+  CHECK(!tx_resumable(&j));
+  streaming_journal(&j);
+  j.state = TX_HDL_CREATED;
+  tx_fail(&j, ERR_HDL_WRITE); /* failed before any data */
+  CHECK(!tx_resumable(&j));
+  CHECK(!tx_transition_allowed(TX_HDL_COMPLETE, TX_STREAMING));
+  CHECK(!tx_transition_allowed(TX_COMPLETE, TX_STREAMING));
+}
+
+TEST(tx_resume_crc_roundtrip) {
+  tx_journal_t j, k;
+  streaming_journal(&j);
+  char buf[1200];
+  CHECK(tx_serialize(&j, buf, sizeof(buf)) > 0);
+  CHECK(strstr(buf, "resume_crc32=1234abcd\n") != NULL);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK(tx_journal_equal(&j, &k));
+  CHECK_EQ_INT(k.has_resume_crc, 1);
+  j.has_resume_crc = 0;
+  tx_serialize(&j, buf, sizeof(buf));
+  CHECK(strstr(buf, "resume_crc32=\n") != NULL);
+  CHECK_EQ_INT(tx_parse(buf, &k), 0);
+  CHECK_EQ_INT(k.has_resume_crc, 0);
+}
+
 TEST(tx_launcher_and_opl_cfg_fields_roundtrip) {
   tx_journal_t j, k;
   verified_journal(&j);

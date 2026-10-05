@@ -20,7 +20,14 @@ typedef struct {
   /* Return non-zero to abort (polled with progress). */
   int (*should_abort)(void *ctx);
   void *ctx;
+  /* hdl_stream only, optional: called about every STREAM_CHECKPOINT
+   * bytes, after those bytes were written, with the CRC-32 of all bytes
+   * so far. Non-zero return stops the copy (journal not saved). */
+  int (*checkpoint)(void *cp_ctx, uint64_t bytes, uint32_t crc);
+  void *cp_ctx;
 } stream_cb_t;
+
+#define STREAM_CHECKPOINT (256ull * 1024 * 1024)
 
 /* Where the time of the running hdl_stream()/hdl_verify() goes, in EE
  * bus clock ticks (GetTimerSystemTime, STREAM_TIMER_HZ per second).
@@ -46,11 +53,13 @@ typedef struct {
 hdl_result_t hdl_create_and_format(const char *hidden, const hdl_alloc_t *alloc,
                                    const struct HDLFS_FormatArgs *args);
 
-/* Stream exactly `total` bytes from `src` into the formatted `hidden`
- * partition, computing the CRC-32 of every byte received. Always
- * closes and unmounts hdl0:. */
-hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
-                        const stream_cb_t *cb);
+/* Stream bytes [start, total) from `src` into the formatted `hidden`
+ * partition, computing the CRC-32 of every byte (continuing from
+ * `start_crc`, the CRC of the first `start` bytes; 0/0 for a new copy).
+ * `start` must be a multiple of 2048. Always closes and unmounts hdl0:.
+ * result.bytes counts from 0 (includes `start`). */
+hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total, uint64_t start,
+                        uint32_t start_crc, const stream_cb_t *cb);
 
 /* Verify without the source: APA type HDL, HDL header fields, then a
  * read-only remount and a sequential read of all installed data

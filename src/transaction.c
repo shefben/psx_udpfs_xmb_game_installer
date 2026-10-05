@@ -34,6 +34,10 @@ int tx_transition_allowed(tx_state_t from, tx_state_t to) {
   /* Any started, unfinished transaction may fail. */
   if (to == TX_FAILED)
     return from >= TX_PLANNED && from < TX_COMPLETE;
+  /* Resume an interrupted copy from its last checkpoint (the caller
+   * checks tx_resumable()). */
+  if (to == TX_STREAMING)
+    return from == TX_FAILED || from == TX_STREAMING;
   /* Retry from start / reinstall. */
   if (to == TX_PLANNED)
     return from == TX_FAILED || from == TX_COMPLETE;
@@ -69,6 +73,13 @@ int tx_channel_creation_allowed(const tx_journal_t *j) {
          j->state == TX_CHANNEL_VERIFIED;
 }
 
+int tx_resumable(const tx_journal_t *j) {
+  tx_state_t s = j->state == TX_FAILED ? j->failed_from : j->state;
+  return !j->deleting && s == TX_STREAMING && j->has_hdl_identity && j->has_resume_crc &&
+         j->bytes_written > 0 && j->bytes_written < j->bytes_expected &&
+         j->bytes_written % 2048 == 0;
+}
+
 int tx_hidden_data_read_back(const tx_journal_t *j) {
   return j->bytes_expected > 0 && j->bytes_verified == j->bytes_expected &&
          j->has_source_crc && j->has_installed_crc && j->source_crc32 == j->installed_crc32;
@@ -96,7 +107,8 @@ int tx_journal_equal(const tx_journal_t *a, const tx_journal_t *b) {
          a->state == b->state && a->failed_from == b->failed_from &&
          !strcmp(a->last_error, b->last_error) &&
          !strcmp(a->launcher_source, b->launcher_source) && !strcmp(a->opl_cfg, b->opl_cfg) &&
-         a->verify_skipped == b->verify_skipped;
+         a->verify_skipped == b->verify_skipped && a->has_resume_crc == b->has_resume_crc &&
+         a->resume_crc32 == b->resume_crc32;
 }
 
 int tx_identity_matches(const tx_journal_t *j, uint32_t start, uint32_t size,
@@ -136,7 +148,9 @@ int tx_journal_filename_for(const char *partition, char out[96]) {
 }
 
 size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz) {
-  char scrc[9] = "", icrc[9] = "";
+  char scrc[9] = "", icrc[9] = "", rcrc[9] = "";
+  if (j->has_resume_crc)
+    snprintf(rcrc, sizeof(rcrc), "%08lx", (unsigned long)j->resume_crc32);
   if (j->has_source_crc)
     snprintf(scrc, sizeof(scrc), "%08lx", (unsigned long)j->source_crc32);
   if (j->has_installed_crc)
@@ -167,7 +181,8 @@ size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz) {
                    "last_error=%s\n"
                    "launcher_source=%s\n"
                    "opl_cfg=%s\n"
-                   "verify_skipped=%d\n",
+                   "verify_skipped=%d\n"
+                   "resume_crc32=%s\n",
                    j->source_path, (unsigned long long)j->source_size,
                    j->startup_id, j->visible_partition, j->hidden_partition,
                    (unsigned long long)j->bytes_expected,
@@ -175,7 +190,7 @@ size_t tx_serialize(const tx_journal_t *j, char *out, size_t outsz) {
                    (unsigned long long)j->bytes_verified, scrc, icrc,
                    j->deleting ? 1 : 0, id_start, id_size, id_crc, tx_state_name(j->state),
                    tx_state_name(j->failed_from), j->last_error, j->launcher_source,
-                   j->opl_cfg, j->verify_skipped ? 1 : 0);
+                   j->opl_cfg, j->verify_skipped ? 1 : 0, rcrc);
   if (n < 0 || (size_t)n >= outsz)
     return 0;
   return (size_t)n;
@@ -234,6 +249,9 @@ int tx_parse(const char *text, tx_journal_t *out) {
         return -1;
     } else if (!strcmp(k, "source_crc32")) {
       if (parse_crc(v, &out->has_source_crc, &out->source_crc32) < 0)
+        return -1;
+    } else if (!strcmp(k, "resume_crc32")) {
+      if (parse_crc(v, &out->has_resume_crc, &out->resume_crc32) < 0)
         return -1;
     } else if (!strcmp(k, "installed_crc32")) {
       if (parse_crc(v, &out->has_installed_crc, &out->installed_crc32) < 0)

@@ -129,6 +129,8 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
     f->journal_matches_partition =
         f->hidden_exists && hdl_partition_identity(hidden, &start, &size, &hcrc) == 0 &&
         tx_identity_matches(&j, start, size, hcrc);
+    f->resumable = tx_resumable(&j) && f->journal_matches_partition;
+    f->resume_bytes = f->resumable ? j.bytes_written : 0;
   }
   /* Only a PFS partition is an XMB channel; a same-named HDL partition
    * (hdl-dump visible install) still blocks a new install via
@@ -150,6 +152,21 @@ static int count_journals(void) {
     n += !strncmp(de.name, "install-", 8) && str_ends_with_ci(de.name, ".ini");
   fileXioDclose(dd);
   return n;
+}
+
+inst_err_t game_resume_plan(const char *hidden, game_plan_t *p, int *rc_out) {
+  tx_journal_t j;
+  *rc_out = 0;
+  if (!load_pair_journal(hidden, &j) || !tx_resumable(&j))
+    return ERR_JOURNAL;
+  inst_err_t e = game_plan_build(j.source_path, p, rc_out);
+  if (e)
+    return e;
+  /* The partitions keep the names they were created with. */
+  str_copy(p->visible, j.visible_partition, sizeof(p->visible));
+  str_copy(p->hidden, j.hidden_partition, sizeof(p->hidden));
+  p->resume = 1;
+  return ERR_OK;
 }
 
 size_t game_pair_details(const char *visible, const char *hidden, char *out, size_t outsz) {
@@ -284,6 +301,16 @@ static void fail(tx_journal_t *j, install_report_t *rep, inst_err_t e, int rc,
     rep->detail = detail;
   tx_fail(j, e);
   persist(j); /* best effort: the data is untrusted either way */
+}
+
+/* stream_cb_t.checkpoint: the first `bytes` are on the HDD; save where
+ * a resumed copy would continue. */
+static int journal_checkpoint(void *cp_ctx, uint64_t bytes, uint32_t crc) {
+  tx_journal_t *j = cp_ctx;
+  j->bytes_written = bytes;
+  j->has_resume_crc = 1;
+  j->resume_crc32 = crc;
+  return persist(j) != ERR_OK;
 }
 
 static void stage(const install_ui_t *ui, install_report_t *rep, install_stage_t s) {
@@ -454,15 +481,30 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     rep->err = ERR_INTERNAL;
     goto out_src;
   }
-  /* 6. existing partitions: callers resolve these via pair actions */
-  if (hdd_exists(p->hidden) != 0 || hdd_exists(p->visible) != 0) {
+  /* 6. existing partitions: callers resolve these via pair actions. A
+   * resume needs exactly the interrupted copy: its journal, bound to
+   * the same physical partition, for this same image. */
+  if (p->resume) {
+    uint32_t s = 0, z = 0, c = 0;
+    if (!load_pair_journal(p->hidden, &j) || !tx_resumable(&j) ||
+        strcmp(j.visible_partition, p->visible) || strcmp(j.startup_id, p->iso.boot_id) ||
+        strcmp(j.source_path, p->source_path) || j.source_size != p->iso.source_size ||
+        j.bytes_expected != (uint64_t)p->iso.sectors * ISO_SECTOR ||
+        hdd_exists(p->visible) != 0 ||
+        hdl_partition_identity(p->hidden, &s, &z, &c) < 0 || !tx_identity_matches(&j, s, z, c)) {
+      rep->err = ERR_JOURNAL;
+      rep->detail = "cannot resume: journal, partition or source changed; reinstall";
+      goto out_src;
+    }
+  } else if (hdd_exists(p->hidden) != 0 || hdd_exists(p->visible) != 0) {
     rep->err = ERR_PARTITION_EXISTS;
     goto out_src;
   }
-  /* 7. free space: data partitions + the 128 MiB channel */
+  /* 7. free space: data partitions + the 128 MiB channel (a resume
+   * already holds its data partitions) */
   uint32_t total_mb, free_mb, max_mb;
   if (hdd_space_mb(&total_mb, &free_mb, &max_mb) < 0 ||
-      (uint64_t)p->alloc.total_mb + CHANNEL_SIZE_MB > free_mb) {
+      (uint64_t)(p->resume ? 0 : p->alloc.total_mb) + CHANNEL_SIZE_MB > free_mb) {
     rep->err = ERR_NO_SPACE;
     goto out_src;
   }
@@ -484,6 +526,14 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     goto out_src;
   }
 
+  hdl_result_t hr;
+  if (p->resume) {
+    if (advance(&j, TX_STREAMING)) {
+      rep->err = ERR_JOURNAL;
+      goto out_src;
+    }
+    goto stream;
+  }
   /* 9. journal: TX_PLANNED on disk before the first HDD write */
   str_copy(j.source_path, p->source_path, sizeof(j.source_path));
   j.source_size = p->iso.source_size;
@@ -500,7 +550,7 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   stage(ui, rep, STAGE_CREATING_HDL);
   struct HDLFS_FormatArgs args;
   hdl_format_args_build(&args, &p->iso, p->title);
-  hdl_result_t hr = hdl_create_and_format(p->hidden, &p->alloc, &args);
+  hr = hdl_create_and_format(p->hidden, &p->alloc, &args);
   if (hr.err) {
     fail(&j, rep, hr.err, hr.rc, NULL);
     goto out_src;
@@ -519,13 +569,23 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     goto out_src;
   }
 
-  /* 13-15. stream, CRC-32 over every byte received */
+  /* 13-15. stream, CRC-32 over every byte received; a checkpoint is
+   * saved every STREAM_CHECKPOINT bytes so a cut copy can resume. */
+stream:
   stage(ui, rep, STAGE_COPYING);
   stream_cb_t cb = {ui ? ui->progress : NULL, ui ? ui->should_abort : NULL,
-                    ui ? ui->ctx : NULL};
-  hr = hdl_stream(p->hidden, &g_src, j.bytes_expected, &cb);
-  j.bytes_written = hr.bytes;
+                    ui ? ui->ctx : NULL, journal_checkpoint, &j};
+  uint64_t from = p->resume ? j.bytes_written : 0;
+  hr = hdl_stream(p->hidden, &g_src, j.bytes_expected, from, p->resume ? j.resume_crc32 : 0,
+                  &cb);
   rep->bytes_written = hr.bytes;
+  rep->resumed_from = from;
+  if (!hr.err) {
+    j.bytes_written = hr.bytes;
+    j.has_resume_crc = 0;
+    j.resume_crc32 = 0;
+  }
+  /* On failure bytes_written stays at the last checkpoint (resume point). */
   if (hr.err) {
     fail(&j, rep, hr.err, hr.rc, NULL);
     goto out_src;
@@ -545,7 +605,8 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   hr = hdl_verify(p->hidden, &p->iso, 1 + p->alloc.subs, &cb);
   j.bytes_verified = hr.bytes;
   rep->bytes_verified = hr.bytes;
-  if (hr.err == ERR_USER_ABORT && ui && ui->skip_verify && ui->skip_verify(ui->ctx)) {
+  if (hr.err == ERR_USER_ABORT && !p->resume && ui && ui->skip_verify &&
+      ui->skip_verify(ui->ctx)) {
     /* Skipped by the user: the HDL header and the PVD (first block) were
      * checked, the full CRC read-back was not. The copy itself is
      * complete with its source CRC; "Verify game data" can finish it. */
@@ -611,7 +672,7 @@ void game_verify_data(const char *hidden, const install_ui_t *ui, install_report
     goto out;
   }
   stream_cb_t cb = {ui ? ui->progress : NULL, ui ? ui->should_abort : NULL,
-                    ui ? ui->ctx : NULL};
+                    ui ? ui->ctx : NULL, NULL, NULL};
   hdl_result_t hr = hdl_read_back(hidden, j.bytes_expected, &cb);
   rep->bytes_written = j.bytes_written;
   rep->bytes_verified = hr.bytes;

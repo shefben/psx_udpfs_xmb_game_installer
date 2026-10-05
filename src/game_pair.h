@@ -33,6 +33,8 @@ typedef struct {
   int visible_exists;
   int visible_valid; /* files + PPAA header verified */
   int verify_skipped; /* journal: full read-back skipped by the user */
+  int resumable;      /* interrupted copy, checkpoint bound to this partition */
+  uint64_t resume_bytes; /* bytes already copied (when resumable) */
 } pair_facts_t;
 
 /* Hidden data is trusted only when its header is valid AND this

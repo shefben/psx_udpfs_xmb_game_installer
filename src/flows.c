@@ -152,7 +152,8 @@ static const char *recovery_for(const install_report_t *rep) {
 }
 
 static void run_install(game_plan_t *p, int allow_without_opl) {
-  progress_ctx_t ctx = {p, STAGE_PREPARING, 0, 0};
+  /* A resumed copy is always verified in full (no START skip). */
+  progress_ctx_t ctx = {p, STAGE_PREPARING, p->resume, 0};
   install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify};
   install_report_t rep;
   draw_install_static(p, "Installing");
@@ -166,6 +167,9 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
       snprintf(installed, sizeof(installed), "SKIPPED (Verify game data later)");
     else
       snprintf(installed, sizeof(installed), "%08lx", (unsigned long)rep.installed_crc32);
+    if (rep.resumed_from)
+      snprintf(installed + strlen(installed), sizeof(installed) - strlen(installed),
+               "  (resumed at %lu MiB)", (unsigned long)(rep.resumed_from >> 20));
     snprintf(msg, sizeof(msg),
              "%s installed (TX_COMPLETE).\n\n%s\n%s\n\n"
              "Bytes copied:     %llu\nBytes read back:  %llu\n"
@@ -280,6 +284,7 @@ static void batch_fill_from_plan(int i) {
     pair_facts_t f;
     game_pair_facts(p->visible, p->hidden, &f);
     e->pair = pair_classify(&f);
+    e->resumable = f.resumable;
   }
 }
 
@@ -382,7 +387,8 @@ static void batch_run_selected(int n, int allow_without_opl, const char *label) 
     }
     char title[48];
     snprintf(title, sizeof(title), "%s %d/%d", label, idx, total);
-    progress_ctx_t ctx = {&batch_plans[i], STAGE_PREPARING, 0, 0};
+    batch_plans[i].resume = e->status == BATCH_RESUME;
+    progress_ctx_t ctx = {&batch_plans[i], STAGE_PREPARING, batch_plans[i].resume, 0};
     install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify};
     install_report_t rep;
     draw_install_static(&batch_plans[i], title);
@@ -734,6 +740,41 @@ static void do_create_channel(const char *hidden) {
 
 #define ROW_VERIFY (1 << 16) /* menu rows, not pair_action_t values */
 #define ROW_RENAME (1 << 17)
+#define ROW_RESUME (1 << 18)
+
+
+static void do_resume(const char *hidden) {
+  if (g_app.net != NETWORK_READY) {
+    ui_message("Resume copy", network_not_ready_text());
+    return;
+  }
+  static game_plan_t plan;
+  int rc = 0;
+  ui_header("Resume copy", hidden);
+  ui_at(4, " Checking the image on the server...");
+  inst_err_t e = game_resume_plan(hidden, &plan, &rc);
+  if (e) {
+    char msg[400];
+    snprintf(msg, sizeof(msg),
+             "Cannot resume: %s (%s), code %d.\n\n"
+             "The game image must still be on the server at the same path.\n"
+             "Otherwise delete the incomplete install and install it again.",
+             err_text(e), err_name(e), rc);
+    ui_message("Resume copy", msg);
+    return;
+  }
+  int allow_without_opl = 0;
+  opl_runtime_t opl;
+  int orc;
+  if (!ensure_opl("Resume copy", 0, NULL) && opl_check_runtime(&opl, &orc) != ERR_OK) {
+    if (!ui_confirm("OPL runtime not found",
+                    "OPL is missing, so no XMB channel can be created.\n"
+                    "Finish copying the game data anyway?"))
+      return;
+    allow_without_opl = 1;
+  }
+  run_install(&plan, allow_without_opl);
+}
 
 static void do_rename(const char *visible) {
   char t[64] = "";
@@ -791,8 +832,8 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   pair_state_t st = pair_classify(&f);
   unsigned acts = pair_actions(st);
 
-  static char rows[9][UI_ROW_LEN];
-  int map[9], n = 0;
+  static char rows[10][UI_ROW_LEN];
+  int map[10], n = 0;
 #define ADD(a, label)                                                          \
   if (acts & (a)) {                                                            \
     str_copy(rows[n], label, UI_ROW_LEN);                                      \
@@ -807,6 +848,11 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   ADD(ACT_REINSTALL, "Reinstall game (delete, then copy again)");
   ADD(ACT_DELETE, "Delete game");
 #undef ADD
+  if (f.resumable) {
+    snprintf(rows[n], UI_ROW_LEN, "Resume copy (%lu MiB already on the HDD)",
+             (unsigned long)(f.resume_bytes >> 20));
+    map[n++] = ROW_RESUME;
+  }
   if (f.visible_exists && f.visible_valid) {
     str_copy(rows[n], "Rename (title shown in the XMB)", UI_ROW_LEN);
     map[n++] = ROW_RENAME;
@@ -832,6 +878,9 @@ void flow_pair_actions(const char *visible, const char *hidden) {
     break;
   case ROW_RENAME:
     do_rename(visible);
+    break;
+  case ROW_RESUME:
+    do_resume(hidden);
     break;
   case 0: {
     static char details[2048];

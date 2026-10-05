@@ -151,6 +151,27 @@ TEST(auto_start_only_when_idle_and_ready) {
   CHECK(!auto_start_due(0, 1, 1, 1, 0, 0)); /* HDD unusable */
 }
 
+TEST(batch_resumable_copy_is_selected_and_needs_only_the_channel) {
+  batch_entry_t e[3];
+  e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_HIDDEN_UNVERIFIED, 4096);
+  e[0].resumable = 1;
+  e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_HIDDEN_UNVERIFIED, 4096);
+  e[2] = ent("C.iso", ERR_OK, "__.SLUS-20314..C", PAIR_NONE, 1024);
+  batch_classify(e, 3);
+  CHECK_EQ_INT(e[0].status, BATCH_RESUME);
+  CHECK_EQ_INT(e[1].status, BATCH_EXISTS);
+  CHECK(e[0].selected && !e[1].selected && e[2].selected);
+  CHECK_STR(batch_status_label(BATCH_RESUME), "resume copy");
+  /* data partitions already exist: only the 128 MiB channel is new */
+  CHECK_EQ_U64(batch_needed_mb(e, 3), 128 + 1024 + 128);
+  CHECK_EQ_INT(batch_toggle(&e[0]), 0);
+  CHECK_EQ_INT(batch_toggle(&e[0]), 1);
+  CHECK_EQ_INT(batch_auto_select(e, 3, 128 + 1152), 2);
+  CHECK(e[0].selected && e[2].selected);
+  CHECK_EQ_INT(batch_auto_select(e, 3, 128), 1); /* only the resume fits */
+  CHECK(e[0].selected && !e[2].selected);
+}
+
 TEST(batch_summary_mentions_opl_cfg_failure) {
   batch_entry_t e[1];
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);

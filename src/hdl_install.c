@@ -74,13 +74,13 @@ static void report(const stream_cb_t *cb, time_t start, time_t *last, uint64_t d
     *abort = 1;
 }
 
-hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
-                        const stream_cb_t *cb) {
+hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total, uint64_t start,
+                        uint32_t start_crc, const stream_cb_t *cb) {
   char dev[48];
   hdl_result_t out = res(ERR_OK, 0);
   snprintf(dev, sizeof(dev), "hdd0:%s", hidden);
 
-  if (total == 0 || total % ISO_SECTOR)
+  if (total == 0 || total % ISO_SECTOR || start >= total || start % ISO_SECTOR)
     return res(ERR_INVALID_ARG, 0);
 
   fileXioUmount("hdl0:");
@@ -93,14 +93,16 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
     return res(ERR_HDL_MOUNT, fd);
   }
 
-  if (src->ops->seek(src, 0, SRC_SEEK_SET) != 0) {
-    out.err = ERR_SOURCE_READ;
+  /* hdlfs lseek takes 2048-byte sector numbers. */
+  if (src->ops->seek(src, (int64_t)start, SRC_SEEK_SET) != (int64_t)start ||
+      fileXioLseek(fd, (int)(start / ISO_SECTOR), FIO_SEEK_SET) != (int)(start / ISO_SECTOR)) {
+    out.err = start ? ERR_HDL_WRITE : ERR_SOURCE_READ;
     goto done;
   }
 
-  time_t start = time(NULL), last = 0;
-  uint64_t written = 0;
-  uint32_t crc = 0;
+  time_t t_start = time(NULL), last = 0;
+  uint64_t written = start, next_cp = start + STREAM_CHECKPOINT;
+  uint32_t crc = start_crc;
   int abort = 0;
   memset(&g_stream_timing, 0, sizeof(g_stream_timing));
   while (written < total) {
@@ -139,8 +141,15 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
     g_stream_timing.read_ticks += t1 - t0;
     g_stream_timing.crc_ticks += t2 - t1;
     g_stream_timing.write_ticks += GetTimerSystemTime() - t1;
-    g_stream_timing.bytes = written;
-    report(cb, start, &last, written, total, &abort);
+    g_stream_timing.bytes = written - start;
+    report(cb, t_start, &last, written, total, &abort);
+    if (written >= next_cp && written < total && cb && cb->checkpoint) {
+      next_cp = written + STREAM_CHECKPOINT;
+      if (cb->checkpoint(cb->cp_ctx, written, crc)) {
+        out.err = ERR_JOURNAL;
+        break;
+      }
+    }
     if (abort) {
       out.err = ERR_USER_ABORT;
       break;

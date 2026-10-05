@@ -21,6 +21,9 @@ typedef struct {
   char visible[APA_NAME_MAX + 1];
   char hidden[APA_NAME_MAX + 1];
   hdl_alloc_t alloc;
+  /* Continue this plan's interrupted copy from its journal checkpoint
+   * instead of creating the partitions (game_install). */
+  int resume;
 } game_plan_t;
 
 typedef enum {
@@ -59,6 +62,7 @@ typedef struct {
   uint64_t bytes_written;
   uint64_t bytes_verified;
   int verify_skipped; /* the user skipped the full read-back */
+  uint64_t resumed_from; /* resume: bytes already on the HDD before this run */
   /* OPL per-game cfg from the server: "copied" | "kept" | "failed" |
    * "none"; NULL when no channel was built. */
   const char *opl_cfg;
@@ -79,6 +83,11 @@ inst_err_t game_plan_set_title(game_plan_t *p, const char *title);
  * the image, refuses a different game ID or size, and then uses the
  * PS2's own probe result. */
 inst_err_t game_plan_from_manifest(const manifest_entry_t *m, game_plan_t *p);
+
+/* Plan to continue the interrupted copy of `hidden`: re-probes the
+ * image at the journal's source path (server must be up) and sets
+ * p->resume. game_install() re-checks everything before writing. */
+inst_err_t game_resume_plan(const char *hidden, game_plan_t *p, int *rc_out);
 
 /* Gather on-disk facts for a pair (exists/valid/journal). */
 void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f);
