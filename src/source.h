@@ -1,6 +1,7 @@
 #ifndef PSXI_SOURCE_H
 #define PSXI_SOURCE_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "errors.h"
@@ -50,6 +51,10 @@ typedef enum {
  * hidden in version 1; any other ".iso" -> ISO. Case-insensitive. */
 source_type_t source_classify(const char *name);
 const char *source_type_label(source_type_t t); /* "ISO", "ZSO", "" */
+
+/* Name shown in lists: udpfsd serves a .zso/.cso as "<name>.zso.iso";
+ * show "<name>.zso". Other names unchanged. Returns out. */
+const char *source_display_name(const char *name, char *out, size_t outsz);
 
 /* A raw ZSO file (not udpfsd's virtual .zso.iso): needs source_zso. */
 int source_is_raw_zso(const char *path);

@@ -165,3 +165,16 @@ void memsrc_add(memsrc_t *m, uint64_t offset, const void *data, uint32_t len) {
     m->nsegs++;
   }
 }
+
+const char *source_display_name(const char *name, char *out, size_t outsz) {
+  size_t n = strlen(name);
+  if (n > 8 && (str_ends_with_ci(name, ".zso.iso") || str_ends_with_ci(name, ".cso.iso")))
+    n -= 4;
+  if (outsz) {
+    if (n >= outsz)
+      n = outsz - 1;
+    memcpy(out, name, n);
+    out[n] = 0;
+  }
+  return out;
+}

@@ -1512,3 +1512,42 @@ void flow_self_install(void) {
   ui_message("Installer XMB App", txt);
 }
 
+
+void flow_delete_installer_channel(void) {
+  const char *name = hdd_exists(INSTALLER_PARTITION) > 0     ? INSTALLER_PARTITION
+                     : hdd_exists(INSTALLER_LEGACY_NAME) > 0 ? INSTALLER_LEGACY_NAME
+                                                             : NULL;
+  if (!name) {
+    ui_message("Delete Installer XMB Channel", "There is no installer partition on the HDD.");
+    return;
+  }
+  char txt[700];
+  snprintf(txt, sizeof(txt),
+           "This PERMANENTLY removes the installer's XMB channel:\n\n  %s\n\n"
+           "It also holds the install records (proof that each game was\n"
+           "copied and verified) and the network settings. Without them,\n"
+           "installed games keep working from the XMB, but the installer\n"
+           "lists them as UNKNOWN/UNVERIFIED: only Delete or Reinstall are\n"
+           "offered, no Rebuild/Resume/Verify.\n\n"
+           "'Install Installer as XMB Channel' (from this ELF) creates it\n"
+           "again, empty.",
+           name);
+  if (!ui_confirm_destructive("Delete Installer XMB Channel", txt))
+    return;
+  app_unmount();
+  pfs_umount(PFS_WORK);
+  int rc = 0;
+  inst_err_t e = hdd_remove_exact(name, &rc);
+  g_app.app_exists = hdd_exists(name) > 0;
+  if (e) {
+    snprintf(txt, sizeof(txt), "Could not remove %s (code %d).\nNothing else was changed.", name,
+             rc);
+    if (g_app.app_exists)
+      app_mount();
+    ui_message("Delete failed", txt);
+  } else {
+    ui_message("Installer channel deleted",
+               "Done. The installer keeps running until you exit; installing\n"
+               "and managing games need the channel again.");
+  }
+}

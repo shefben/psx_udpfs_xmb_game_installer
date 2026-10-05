@@ -22,6 +22,8 @@
 #include "sha256.h"
 #include "ui.h"
 #include "util.h"
+#include "browser.h"
+#include "xmb_dump.h"
 
 static char report[6144];
 static int roff, nfail;
@@ -337,21 +339,54 @@ static void remove_leftover_test(void) {
   ui_message("HDD self-test", msg);
 }
 
+/* Read-only copy of every PP. partition's OSD header and files to USB,
+ * to compare our channels with ones made by other tools. */
+static void dump_channels(void) {
+  if (!g_app.iop.usb_ok || !g_app.iop.hdd_ok) {
+    ui_message("Dump XMB channels", "Needs the HDD and the USB drivers (see the checks).");
+    return;
+  }
+  if (!ui_confirm("Dump XMB channels",
+                  "Copy the OSD header and the files of every PP. partition\n"
+                  "to " USB_ROOT "xmb-dump/ on the USB drive?\n\n"
+                  "The HDD is only read. Files over 1 MiB: first 4 KiB."))
+    return;
+  ui_header("Dump XMB channels", "Reading the HDD, writing to USB...");
+  int was = g_app.app_mounted; /* the installer partition is dumped too */
+  app_unmount();
+  int parts = 0;
+  int r = xmb_dump_to_usb(&parts);
+  if (was)
+    app_mount();
+  char msg[200];
+  if (r < 0)
+    snprintf(msg, sizeof(msg), "Failed (code %d). Is a FAT32/exFAT USB drive plugged in?", r);
+  else
+    snprintf(msg, sizeof(msg),
+             "%d PP. partitions copied to " USB_ROOT "xmb-dump/\n"
+             "(partitions.txt lists every partition).",
+             parts);
+  ui_message("Dump XMB channels", msg);
+}
+
 void flow_diagnostics(void) {
-  static char rows[3][UI_ROW_LEN] = {
+  static char rows[4][UI_ROW_LEN] = {
       "Pre-hardware checks (read-only)",
       "HDD self-test: create/delete PP.UDPFS-TEST",
       "Remove leftover PP.UDPFS-TEST",
+      "Dump XMB channels to USB (read-only)",
   };
   for (;;) {
-    int c = ui_select("Diagnostics", network_status_line(), rows, 3, 0, NULL, NULL);
+    int c = ui_select("Diagnostics", network_status_line(), rows, 4, 0, NULL, NULL);
     if (c < 0)
       return;
     if (c == 0)
       run_checks();
     else if (c == 1)
       run_selftest();
-    else
+    else if (c == 2)
       remove_leftover_test();
+    else
+      dump_channels();
   }
 }

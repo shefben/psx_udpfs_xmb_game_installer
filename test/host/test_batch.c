@@ -94,6 +94,9 @@ TEST(batch_rows_and_summary) {
   batch_format_row(&e[2], row, sizeof(row));
   CHECK(strstr(row, "[ ]") == row);
   CHECK(strstr(row, batch_status_label(BATCH_EXISTS)) != NULL);
+  batch_entry_t z = ent("Z.zso.iso", ERR_OK, "__.SLUS-20315..Z", PAIR_NONE, 512);
+  batch_format_row(&z, row, sizeof(row));
+  CHECK(strstr(row, "Z.zso ") != NULL && strstr(row, "zso.iso") == NULL);
 
   e[0].result = BATCH_DONE;
   e[1].result = BATCH_FAILED;

@@ -39,5 +39,9 @@ void flow_repair(void);
 void flow_network_settings(void);
 void flow_self_install(void);
 
+/* Remove the installer partition (channel, journals, settings) after an
+ * explicit warning. */
+void flow_delete_installer_channel(void);
+
 
 #endif
