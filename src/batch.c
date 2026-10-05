@@ -148,7 +148,8 @@ void batch_format_row(const batch_entry_t *e, char *out, size_t outsz) {
   char size[16] = "";
   if (e->probe_err == ERR_OK || e->probe_err == ERR_HDL_PLAN)
     snprintf(size, sizeof(size), "%u MiB", (unsigned)(e->bytes >> 20));
-  snprintf(out, outsz, "[%c] %-3s %-34.34s %-11.11s %9s %s", e->selected ? 'x' : ' ',
+  /* <= 70 chars: fits a list row of the TV-safe screen */
+  snprintf(out, outsz, "[%c] %-3s %-24.24s %-11.11s %9s %s", e->selected ? 'x' : ' ',
            source_type_label(e->type), e->name, e->boot_id[0] ? e->boot_id : "-", size,
            batch_status_label(e->status));
 }

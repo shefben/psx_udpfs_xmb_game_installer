@@ -219,3 +219,14 @@ TEST(auto_installer_partition_never_repaired) {
   /* exists but did not mount: may be damaged - stop, never rewrite it */
   CHECK_EQ_INT(auto_installer_step(1, 0), AUTO_STOP);
 }
+
+TEST(batch_row_fits_list_width) {
+  /* list rows are drawn after a 3-char "  >" marker inside UI_COLS (74) */
+  batch_entry_t e = ent("A very long game file name that goes on and on (USA) (v3.00).zso.iso",
+                        ERR_SOURCE_INVALID_ISO, "", PAIR_NONE, 0);
+  batch_classify(&e, 1);
+  char row[128];
+  batch_format_row(&e, row, sizeof(row));
+  CHECK((int)strlen(row) <= 70);
+  CHECK(strstr(row, batch_status_label(BATCH_INVALID)) != NULL);
+}

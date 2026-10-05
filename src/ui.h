@@ -3,12 +3,10 @@
 
 #include <stddef.h>
 
-/* Plain-text UI on the PS2SDK debug screen (80x27 characters). */
+#include "ui_style.h"
 
-#define UI_ROWS 27
-#define UI_COLS 79
-#define UI_LIST_ROWS 17 /* visible rows in scrolling lists */
-#define UI_ROW_LEN 80
+/* Plain-text UI on the PS2SDK debug screen: bold 8x8 letters in a
+ * UI_COLS x UI_ROWS grid inside the TV-safe area (see ui_style.h). */
 
 /* Pad button bits (active high), re-exported from libpad. */
 #define UI_UP 0x0010

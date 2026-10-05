@@ -25,7 +25,7 @@ SRCS := main.c app_state.c iop_boot.c network.c source.c source_udpfs.c \
         xmb_installer_app.c xmb_game_channel.c xmb_text.c transaction.c \
         settings.c ui.c partname.c errors.c util.c game_pair.c browser.c flows.c \
         diagnostics.c crc32.c sha256.c batch.c manifest.c \
-        server_assets.c
+        server_assets.c ui_style.c
 
 # <bin2c symbol>=<file>. Standard PS2SDK modules, then the HDD driver
 # (source-built, see tools/driver/), hdlfs (HDLGameInstaller ec37c81),
