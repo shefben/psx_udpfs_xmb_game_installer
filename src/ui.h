@@ -57,6 +57,11 @@ int ui_held_buttons(void);
 int ui_select(const char *title, const char *status, char rows[][UI_ROW_LEN],
               int n, int start, const char *footer, int *key_out);
 
+/* ui_select, returning (with the button in *key_out) on any button of
+ * key_mask. L2/R2 in the mask also return when the list is empty. */
+int ui_select_ex(const char *title, const char *status, char rows[][UI_ROW_LEN], int n,
+                 int start, const char *footer, int key_mask, int *key_out);
+
 /* Like ui_select (no Square/Start), but returns UI_SELECT_WOKEN as soon
  * as ui_wake() is called, so the caller can redraw a changed status
  * (background network start-up). */

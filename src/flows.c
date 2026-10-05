@@ -15,6 +15,7 @@
 #include "manifest.h"
 #include "network.h"
 #include "opl_dependency.h"
+#include "listui.h"
 #include "opl_launcher_payload.h"
 #include "remove_games.h"
 #include "settings.h"
@@ -419,22 +420,27 @@ void flow_batch_install(void) {
   }
 
   /* Selection: Square toggles, X starts, O backs out. */
-  int sel = 0;
+  static listui_state_t ls;
+  static lv_item_t items[BATCH_MAX];
+  ls.item = 0;
   for (;;) {
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < n; i++) {
       batch_format_row(&batch[i], batch_rows[i], UI_ROW_LEN);
+      items[i].name = batch[i].title[0] ? batch[i].title : batch[i].name;
+      items[i].size = batch[i].bytes;
+      items[i].group = 0;
+    }
     uint32_t free_mb = 0;
     hdd_space_mb(NULL, &free_mb, NULL);
     char status[96];
-    snprintf(status, sizeof(status), "%d of %d selected, need %lu MiB, free %lu MiB",
+    snprintf(status, sizeof(status), "%d/%d selected, need %lu MiB, free %lu",
              batch_count_selected(batch, n), n, (unsigned long)batch_needed_mb(batch, n),
              (unsigned long)free_mb);
     int key = 0;
-    int c = ui_select("Install All Games", status, batch_rows, n, sel,
-                      "[Sq] toggle  [X] install selected  [O] back", &key);
+    int c = listui_pick("Install All Games", status, items, batch_rows, n, &ls,
+                        "[Sq] toggle  [X] install  [O] back", UI_SQUARE, &key);
     if (c < 0)
       return;
-    sel = c;
     if (key & UI_SQUARE) {
       batch_toggle(&batch[c]);
       continue;
@@ -834,6 +840,8 @@ typedef struct {
 
 static pair_row_t pairs[MAX_PAIRS];
 static char pair_rows[MAX_PAIRS][UI_ROW_LEN];
+static lv_item_t pair_items[MAX_PAIRS];
+static listui_state_t rm_ls;
 static hdd_part_t parts[256];
 
 static int collect_pairs(void) {
@@ -895,7 +903,15 @@ static void pair_list(const char *title, int only_problems) {
     char status[96];
     snprintf(status, sizeof(status), "%d game%s%s", n, n == 1 ? "" : "s",
              only_problems ? " need attention" : "");
-    int c = ui_select(title, status, pair_rows, n, sel, NULL, NULL);
+    for (int i = 0; i < n; i++) {
+      pair_items[i].name = pairs[i].visible + 3; /* "SLUS-20312..TITLE" */
+      pair_items[i].size = 0;
+      /* Games that need attention first. */
+      pair_items[i].group = pairs[i].state == PAIR_COMPLETE ? 1 : 0;
+    }
+    static listui_state_t ls;
+    ls.item = sel;
+    int c = listui_pick(title, status, pair_items, pair_rows, n, &ls, NULL, 0, NULL);
     if (c < 0)
       return;
     sel = c;
@@ -935,8 +951,14 @@ void flow_remove_games(void) {
     snprintf(status, sizeof(status), "%d of %d selected, free %lu MiB",
              remove_count_selected(rm, n), n, (unsigned long)free_mb);
     int key = 0;
-    int c = ui_select("Remove Games", status, rm_rows, n, sel,
-                      "[Sq] toggle  [Start] all/none  [X] remove  [O] back", &key);
+    for (int i = 0; i < n; i++) {
+      pair_items[i].name = rm[i].visible + 3;
+      pair_items[i].size = 0;
+      pair_items[i].group = 0;
+    }
+    rm_ls.item = sel;
+    int c = listui_pick("Remove Games", status, pair_items, rm_rows, n, &rm_ls,
+                        "[Sq] toggle [Start] all [X] remove", UI_SQUARE | UI_START, &key);
     if (c < 0)
       return;
     sel = c;

@@ -283,7 +283,8 @@ static int wait_button_or_wake(int wake, int seq) {
 }
 
 static int select_impl(const char *title, const char *status, char rows[][UI_ROW_LEN],
-                       int n, int start, const char *footer, int *key_out, int wake) {
+                       int n, int start, const char *footer, int *key_out, int wake,
+                       int key_mask) {
   int seq = wake_seq;
   int idx = (start >= 0 && start < n) ? start : 0, top = 0, dirty = 1;
   if (key_out)
@@ -334,8 +335,8 @@ static int select_impl(const char *title, const char *status, char rows[][UI_ROW
       dirty = 1;
     } else if (n > 0 && (b & UI_CROSS)) {
       return idx;
-    } else if (key_out && n > 0 && (b & (UI_SQUARE | UI_START))) {
-      *key_out = b & (UI_SQUARE | UI_START);
+    } else if (key_out && (b & key_mask) && (n > 0 || !(b & (UI_SQUARE | UI_START)))) {
+      *key_out = b & key_mask;
       return idx;
     } else if (b & (UI_CIRCLE | UI_TRIANGLE)) {
       return -1;
@@ -345,12 +346,17 @@ static int select_impl(const char *title, const char *status, char rows[][UI_ROW
 
 int ui_select(const char *title, const char *status, char rows[][UI_ROW_LEN],
               int n, int start, const char *footer, int *key_out) {
-  return select_impl(title, status, rows, n, start, footer, key_out, 0);
+  return select_impl(title, status, rows, n, start, footer, key_out, 0, UI_SQUARE | UI_START);
+}
+
+int ui_select_ex(const char *title, const char *status, char rows[][UI_ROW_LEN], int n,
+                 int start, const char *footer, int key_mask, int *key_out) {
+  return select_impl(title, status, rows, n, start, footer, key_out, 0, key_mask);
 }
 
 int ui_select_live(const char *title, const char *status, char rows[][UI_ROW_LEN],
                    int n, int start, const char *footer) {
-  return select_impl(title, status, rows, n, start, footer, NULL, 1);
+  return select_impl(title, status, rows, n, start, footer, NULL, 1, 0);
 }
 
 static void print_block(int row, const char *text) {

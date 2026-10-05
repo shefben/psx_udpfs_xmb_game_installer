@@ -8,6 +8,7 @@
 #include "app_state.h"
 #include "browser.h"
 #include "flows.h"
+#include "listui.h"
 #include "network.h"
 #include "source.h"
 #include "ui.h"
@@ -25,6 +26,8 @@ typedef struct {
 
 static entry_t entries[MAX_ENTRIES];
 static char rows[MAX_ENTRIES][UI_ROW_LEN];
+static lv_item_t items[MAX_ENTRIES];
+static listui_state_t ls; /* order and search kept while browsing */
 
 static int list_dir(const char *dir, int *count) {
   *count = 0;
@@ -137,10 +140,16 @@ void browser_run(void) {
                  e->name, sz);
       }
     }
+    for (int i = 0; i < n; i++) {
+      items[i].name = entries[i].name;
+      items[i].size = entries[i].size;
+      items[i].group = entries[i].is_dir ? -1 : 0; /* folders on top, never filtered */
+    }
     char status[96];
-    snprintf(status, sizeof(status), "%.60s   %d entries", cwd, n);
-    int pick = ui_select("Install Games from UDPFS", status, rows, n, sel,
-                         "[X] open/select  [O] up/back  [L1/R1] page", NULL);
+    snprintf(status, sizeof(status), "%.50s   %d entries", cwd, n);
+    ls.item = sel;
+    int pick = listui_pick("Install Games from UDPFS", status, items, rows, n, &ls,
+                           "[X] open  [O] up/back", 0, NULL);
     if (pick < 0) {
       if (strcmp(cwd, "udpfs:/") == 0)
         return;
