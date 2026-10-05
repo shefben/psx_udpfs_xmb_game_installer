@@ -9,9 +9,13 @@ level unless stated otherwise.
   stays on a black screen when started from the XMB, and with two or more
   installed games the XMB freezes on its loading screen; deleting the
   games fixes that. Both builds had KELFs with a PSX `xosdmain` header.
+  The freeze needed any two of our channels (installer + game counts).
   KELFs are now signed with the header that is known to start from PSX
-  XMB channels (`KELF_MODE=dnasload`, see `docs/BUILD.md`); whether that
-  also cures the boot freeze is D43/D44.
+  XMB channels (`KELF_MODE=dnasload`, see `docs/BUILD.md`), and every
+  partition header carries icon.sys and an icon like PFS-BatchKit-
+  Manager's and PSX-XMB-Manager's; D43, D44 and D46 confirm on hardware.
+* **PS1 channels from an earlier build** keep their old header (no
+  Repair for PS1 games yet): delete and reinstall them.
 * **Signing is external.** `kelftool` (ps2homebrew/kelftool) and
   `PS2KEYS.dat` are build prerequisites, never shipped.
 * **KELF sizes.** The app KELF embeds the OPL-Launcher KELF (~0.3 MB,

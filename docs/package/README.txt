@@ -170,12 +170,12 @@ IF SOMETHING GOES WRONG
                            be at the same place); Install All resumes it too.
                            The last copied part is read back first; a part
                            that did not reach the disk is copied again.
-  Installer channel shows  Built by an earlier v2.0 zip. Start this zip's
-  a black screen           bootstrap ELF and choose Install Installer as
-                           XMB Channel (replaces its EXECUTE.KELF). For
-                           games installed with it: Installed Games > the
-                           game > Repair XMB channel, after replacing the
-                           PC\udpfsd folder with this zip's.
+  Installer channel shows  Made by an earlier v2.0 zip. Start this zip's
+  a black screen, or the   bootstrap ELF from wLaunchELF and choose
+  XMB freezes while        Install Installer as XMB Channel. Replace the
+  loading                  PC\udpfsd folder with this zip's, then
+                           Repair XMB Channels, then each game >
+                           Rebuild XMB channel. Then restart the DESR.
   Install hangs or fails   Network Settings > Copy engine: basic (turns off
   with the fast copy       the overlapped network + HDD copy), Save.
   Anything else            Diagnostics on the DESR shows PASS / FAIL for

@@ -8,6 +8,7 @@
 
 #include "apa_osd_header.h"
 #include "hdd_partitions.h"
+#include "opl_launcher_payload.h"
 #include "pfs_channel.h"
 #include "xmb_text.h"
 
@@ -16,6 +17,36 @@
 static channel_result_t cres(inst_err_t e, int rc, const char *step) {
   channel_result_t r = {e, rc, step};
   return r;
+}
+
+static char g_iconsys[1024];
+
+static int osd_files(ppaa_files_t *f, const char *syscnf, const char *title0,
+                     const char *title1) {
+  const uint8_t *icon;
+  uint32_t icon_len;
+  size_t n = xmb_render_icon_sys(g_iconsys, sizeof(g_iconsys), title0, title1);
+  if (!n)
+    return -1;
+  payload_osd_icon(&icon, &icon_len);
+  *f = (ppaa_files_t){syscnf, strlen(syscnf), g_iconsys, n, icon, icon_len};
+  return 0;
+}
+
+inst_err_t osd_header_write(const char *partition, const char *syscnf, const char *title0,
+                            const char *title1, int *rc_out) {
+  ppaa_files_t f;
+  if (osd_files(&f, syscnf, title0, title1) < 0)
+    return ERR_XMB_HEADER_WRITE;
+  return ppaa_write_files(partition, &f, rc_out);
+}
+
+inst_err_t osd_header_verify(const char *partition, const char *syscnf, const char *title0,
+                             const char *title1, int *rc_out) {
+  ppaa_files_t f;
+  if (osd_files(&f, syscnf, title0, title1) < 0)
+    return ERR_XMB_VERIFY;
+  return ppaa_verify_partition_files(partition, &f, rc_out);
 }
 
 channel_result_t channel_populate(const char *partition,
@@ -51,10 +82,9 @@ done:
   if (out.err)
     return out;
 
-  inst_err_t e = ppaa_write_partition(partition, XMB_SYSTEM_CNF,
-                                      strlen(XMB_SYSTEM_CNF), &r);
+  inst_err_t e = osd_header_write(partition, XMB_SYSTEM_CNF, c->osd_title0, c->osd_title1, &r);
   if (e)
-    return cres(e, r, "PPAA/system.cnf header");
+    return cres(e, r, "OSD header (system.cnf, icon.sys, icon)");
   return out;
 }
 
@@ -85,12 +115,10 @@ channel_result_t channel_verify(const char *partition,
   if (out.err)
     return out;
 
-  /* ppaa_verify compares the exact system.cnf, which contains
-   * "BOOT2 = pfs:/EXECUTE.KELF". */
-  inst_err_t e = ppaa_verify_partition(partition, XMB_SYSTEM_CNF,
-                                       strlen(XMB_SYSTEM_CNF), &r);
+  /* The exact system.cnf ("BOOT2 = pfs:/EXECUTE.KELF"), icon.sys and icon. */
+  inst_err_t e = osd_header_verify(partition, XMB_SYSTEM_CNF, c->osd_title0, c->osd_title1, &r);
   if (e)
-    return cres(e, r, "PPAA/system.cnf header");
+    return cres(e, r, "OSD header (system.cnf, icon.sys, icon)");
   return out;
 }
 
@@ -102,8 +130,7 @@ inst_err_t channel_quick_check(const char *partition) {
   pfs_umount(W);
   if (!ok)
     return ERR_XMB_VERIFY;
-  return ppaa_verify_partition(partition, XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF),
-                               NULL);
+  return ppaa_check_partition(partition, XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF), NULL);
 }
 
 #define INFO_SYS_MAX 2048

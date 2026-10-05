@@ -49,4 +49,8 @@ int payload_installer_embedded(void);
 void payload_default_jacket(const uint8_t **data, uint32_t *size);
 void payload_installer_jacket(const uint8_t **data, uint32_t *size);
 
+/* HDLGameInstaller's default OSD icon (res/icon.ico), written as the
+ * list and delete icon of every partition header we create. */
+void payload_osd_icon(const uint8_t **data, uint32_t *size);
+
 #endif

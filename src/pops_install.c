@@ -11,6 +11,7 @@
 #include "app_state.h"
 #include "crc32.h"
 #include "hdd_partitions.h"
+#include "pfs_channel.h"
 #include "pops_install.h"
 #include "source_udpfs.h"
 #include "util.h"
@@ -328,9 +329,11 @@ void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep)
 
   /* Last: the header that makes the channel appear in the XMB. */
   stage(ui, rep, STAGE_CREATING_CHANNEL);
-  if ((rep->err = ppaa_write_partition(p->partition, XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF),
-                                       &rep->rc))) {
-    rep->detail = "PPAA/system.cnf header";
+  char part_id[PART_ID_LEN + 1] = "";
+  boot_id_to_part_id(p->vcd.boot_id, part_id);
+  if ((rep->err = osd_header_write(p->partition, XMB_SYSTEM_CNF, p->title, part_id,
+                                   &rep->rc))) {
+    rep->detail = "OSD header (system.cnf, icon.sys, icon)";
     goto out;
   }
   stage(ui, rep, STAGE_FINISHED);

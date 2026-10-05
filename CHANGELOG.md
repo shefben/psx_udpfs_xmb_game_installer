@@ -74,11 +74,20 @@ check.
   and the installer channel stayed on a black screen. KELFs now carry
   the header of the OPL-Launcher and POPStarter KELFs that run from PSX
   XMB channels, and OPL-Launcher is signed without its debug data
-  (1.5 MB to 0.3 MB). The same build also froze the XMB while loading
-  once two or more games were installed; that is being retested with
-  the new KELFs. Start the new bootstrap ELF once and choose
+  (1.5 MB to 0.3 MB). Start the new bootstrap ELF once and choose
   *Install Installer as XMB Channel* to replace the installer's KELF,
   and use the new `udpfsd` folder.
+- **XMB froze while loading with two or more of our channels** (the
+  installer and a game, or two games; any one alone was fine). Our
+  partition headers held only `system.cnf`. PFS-BatchKit-Manager,
+  PSX-XMB-Manager and HDLGameInstaller also write an `icon.sys` and an
+  icon into every header, including the hidden game partition's. Every
+  header now has all three (the icon is HDLGameInstaller's default).
+  `info.sys` now matches those tools too: `title_id = SLUS-20312`
+  without the region, `area` from the game ID, `copyright_imgcount = 1`.
+  Channels made by an earlier build show as needing repair: choose
+  *Repair XMB Channels* (or *Installed Games > game > Rebuild XMB channel*) for each, and reinstall
+  the installer channel from the bootstrap ELF.
 - **Broken USB backups.** Backing up a game whose copy never finished
   is refused, so a broken `.iso` can no longer pass its own check.
 - **Game info memory bug.** Loading the game info no longer writes

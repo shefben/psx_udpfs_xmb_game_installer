@@ -42,6 +42,7 @@ BLOBS := $(foreach m,$(SDK_IRX),$(m)_irx=$(PS2SDK)/iop/irx/$(m).irx) \
          hddpump_irx=$(IRX_DIR)/hddpump.irx \
          default_jkt_png=assets/game/default_jkt_001.png \
          installer_jkt_png=assets/installer/jkt_001.png \
+         osd_icon_ico=reference/HDLGameInstaller/res/icon.ico \
          $(EMBED_KELFS)
 
 blob_sym = $(firstword $(subst =, ,$(1)))

@@ -22,8 +22,28 @@ void xmb_sanitize_value(const char *in, char *out, size_t outsz) {
   out[n] = 0;
 }
 
+char xmb_area_letter(const char *boot_id) {
+  if (!boot_id || strlen(boot_id) < 4)
+    return 'X';
+  switch (boot_id[2]) {
+  case 'U':
+    return 'U';
+  case 'E':
+    return 'E';
+  case 'P':
+    return 'J';
+  case 'A':
+    return 'A';
+  case 'C':
+    return 'C';
+  case 'K':
+    return 'K';
+  }
+  return 'X';
+}
+
 static size_t render(char *out, size_t outsz, const char *title, const char *title_id,
-                     const xmb_game_info_t *gi) {
+                     char area, const xmb_game_info_t *gi) {
   char t[256], id[64], rd[9] = "", dev[64] = "", pub[64] = "", gen[32] = "";
   xmb_sanitize_value(title, t, sizeof(t));
   xmb_sanitize_value(title_id, id, sizeof(id));
@@ -49,16 +69,16 @@ static size_t render(char *out, size_t outsz, const char *title, const char *tit
                    "image_count = 1\r\n"
                    "image_viewsec = 600\r\n"
                    "copyright_viewflag = 0\r\n"
-                   "copyright_imgcount = 0\r\n"
+                   "copyright_imgcount = 1\r\n"
                    "genre =%s%s\r\n"
                    "parental_lock = 1\r\n"
                    "effective_date = 0\r\n"
                    "expire_date = 0\r\n"
-                   "area = J\r\n"
+                   "area = %c\r\n"
                    "violence_flag = 0\r\n"
                    "content_type = 255\r\n"
                    "content_subtype = 0\r\n",
-                   t, id, KV(rd), KV(dev), KV(pub), KV(gen));
+                   t, id, KV(rd), KV(dev), KV(pub), KV(gen), area);
 #undef KV
   if (n < 0 || (size_t)n >= outsz) {
     if (outsz)
@@ -118,7 +138,39 @@ size_t xmb_info_sys_retitle(const char *text, const char *title, char *out, size
 
 size_t xmb_render_info_sys(char *out, size_t outsz, const char *title,
                            const char *title_id) {
-  return render(out, outsz, title, title_id, NULL);
+  return render(out, outsz, title, title_id, 'X', NULL);
+}
+
+size_t xmb_render_icon_sys(char *out, size_t outsz, const char *title0, const char *title1) {
+  char t0[65], t1[33];
+  xmb_sanitize_value(title0, t0, sizeof(t0));
+  xmb_sanitize_value(title1, t1, sizeof(t1));
+  int n = snprintf(out, outsz,
+                   "PS2X\n"
+                   "title0 = %s\n"
+                   "title1 = %s\n"
+                   "bgcola = 64\n"
+                   "bgcol0 = 22,47,92\n"
+                   "bgcol1 = 3,10,28\n"
+                   "bgcol2 = 3,10,28\n"
+                   "bgcol3 = 22,47,92\n"
+                   "lightdir0 = 0.5000,0.5000,0.5000\n"
+                   "lightdir1 = 0.0000,-0.4000,-1.0000\n"
+                   "lightdir2 = 0.5000,-0.5000,0.5000\n"
+                   "lightcolamb = 31,31,31\n"
+                   "lightcol0 = 62,62,55\n"
+                   "lightcol1 = 33,42,64\n"
+                   "lightcol2 = 18,18,49\n"
+                   "uninstallmes0 = This will delete the game.\n"
+                   "uninstallmes1 =\n"
+                   "uninstallmes2 =\n",
+                   t0, t1);
+  if (n < 0 || (size_t)n >= outsz) {
+    if (outsz)
+      out[0] = 0;
+    return 0;
+  }
+  return (size_t)n;
 }
 
 int xmb_game_info_parse(const char *text, xmb_game_info_t *gi) {
@@ -157,14 +209,13 @@ int xmb_game_info_parse(const char *text, xmb_game_info_t *gi) {
 
 size_t xmb_game_info_sys_ex(char *out, size_t outsz, const char *title, const char *boot_id,
                             const xmb_game_info_t *gi) {
-  char part_id[PART_ID_LEN + 1], title_id[48];
+  char part_id[PART_ID_LEN + 1];
   if (boot_id_to_part_id(boot_id, part_id) < 0) {
     if (outsz)
       out[0] = 0;
     return 0;
   }
-  snprintf(title_id, sizeof(title_id), "%s (%s)", part_id, region_label(boot_id));
-  return render(out, outsz, title, title_id, gi);
+  return render(out, outsz, title, part_id, xmb_area_letter(boot_id), gi);
 }
 
 size_t xmb_game_info_sys(char *out, size_t outsz, const char *title,

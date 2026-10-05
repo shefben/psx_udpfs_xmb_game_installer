@@ -49,9 +49,28 @@ int xmb_info_sys_get(const char *text, const char *key, char *out, size_t outsz)
  * empty title is refused). Returns the new length, or 0. */
 size_t xmb_info_sys_retitle(const char *text, const char *title, char *out, size_t outsz);
 
-/* info.sys for a game: title_id = "<PART ID> (<REGION>)", e.g.
- * "SLUS-20312 (NTSC-U)". Returns length or 0. */
+/* info.sys for a game: title_id = the partition ID ("SLUS-20312") and
+ * area = the region letter, as PFS-BatchKit-Manager and PSX-XMB-Manager
+ * write them. Returns length or 0. */
 size_t xmb_game_info_sys(char *out, size_t outsz, const char *title,
                          const char *boot_id);
+
+/* info.sys "area" letter from the ID's third character (BatchKit):
+ * U (SLUS/SCUS), E (SLES/SCES), J (SLPS/SLPM/SCPS), A, C, K; else X. */
+char xmb_area_letter(const char *boot_id);
+
+/* OSD-header system.cnf of a hidden HDL game partition: HDLGameInstaller
+ * res/system.cnf (hdl_dump writes the same with VER = 1.20). The XMB
+ * never boots it; OPL-Launcher starts the game. */
+#define XMB_HIDDEN_SYSTEM_CNF                                                  \
+  "BOOT2 = PATINFO\n"                                                          \
+  "VER = 1.00\n"                                                               \
+  "VMODE = NTSC\n"                                                             \
+  "HDDUNITPOWER = NICHDD\n"
+
+/* HDD-format icon.sys ("PS2X") for the OSD header: title0 = title,
+ * title1 = second line (game ID), hdl_dump's default colours and
+ * lights. LF line endings. Returns length or 0. */
+size_t xmb_render_icon_sys(char *out, size_t outsz, const char *title0, const char *title1);
 
 #endif

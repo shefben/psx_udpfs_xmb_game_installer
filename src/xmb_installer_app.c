@@ -28,6 +28,8 @@ static void build_content(channel_content_t *c, const payload_t *kelf,
       (uint32_t)xmb_render_info_sys(info, infosz, INSTALLER_TITLE, INSTALLER_TITLE_ID);
   c->jacket = jkt;
   c->jacket_size = jkt_size;
+  c->osd_title0 = INSTALLER_TITLE;
+  c->osd_title1 = INSTALLER_TITLE_ID;
 }
 
 /* Extra (non-XMB) content: config and the journal directory. */

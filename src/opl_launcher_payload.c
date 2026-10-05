@@ -23,6 +23,8 @@ extern unsigned char default_jkt_png[];
 extern unsigned int size_default_jkt_png;
 extern unsigned char installer_jkt_png[];
 extern unsigned int size_installer_jkt_png;
+extern unsigned char osd_icon_ico[];
+extern unsigned int size_osd_icon_ico;
 
 #ifdef HAVE_EMBEDDED_OPL_LAUNCHER
 extern unsigned char opl_launcher_kelf[];
@@ -141,6 +143,11 @@ inst_err_t payload_installer(payload_t *out, int app_mounted, int udpfs_ok) {
 void payload_default_jacket(const uint8_t **data, uint32_t *size) {
   *data = default_jkt_png;
   *size = size_default_jkt_png;
+}
+
+void payload_osd_icon(const uint8_t **data, uint32_t *size) {
+  *data = osd_icon_ico;
+  *size = size_osd_icon_ico;
 }
 
 void payload_installer_jacket(const uint8_t **data, uint32_t *size) {

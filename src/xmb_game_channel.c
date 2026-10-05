@@ -494,10 +494,19 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
   void *jkt_owned;
   rep->jacket = game_load_jacket(j->startup_id, j->source_path, &jkt, &jkt_size, &jkt_owned);
 
-  channel_content_t c = {kelf->data, kelf->size, info, info_len, jkt, jkt_size};
+  char part_id[PART_ID_LEN + 1] = "";
+  boot_id_to_part_id(j->startup_id, part_id);
+  channel_content_t c = {kelf->data, kelf->size, info, info_len, jkt, jkt_size, title, part_id};
   int rc = 0;
-  inst_err_t e = pfs_create_partition(j->visible_partition, CHANNEL_SIZE_STR, &rc);
-  channel_result_t cr = {e, rc, "create PFS partition"};
+  /* The hidden game gets the OSD header PFS-BatchKit-Manager and
+   * HDLGameInstaller give it (BOOT2 = PATINFO, icon.sys, icon). It sits
+   * below the HDL game header and the game data, which stay untouched. */
+  inst_err_t e = osd_header_write(j->hidden_partition, XMB_HIDDEN_SYSTEM_CNF, title, part_id, &rc);
+  channel_result_t cr = {e, rc, "OSD header of the game data partition"};
+  if (!cr.err) {
+    e = pfs_create_partition(j->visible_partition, CHANNEL_SIZE_STR, &rc);
+    cr = (channel_result_t){e, rc, "create PFS partition"};
+  }
   if (!cr.err)
     cr = channel_populate(j->visible_partition, &c);
   if (!cr.err && (e = advance(j, TX_CHANNEL_CREATED)))
@@ -515,7 +524,7 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
      * failed step may have left the work mount open, which makes the
      * APA driver refuse removal (-EBUSY), so release it first. */
     fail(j, rep, cr.err, cr.rc, cr.step);
-    if (cr.err != ERR_PARTITION_EXISTS) {
+    if (cr.err != ERR_PARTITION_EXISTS && hdd_exists(j->visible_partition) > 0) {
       pfs_umount(PFS_WORK);
       int rrc = 0;
       if (hdd_remove_exact(j->visible_partition, &rrc) != ERR_OK) {

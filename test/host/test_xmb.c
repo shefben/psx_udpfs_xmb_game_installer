@@ -36,7 +36,7 @@ TEST(info_sys_game_template) {
   CHECK_EQ_INT(n, strlen(buf));
   CHECK_STR(buf,
             "title = Gran Turismo 4\r\n"
-            "title_id = SLUS-20312 (NTSC-U)\r\n"
+            "title_id = SLUS-20312\r\n"
             "title_sub_id = 0\r\n"
             "release_date =\r\n"
             "developer_id =\r\n"
@@ -48,12 +48,12 @@ TEST(info_sys_game_template) {
             "image_count = 1\r\n"
             "image_viewsec = 600\r\n"
             "copyright_viewflag = 0\r\n"
-            "copyright_imgcount = 0\r\n"
+            "copyright_imgcount = 1\r\n"
             "genre =\r\n"
             "parental_lock = 1\r\n"
             "effective_date = 0\r\n"
             "expire_date = 0\r\n"
-            "area = J\r\n"
+            "area = U\r\n"
             "violence_flag = 0\r\n"
             "content_type = 255\r\n"
             "content_subtype = 0\r\n");
@@ -86,12 +86,12 @@ TEST(info_sys_retitle_keeps_every_other_line) {
   CHECK_EQ_INT(xmb_info_sys_get(buf, "title", t, sizeof(t)), 0);
   CHECK_STR(t, "Gran Turismo 4");
   CHECK_EQ_INT(xmb_info_sys_get(buf, "title_id", t, sizeof(t)), 0);
-  CHECK_STR(t, "SLUS-20312 (NTSC-U)");
+  CHECK_STR(t, "SLUS-20312");
   size_t m = xmb_info_sys_retitle(buf, "GT4 \r\nnote = x", out, sizeof(out));
   CHECK(m > 0);
   CHECK_EQ_INT(xmb_info_sys_get(out, "title", t, sizeof(t)), 0);
   CHECK_STR(t, "GT4 note = x"); /* control chars dropped: no injected line */
-  CHECK(strstr(out, "title = GT4 note = x\r\ntitle_id = SLUS-20312 (NTSC-U)\r\n") == out);
+  CHECK(strstr(out, "title = GT4 note = x\r\ntitle_id = SLUS-20312\r\n") == out);
   CHECK_EQ_INT((int)(m - strlen("title = GT4 note = x\r\n")),
                (int)(n - strlen("title = Gran Turismo 4\r\n")));
   CHECK_EQ_INT(xmb_info_sys_retitle(buf, "   ", out, sizeof(out)), 0); /* empty title */
@@ -125,8 +125,9 @@ TEST(info_sys_game_info_fields) {
 
 TEST(info_sys_unknown_region_still_renders) {
   char buf[2048];
-  CHECK(xmb_game_info_sys(buf, sizeof(buf), "X", "ABCD_123.45") > 0);
-  CHECK(strstr(buf, "title_id = ABCD-12345 (UNKNOWN)\r\n") != NULL);
+  CHECK(xmb_game_info_sys(buf, sizeof(buf), "X", "ABXD_123.45") > 0);
+  CHECK(strstr(buf, "title_id = ABXD-12345\r\n") != NULL);
+  CHECK(strstr(buf, "area = X\r\n") != NULL);
 }
 
 TEST(info_sys_strips_control_chars) {
@@ -218,4 +219,90 @@ TEST(ppaa_read_syscnf_roundtrip) {
   CHECK_EQ_INT(ppaa_read_syscnf(region, sizeof(region), out, sizeof(out)),
                strlen(XMB_SYSTEM_CNF));
   CHECK_STR(out, XMB_SYSTEM_CNF);
+}
+
+TEST(area_letters_follow_batchkit) {
+  CHECK_EQ_INT(xmb_area_letter("SLUS_203.12"), 'U');
+  CHECK_EQ_INT(xmb_area_letter("SCUS_971.99"), 'U');
+  CHECK_EQ_INT(xmb_area_letter("SLES_503.30"), 'E');
+  CHECK_EQ_INT(xmb_area_letter("SLPM_650.51"), 'J');
+  CHECK_EQ_INT(xmb_area_letter("SCKA_200.01"), 'K');
+  CHECK_EQ_INT(xmb_area_letter("SCCS_400.01"), 'C');
+  CHECK_EQ_INT(xmb_area_letter("SLAJ_250.01"), 'A');
+  CHECK_EQ_INT(xmb_area_letter("ABXD_123.45"), 'X');
+  CHECK_EQ_INT(xmb_area_letter(""), 'X');
+}
+
+TEST(icon_sys_hdd_format) {
+  char buf[1024];
+  size_t n = xmb_render_icon_sys(buf, sizeof(buf), "Gran Turismo 4\r\nx", "SLUS-20312");
+  CHECK(n > 0 && n < PPAA_ICONSYS_MAX);
+  CHECK_EQ_INT(n, strlen(buf));
+  CHECK(strncmp(buf, "PS2X\ntitle0 = Gran Turismo 4x\ntitle1 = SLUS-20312\nbgcola = 64\n", 61) == 0);
+  CHECK(strstr(buf, "lightcol2 = 18,18,49\nuninstallmes0 = This will delete the game.\n"
+                    "uninstallmes1 =\nuninstallmes2 =\n") != NULL);
+  CHECK(memchr(buf, '\r', n) == NULL);
+  CHECK_EQ_INT(xmb_render_icon_sys(buf, 40, "T", "I"), 0);
+}
+
+TEST(hidden_system_cnf_is_hdlgi_res) {
+  CHECK_STR(XMB_HIDDEN_SYSTEM_CNF,
+            "BOOT2 = PATINFO\nVER = 1.00\nVMODE = NTSC\nHDDUNITPOWER = NICHDD\n");
+}
+
+static const uint8_t ICON[1000] = {0, 0, 1, 0, 1, 0, 0, 0, 7};
+static const char ICONSYS[] = "PS2X\ntitle0 = A\ntitle1 = B\n";
+
+TEST(ppaa_files_layout_matches_hdl_dump) {
+  static uint8_t region[PPAA_OSD_MAX];
+  ppaa_files_t f = {XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF), ICONSYS, strlen(ICONSYS),
+                    ICON, sizeof(ICON)};
+  CHECK_EQ_INT(ppaa_files_span(&f), 0x800 + 1024);
+  memset(region, 0xEE, sizeof(region));
+  CHECK_EQ_INT(ppaa_apply_files(region, sizeof(region), &f), ERR_OK);
+  /* hdl_dump modify_header: 0x10 system.cnf, 0x18 icon.sys, 0x20 list
+   * icon, 0x28 delete icon = list icon when there is no del.ico. */
+  static const uint32_t desc[8] = {0x200, 0, 0x400, 0, 0x800, sizeof(ICON), 0x800, sizeof(ICON)};
+  for (int i = 0; i < 8; i++) {
+    uint32_t want = desc[i];
+    if (i == 1)
+      want = (uint32_t)strlen(XMB_SYSTEM_CNF);
+    if (i == 3)
+      want = (uint32_t)strlen(ICONSYS);
+    const uint8_t *p = region + 0x10 + 4 * i;
+    CHECK_EQ_INT(p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24, want);
+  }
+  CHECK(memcmp(region + 0x400, ICONSYS, strlen(ICONSYS)) == 0);
+  CHECK_EQ_INT(region[0x400 + strlen(ICONSYS)], 0);
+  CHECK_EQ_INT(region[0x7FF], 0);
+  CHECK(memcmp(region + 0x800, ICON, sizeof(ICON)) == 0);
+  CHECK_EQ_INT(region[0x800 + sizeof(ICON)], 0); /* padded to 512 */
+  CHECK_EQ_INT(region[0x800 + 1023], 0);
+  CHECK_EQ_INT(region[0x800 + 1024], 0xEE); /* beyond the span: untouched */
+  CHECK_EQ_INT(region[0x0C], 0xEE);          /* reserved bytes untouched */
+  CHECK_EQ_INT(ppaa_verify_files(region, sizeof(region), &f), ERR_OK);
+  CHECK(ppaa_has_icons(region, sizeof(region)));
+  region[0x800 + 5] ^= 1;
+  CHECK_EQ_INT(ppaa_verify_files(region, sizeof(region), &f), ERR_XMB_VERIFY);
+}
+
+TEST(ppaa_syscnf_only_has_no_icons) {
+  static uint8_t region[PPAA_REGION_LEN];
+  memset(region, 0, sizeof(region));
+  ppaa_apply(region, sizeof(region), XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF));
+  CHECK(!ppaa_has_icons(region, sizeof(region))); /* older channels: Repair offered */
+}
+
+TEST(ppaa_files_rejects_bad_sizes) {
+  static uint8_t region[PPAA_OSD_MAX];
+  ppaa_files_t f = {XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF), ICONSYS, 0, NULL, 0};
+  CHECK_EQ_INT(ppaa_files_span(&f), 0);
+  f.iconsys_len = PPAA_ICONSYS_MAX + 1;
+  CHECK_EQ_INT(ppaa_apply_files(region, sizeof(region), &f), ERR_INVALID_ARG);
+  f.iconsys_len = strlen(ICONSYS);
+  f.icon = ICON;
+  f.icon_len = PPAA_ICON_MAX + 1;
+  CHECK_EQ_INT(ppaa_files_span(&f), 0);
+  f.icon_len = sizeof(ICON);
+  CHECK_EQ_INT(ppaa_apply_files(region, 0x800, &f), ERR_INVALID_ARG); /* too small */
 }
