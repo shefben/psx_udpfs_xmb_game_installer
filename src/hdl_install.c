@@ -16,6 +16,8 @@
 #include "util.h"
 
 static uint8_t stream_buf[STREAM_BUF_SIZE] __attribute__((aligned(64)));
+/* Second buffer for the read-back (read next block while checking one). */
+static uint8_t stream_buf2[STREAM_BUF_SIZE] __attribute__((aligned(64)));
 stream_timing_t g_stream_timing;
 
 static hdl_result_t res(inst_err_t e, int rc) {
@@ -113,20 +115,30 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
       break;
     }
     u64 t1 = GetTimerSystemTime();
+    /* The HDD write runs on the IOP while the EE computes the CRC of the
+     * same (unchanged) buffer: start it without waiting, CRC, then wait.
+     * No other fileXio call is made in between (fileXioWaitAsync needs
+     * the non-blocking mode until it has collected the result). */
+    fileXioSetBlockMode(FXIO_NOWAIT);
+    int w = fileXioWrite(fd, stream_buf, (int)want);
     /* CRC over exactly the bytes received from UDPFS (for a ZSO source:
      * the decompressed ISO stream). */
     crc = crc32_update(crc, stream_buf, want);
     u64 t2 = GetTimerSystemTime();
-    int w = fileXioWrite(fd, stream_buf, (int)want);
+    if (w >= 0)
+      fileXioWaitAsync(FXIO_WAIT, &w);
+    fileXioSetBlockMode(FXIO_WAIT);
     if (w != (int)want) {
       out.err = ERR_HDL_WRITE;
       out.rc = w;
       break;
     }
     written += want;
+    /* CRC and HDD write overlap: each is timed from t1 on its own, so the
+     * time per block is network + the slower of the two. */
     g_stream_timing.read_ticks += t1 - t0;
     g_stream_timing.crc_ticks += t2 - t1;
-    g_stream_timing.write_ticks += GetTimerSystemTime() - t2;
+    g_stream_timing.write_ticks += GetTimerSystemTime() - t1;
     g_stream_timing.bytes = written;
     report(cb, start, &last, written, total, &abort);
     if (abort) {
@@ -257,37 +269,70 @@ static hdl_result_t read_back(const char *hidden, uint64_t total, const iso_info
   uint32_t crc = 0;
   int abort = 0;
   memset(&g_stream_timing, 0, sizeof(g_stream_timing));
+  /* Double buffer: the IOP reads block n+1 from the HDD into one buffer
+   * while the EE computes the CRC of block n in the other. */
+  uint8_t *bufs[2] = {stream_buf, stream_buf2};
+  int cur = 0;
+  uint32_t want = total > STREAM_BUF_SIZE ? STREAM_BUF_SIZE : (uint32_t)total;
+  u64 t0 = GetTimerSystemTime();
+  r = fileXioRead(fd, bufs[cur], (int)want);
   while (done_bytes < total) {
-    uint32_t want = total - done_bytes > STREAM_BUF_SIZE
-                        ? STREAM_BUF_SIZE
-                        : (uint32_t)(total - done_bytes);
-    u64 t0 = GetTimerSystemTime();
-    r = fileXioRead(fd, stream_buf, (int)want);
     u64 t1 = GetTimerSystemTime();
+    g_stream_timing.read_ticks += t1 - t0;
     if (r != (int)want) {
       out = res(ERR_HDL_VERIFY, r);
       break;
     }
+    const uint8_t *blk = bufs[cur]; /* the block to check */
+    uint64_t after = done_bytes + want;
+    uint32_t next = total - after > STREAM_BUF_SIZE ? STREAM_BUF_SIZE
+                                                     : (uint32_t)(total - after);
+    int pending = 0;
+    if (next) {
+      fileXioSetBlockMode(FXIO_NOWAIT);
+      t0 = GetTimerSystemTime();
+      r = fileXioRead(fd, bufs[cur ^ 1], (int)next);
+      pending = r >= 0;
+      if (!pending)
+        fileXioSetBlockMode(FXIO_WAIT);
+    }
     /* Structural: the PVD must be at sector 16 of the installed data.
      * A ZSO container (no PVD there) can never pass this. */
-    if (iso && done_bytes == 0 && want >= 17 * ISO_SECTOR &&
-        (memcmp(stream_buf + 16 * ISO_SECTOR, "\x01" "CD001", 6) != 0 ||
-         get_u32le(stream_buf + 16 * ISO_SECTOR + 80) != iso->pvd_blocks ||
-         memcmp(stream_buf + 16 * ISO_SECTOR + 40, iso->volume_id,
-                strlen(iso->volume_id)) != 0)) {
+    int bad = iso && done_bytes == 0 && want >= 17 * ISO_SECTOR &&
+              (memcmp(blk + 16 * ISO_SECTOR, "\x01" "CD001", 6) != 0 ||
+               get_u32le(blk + 16 * ISO_SECTOR + 80) != iso->pvd_blocks ||
+               memcmp(blk + 16 * ISO_SECTOR + 40, iso->volume_id,
+                      strlen(iso->volume_id)) != 0);
+    if (!bad) {
+      crc = crc32_update(crc, blk, want);
+      done_bytes += want;
+    }
+    u64 t2 = GetTimerSystemTime();
+    g_stream_timing.crc_ticks += t2 - t1;
+    g_stream_timing.bytes = done_bytes;
+    if (!bad)
+      report(cb, start, &last, done_bytes, total, &abort);
+    /* Collect the read in flight before anything else uses fileXio. */
+    if (pending) {
+      fileXioWaitAsync(FXIO_WAIT, &r);
+      fileXioSetBlockMode(FXIO_WAIT);
+    }
+    if (bad) {
       out = res(ERR_HDL_VERIFY, 0);
       break;
     }
-    crc = crc32_update(crc, stream_buf, want);
-    done_bytes += want;
-    g_stream_timing.read_ticks += t1 - t0;
-    g_stream_timing.crc_ticks += GetTimerSystemTime() - t1;
-    g_stream_timing.bytes = done_bytes;
-    report(cb, start, &last, done_bytes, total, &abort);
     if (abort) {
       out = res(ERR_USER_ABORT, 0);
       break;
     }
+    if (!next)
+      break;
+    if (!pending) {
+      out = res(ERR_HDL_VERIFY, r);
+      break;
+    }
+    cur ^= 1;
+    want = next;
   }
   out.bytes = done_bytes;
   out.crc32 = crc;
