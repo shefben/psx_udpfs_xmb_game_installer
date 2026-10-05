@@ -16,12 +16,13 @@ level unless stated otherwise.
 * **KELF sizes.** The app KELF embeds the OPL-Launcher KELF, so it is
   roughly app + 1.6 MB. No size limit of the DESR loader is known to be
   exceeded, but none has been tested.
-* **Static IP only.** Neutrino's ministack has no DHCP. Changing the IP
-  restarts the IOP.
+* **DHCP is a simple client** (added to ministack): one lease at start-up,
+  no renewal (an installer session is far shorter than a lease), no
+  gateway (udpfsd must be on the same network). Without an answer within
+  ~12 s the fixed fallback IP is used. Changing IP settings restarts the IOP.
 * **One udpfsd server.** The first server that answers discovery is
   used. Discovery runs once, when udpfs_ioman loads (5 s); restart the
   network if udpfsd starts later.
-* **No resume.** An interrupted copy restarts from the beginning.
 * **Verification cost.** Every install reads the whole game back from
   the HDD (CRC-32), adding roughly the HDD read time of the game.
 * **Formats.** Plain `.iso` and udpfsd's virtual `.zso.iso` only. CSO/CHD

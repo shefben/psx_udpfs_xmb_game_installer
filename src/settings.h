@@ -2,6 +2,7 @@
 #define PSXI_SETTINGS_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "errors.h"
 
@@ -10,8 +11,12 @@
 
 #define SETTINGS_DEFAULT_IP "192.168.1.10"
 
+/* `ip_mode=dhcp` (default): ask the router for an address; `local_ip` is
+ * used only when no DHCP server answers. `ip_mode=static`: always
+ * local_ip. */
 typedef struct {
-  char local_ip[16];
+  int dhcp;
+  char local_ip[16]; /* static address, or the DHCP fallback */
   int using_default; /* 1 if the compiled default is in effect */
   int warning;       /* 1 if a config existed but was invalid */
 } net_settings_t;
@@ -31,6 +36,9 @@ size_t settings_serialize(const net_settings_t *s, char *out, size_t outsz);
 /* Octet editing helper for the UI: add `delta` to octet `idx` (0..3),
  * wrapping within 0..255. Returns 0, -1 if `ip` is malformed. */
 int ip_adjust_octet(char ip[16], int idx, int delta);
+
+/* 0xC0A8000A -> "192.168.0.10". */
+void ip_format(uint32_t ip, char out[16]);
 
 #ifdef _EE
 void settings_load(const char *path, net_settings_t *out);

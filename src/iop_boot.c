@@ -121,17 +121,49 @@ void iop_boot_base(iop_status_t *st) {
   st->usb_ok = !usb_fail;
 }
 
-void iop_boot_network(const char *local_ip, iop_status_t *st) {
+/* ministack's DHCP result, written here by SIF DMA (layout: ministack
+ * include/dhcp.h in patches/neutrino/0002-ministack-dhcp.patch). */
+typedef struct {
+  u32 magic, ip, server, status;
+} dhcp_result_t;
+#define DHCP_RESULT_MAGIC 0x50484344u
+/* A whole cache line of its own: it is invalidated after the DMA. */
+static union {
+  dhcp_result_t r;
+  u8 line[64];
+} dhcp_buf __attribute__((aligned(64)));
+#define dhcp_res dhcp_buf.r
+
+void iop_boot_network(const char *local_ip, int dhcp, iop_status_t *st) {
   st->net_ok = st->udpfs_ok = 0;
+  st->dhcp_status = 0;
+  st->ip = 0;
   /* Network: exactly one ip= argument to ministack. udpfs_ioman runs
    * server discovery (5 s) inside its device init; if that fails the
    * `udpfs:` device is simply not registered. */
-  char ip_arg[24];
+  /* ministack args: "ip=<a.b.c.d>\0[dhcp=1\0out=<hex>\0]". */
+  char ip_arg[64];
   int n = snprintf(ip_arg, sizeof(ip_arg), "ip=%s", local_ip);
+  if (dhcp) {
+    memset(&dhcp_buf, 0, sizeof(dhcp_buf));
+    SyncDCache(&dhcp_buf, (u8 *)&dhcp_buf + sizeof(dhcp_buf) - 1);
+    n++;
+    n += snprintf(ip_arg + n, sizeof(ip_arg) - n, "dhcp=1") + 1;
+    n += snprintf(ip_arg + n, sizeof(ip_arg) - n, "out=%x", (unsigned)&dhcp_res);
+  }
   int net_fail = 0;
   net_fail |= LOAD(st, smap, 0, NULL);
   net_fail |= LOAD(st, ministack, n + 1, ip_arg);
-  if (!net_fail) {
+  if (!net_fail && dhcp) {
+    /* ministack's DHCP exchange (in its _start) also waited for the link. */
+    InvalidDCache(&dhcp_buf, (u8 *)&dhcp_buf + sizeof(dhcp_buf) - 1);
+    if (dhcp_res.magic == DHCP_RESULT_MAGIC) {
+      st->dhcp_status = (int)dhcp_res.status;
+      st->ip = dhcp_res.ip;
+    } else {
+      st->dhcp_status = 3;
+    }
+  } else if (!net_fail) {
     /* Give the PHY time to negotiate before discovery starts. */
     DelayThread(3 * 1000 * 1000);
   }

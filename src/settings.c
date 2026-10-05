@@ -41,10 +41,12 @@ static void set_default(net_settings_t *out, int warning) {
 
 void settings_parse(const char *text, net_settings_t *out) {
   memset(out, 0, sizeof(*out));
+  out->dhcp = 1;
   if (!text) {
     set_default(out, 0);
     return;
   }
+  int have_ip = 0, have_mode = 0, bad = 0;
   const char *p = text;
   while (*p) {
     const char *eol = strchr(p, '\n');
@@ -64,19 +66,41 @@ void settings_parse(const char *text, net_settings_t *out) {
         if (strcmp(line, "local_ip") == 0) {
           if (ip_is_valid(v)) {
             str_copy(out->local_ip, v, sizeof(out->local_ip));
-            return;
+            have_ip = 1;
+          } else {
+            bad = 1;
           }
-          break;
+        } else if (strcmp(line, "ip_mode") == 0) {
+          if (!strcmp(v, "dhcp") || !strcmp(v, "static")) {
+            out->dhcp = v[0] == 'd';
+            have_mode = 1;
+          } else {
+            bad = 1;
+          }
         }
       }
     }
     p = eol ? eol + 1 : p + len;
   }
-  set_default(out, 1);
+  if (!have_ip) {
+    /* Without a usable address: default (as fallback for DHCP). Only a
+     * file that says nothing usable at all is reported. */
+    int dhcp = out->dhcp;
+    set_default(out, bad || !have_mode);
+    out->dhcp = dhcp;
+  } else {
+    out->warning = bad;
+  }
+}
+
+void ip_format(uint32_t ip, char out[16]) {
+  snprintf(out, 16, "%u.%u.%u.%u", (unsigned)(ip >> 24) & 255, (unsigned)(ip >> 16) & 255,
+           (unsigned)(ip >> 8) & 255, (unsigned)ip & 255);
 }
 
 size_t settings_serialize(const net_settings_t *s, char *out, size_t outsz) {
-  int n = snprintf(out, outsz, "local_ip=%s\n", s->local_ip);
+  int n = snprintf(out, outsz, "local_ip=%s\nip_mode=%s\n", s->local_ip,
+                   s->dhcp ? "dhcp" : "static");
   if (n < 0 || (size_t)n >= outsz)
     return 0;
   return (size_t)n;

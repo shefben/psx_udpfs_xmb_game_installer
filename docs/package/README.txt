@@ -75,12 +75,15 @@ DESR SIDE
 1. Copy PS2\desr-udpfs-installer-bootstrap.elf to a USB stick and start
    it on the DESR with wLaunchELF.
 
-2. The installer uses the fixed IP address 192.168.1.10.
-   - PC address starts with 192.168.1.  -> nothing to do.
-   - Otherwise the top line shows "udpfsd not found". Open
-     Network Settings > Local IP, enter a free address in the PC's range
-     (e.g. 192.168.0.200: Left/Right selects a digit, Up/Down changes it,
-     X accepts), then choose "Save and restart network".
+2. The installer gets its IP address from your router (DHCP); the top
+   line shows it, e.g. "NETWORK_READY 192.168.0.57 DHCP". Nothing to set
+   up in most homes.
+   - No DHCP server (top line says "no DHCP, fixed"): it then uses the
+     fixed address 192.168.1.10. Open Network Settings > Fallback IP,
+     enter a free address in the PC's range (e.g. 192.168.0.200:
+     Left/Right selects a digit, Up/Down changes it, X accepts), then
+     choose "Save and restart network". "IP address" switches between
+     automatic (DHCP) and fixed only.
 
    The main menu appears at once; the installer looks for udpfsd in the
    background (top line: "looking for udpfsd..."), so Installed Games,

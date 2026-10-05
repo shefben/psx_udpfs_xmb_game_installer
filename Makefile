@@ -115,13 +115,17 @@ $(BUILD)/.driver-ok: $(DRIVER) reference/HDLGameInstaller/irx/hdlfs.irx tools/dr
 # patches/neutrino/*.patch applied; reference/ is never modified.
 irx: $(NEUTRINO_IRX)
 
-$(BUILD)/neutrino/.patched: $(wildcard patches/neutrino/*.patch) $(BUILD)/.refs-ok
+$(BUILD)/neutrino/.patched: $(wildcard patches/neutrino/*.patch) $(BUILD)/.refs-ok \
+                             src/dhcp_proto.c src/dhcp_proto.h
 	@test -d $(REF)/neutrino || { echo "reference/neutrino missing: run 'make references'"; exit 1; }
 	rm -rf $(BUILD)/neutrino
 	mkdir -p $(BUILD)/neutrino
 	cp -r $(REF)/neutrino/iop $(REF)/neutrino/common $(BUILD)/neutrino/
 	for p in $(sort $(wildcard patches/neutrino/*.patch)); do \
 	  patch -d $(BUILD)/neutrino -p1 --forward < $$p || exit 1; done
+	@# The DHCP client's message code is shared with the host tests.
+	cp src/dhcp_proto.c $(BUILD)/neutrino/iop/ministack/src/
+	cp src/dhcp_proto.h $(BUILD)/neutrino/iop/ministack/include/
 	touch $@
 
 $(BUILD)/irx/smap.irx: $(BUILD)/neutrino/.patched

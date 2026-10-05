@@ -84,11 +84,11 @@ DESR. Back up the HDD partition table before the first run (e.g.
    udpfsd in the background (status line: `looking for udpfsd...`, up to
    about 8 seconds). Installed Games, Remove Games, Repair and
    Diagnostics work meanwhile, and without a server at all.
-   It uses a fixed IP (default `192.168.1.10`).
-   * If your PC is on `192.168.1.x`, nothing to do: the status line
-     changes to `NETWORK_READY`.
-   * Otherwise the status shows `udpfsd not found`. Go to
-     **Network Settings > Local IP**, set a free address in the PC's
+   The address comes from your router (DHCP); the status line shows it,
+   e.g. `NETWORK_READY 192.168.0.57 DHCP`.
+   * Without a DHCP server the fixed fallback `192.168.1.10` is used
+     (status `no DHCP, fixed`). If your PC is not on `192.168.1.x`, go to
+     **Network Settings > Fallback IP**, set a free address in the PC's
      range (e.g. `192.168.0.200`; Left/Right picks a number, Up/Down
      changes it, X accepts), then **Save and restart network**.
      The address is kept only after step 3, so after changing it:

@@ -6,6 +6,7 @@
 #include "manifest.h"
 #include "network.h"
 #include "ui.h"
+#include "util.h"
 
 /* The network half of the IOP boot (smap, ministack, udpfs_ioman with
  * its ~5 s server discovery, plus a 3 s PHY wait) runs on its own EE
@@ -27,7 +28,7 @@ static int net_thread = -1;
 static volatile int net_busy;
 
 static void net_job(void) {
-  iop_boot_network(g_app.settings.local_ip, &g_app.iop);
+  iop_boot_network(g_app.settings.local_ip, g_app.settings.dhcp, &g_app.iop);
   net_state_t st = !g_app.iop.net_ok ? NETWORK_ERROR
                    : g_app.iop.udpfs_ok ? NETWORK_READY
                                         : NETWORK_ERROR;
@@ -106,8 +107,18 @@ const char *network_status_line(void) {
   if (g_app.net == NETWORK_ERROR)
     why = g_app.iop.net_ok ? " (udpfsd not found)" : " (network modules failed)";
   else if (g_app.net == NETWORK_DISCOVERING)
-    why = " (looking for udpfsd...)";
-  snprintf(line, sizeof(line), "%s %s%s", net_state_name(g_app.net),
-           g_app.settings.local_ip, why);
+    why = g_app.settings.dhcp ? " (DHCP, then looking for udpfsd...)" : " (looking for udpfsd...)";
+  char ip[16];
+  const char *how = "";
+  str_copy(ip, g_app.settings.local_ip, sizeof(ip));
+  if (g_app.net != NETWORK_DISCOVERING && g_app.settings.dhcp) {
+    if (g_app.iop.dhcp_status == 1 && g_app.iop.ip) {
+      ip_format(g_app.iop.ip, ip);
+      how = " DHCP";
+    } else {
+      how = " no DHCP, fixed";
+    }
+  }
+  snprintf(line, sizeof(line), "%s %s%s%s", net_state_name(g_app.net), ip, how, why);
   return line;
 }

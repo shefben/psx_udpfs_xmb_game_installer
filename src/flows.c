@@ -1331,19 +1331,28 @@ void flow_repair(void) {
 /* ------------------------------------------------------------------ */
 
 void flow_network_settings(void) {
-  static char rows[4][UI_ROW_LEN];
+  static char rows[5][UI_ROW_LEN];
   for (;;) {
-    snprintf(rows[0], UI_ROW_LEN, "Local IP:  %s", g_app.settings.local_ip);
-    snprintf(rows[1], UI_ROW_LEN, "Save and restart network");
-    snprintf(rows[2], UI_ROW_LEN, "Restart network (retry discovery)");
-    int c = ui_select("Network Settings", network_status_line(), rows, 3, 0, NULL, NULL);
+    snprintf(rows[0], UI_ROW_LEN, "IP address:  %s",
+             g_app.settings.dhcp ? "automatic (DHCP from the router)" : "fixed (static)");
+    snprintf(rows[1], UI_ROW_LEN, "%s  %s", g_app.settings.dhcp ? "Fallback IP:" : "Local IP:   ",
+             g_app.settings.local_ip);
+    snprintf(rows[2], UI_ROW_LEN, "Save and restart network");
+    snprintf(rows[3], UI_ROW_LEN, "Restart network (retry discovery)");
+    int c = ui_select("Network Settings", network_status_line(), rows, 4, 0, NULL, NULL);
     if (c < 0)
       return;
+    if (c == 0) {
+      g_app.settings.dhcp = !g_app.settings.dhcp;
+      continue;
+    }
+    c--; /* the rows below keep their former numbers */
     if (c == 0) {
       char ip[16];
       str_copy(ip, g_app.settings.local_ip, sizeof(ip));
       int oct = 0;
-      ui_header("Edit IP", "Static IP of this console (ministack has no DHCP)");
+      ui_header("Edit IP", g_app.settings.dhcp ? "Used when no DHCP server answers"
+                                                 : "Static IP of this console");
       ui_footer("[L/R] octet  [U/D] +1/-1  [L1/R1] -10/+10  [X] ok  [O] cancel");
       for (;;) {
         int o[4];

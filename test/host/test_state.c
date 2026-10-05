@@ -288,9 +288,38 @@ TEST(settings_serialize_roundtrip) {
   settings_parse("local_ip=192.168.0.50\n", &s);
   char buf[128];
   CHECK(settings_serialize(&s, buf, sizeof(buf)) > 0);
-  CHECK_STR(buf, "local_ip=192.168.0.50\n");
+  CHECK_STR(buf, "local_ip=192.168.0.50\nip_mode=dhcp\n");
   settings_parse(buf, &t);
   CHECK_STR(t.local_ip, "192.168.0.50");
+  CHECK_EQ_INT(t.dhcp, 1);
+  t.dhcp = 0;
+  settings_serialize(&t, buf, sizeof(buf));
+  CHECK_STR(buf, "local_ip=192.168.0.50\nip_mode=static\n");
+}
+
+TEST(settings_ip_mode) {
+  net_settings_t s;
+  settings_parse(NULL, &s); /* no file: DHCP, default IP as fallback */
+  CHECK_EQ_INT(s.dhcp, 1);
+  settings_parse("local_ip=10.0.0.7\n", &s); /* old file: DHCP first */
+  CHECK_EQ_INT(s.dhcp, 1);
+  CHECK_STR(s.local_ip, "10.0.0.7");
+  settings_parse("ip_mode=static\nlocal_ip=10.0.0.9\n", &s); /* order free */
+  CHECK_EQ_INT(s.dhcp, 0);
+  CHECK_STR(s.local_ip, "10.0.0.9");
+  CHECK_EQ_INT(s.warning, 0);
+  settings_parse("ip_mode=static\n", &s); /* no IP: default, no warning */
+  CHECK_EQ_INT(s.dhcp, 0);
+  CHECK_STR(s.local_ip, SETTINGS_DEFAULT_IP);
+  settings_parse("ip_mode=bogus\nlocal_ip=10.0.0.9\n", &s);
+  CHECK_EQ_INT(s.dhcp, 1);
+  CHECK_EQ_INT(s.warning, 1);
+}
+
+TEST(ip_from_u32) {
+  char ip[16];
+  ip_format(0xC0A8000Au, ip);
+  CHECK_STR(ip, "192.168.0.10");
 }
 
 TEST(ip_adjust_octet_wraps) {

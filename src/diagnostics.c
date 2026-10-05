@@ -8,6 +8,7 @@
 #include <io_common.h>
 
 #include "app_state.h"
+#include "settings.h"
 #include "build_info.h"
 #include "diagnostics.h"
 #include "hdd_partitions.h"
@@ -114,6 +115,17 @@ static void check_network(void) {
   }
   line(smap ? "PASS" : "FAIL", "SMAP driver loaded");
   line(ms ? "PASS" : "FAIL", "ministack loaded (ip=%s)", g_app.settings.local_ip);
+  if (g_app.settings.dhcp) {
+    char ip[16] = "-";
+    if (g_app.iop.ip)
+      ip_format(g_app.iop.ip, ip);
+    static const char *const st[] = {"not asked", "leased", "no answer, fixed IP used",
+                                      "failed, fixed IP used"};
+    int s = g_app.iop.dhcp_status >= 0 && g_app.iop.dhcp_status <= 3 ? g_app.iop.dhcp_status : 3;
+    line(s == 1 ? "PASS" : "WARN", "DHCP: %s (address in use %s)", st[s], ip);
+  } else {
+    line("INFO", "DHCP off (ip_mode=static)");
+  }
   line(g_app.iop.udpfs_ok ? "PASS" : "FAIL", "UDPFS connected (%s)", net_state_name(g_app.net));
   line(g_app.iop.rw_buffer == RW_BUFFER_FAST ? "PASS" : "WARN",
        "fileXio transfer buffer %d KiB (64 KiB = full-speed install)",

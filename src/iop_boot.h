@@ -40,6 +40,10 @@ typedef struct {
   int net_ok;   /* smap + ministack + udpfs_ioman loaded */
   int udpfs_ok; /* udpfs: device registered (server discovered) */
   int rw_buffer; /* fileXio IOP transfer buffer in bytes (rw_buffer.h) */
+  /* DHCP (ministack dhcp=1): 0 not asked, 1 leased, 2 no answer (static
+   * fallback in use), 3 failed; ip = address in use (host order). */
+  int dhcp_status;
+  unsigned int ip;
   int nfails;
   struct {
     const char *module;
@@ -49,6 +53,7 @@ typedef struct {
 } iop_status_t;
 
 void iop_boot_base(iop_status_t *st);
-void iop_boot_network(const char *local_ip, iop_status_t *st);
+/* dhcp: ask a DHCP server first; local_ip is then the fallback. */
+void iop_boot_network(const char *local_ip, int dhcp, iop_status_t *st);
 
 #endif
