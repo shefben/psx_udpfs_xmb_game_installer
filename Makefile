@@ -186,6 +186,17 @@ $(BOOT_ELF): $(OPL_KELF) $(APP_KELF) $(EE_DEPS) FORCE
 	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) installer_kelf=$(APP_KELF)"
 	$(call STRIP_IF_CHANGED,$@,$(BUILD)/bootstrap/bootstrap-debug.elf)
 
+# ---- optional: POPStarter for PS1 games, signed like the other KELFs. The
+# ELF is never fetched: give its path explicitly, e.g.
+#   POPSTARTER_ELF=/path/POPSTARTER.ELF make dist
+# (krHACKen's POPStarter; PSBBN Definitive Project ships POPSTARTER.ELF).
+POPS_KELF := $(BUILD)/kelf/POPSTARTER.KELF
+ifneq ($(POPSTARTER_ELF),)
+$(POPS_KELF): $(POPSTARTER_ELF) tools/kelf-sign.sh $(BUILD)/.kelf-mode
+	bash tools/kelf-sign.sh $(POPSTARTER_ELF) $@
+DIST_POPS := $(POPS_KELF)
+endif
+
 kelfs: $(OPL_KELF) $(APP_KELF)
 
 # ---- dev (unsigned, nothing embedded) --------------------------------
@@ -197,7 +208,7 @@ dev: $(EE_DEPS) FORCE
 DIST_FILES := desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
               installer-EXECUTE.KELF opl-launcher-EXECUTE.KELF
 
-dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME)
+dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	@# Empty dist/ rather than delete it: an Explorer window open on a
 	@# folder in it locks the folder on Windows. No old file may survive,
 	@# except udpfsd's own state when it is run from dist/udpfsd: its
@@ -210,7 +221,8 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME)
 	  cmp -s "$$f" "$(BUILD)/udpfsd/$$(basename "$$f")" || \
 	    { echo "dist: cannot replace $$f (stop udpfsd first)"; exit 1; }; \
 	done
-	mkdir -p $(DIST)/udpfsd-example $(DIST)/docs $(DIST)/udpfsd
+	mkdir -p $(DIST)/udpfsd-example $(DIST)/docs $(DIST)/udpfsd $(DIST)/udpfsd/POPS
+	$(if $(DIST_POPS),cp $(DIST_POPS) $(DIST)/udpfsd/POPS/)
 	cp $(BOOT_ELF) $(APP_ELF) $(APP_KELF) $(OPL_KELF) $(DIST)/
 	for b in $(UDPFSD_BIN); do \
 	  cmp -s "$$b" $(DIST)/udpfsd/$$(basename "$$b") || cp "$$b" $(DIST)/udpfsd/; \

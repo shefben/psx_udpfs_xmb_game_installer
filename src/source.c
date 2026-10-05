@@ -4,6 +4,8 @@
 #include "util.h"
 
 source_type_t source_classify(const char *name) {
+  if (name && strlen(name) > 4 && str_ends_with_ci(name, ".vcd"))
+    return SRC_TYPE_VCD;
   if (name && strlen(name) > 4 && str_ends_with_ci(name, ".zso"))
     return SRC_TYPE_ZSO_FILE;
   if (!name || strlen(name) <= 4 || !str_ends_with_ci(name, ".iso"))
@@ -23,6 +25,8 @@ const char *source_type_label(source_type_t t) {
   case SRC_TYPE_ZSO:
   case SRC_TYPE_ZSO_FILE:
     return "ZSO";
+  case SRC_TYPE_VCD:
+    return "PS1";
   default:
     return "";
   }

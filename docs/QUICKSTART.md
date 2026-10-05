@@ -116,7 +116,16 @@ DESR. Back up the HDD partition table before the first run (e.g.
      console returns to the XMB.
    * **Manual**: **Install All Games from the server** (Square toggles a
      game, X starts), or **Install Games from UDPFS** for one game.
-   * Hold **SELECT + O** to abort the game being copied.
+   * **USB**: **Install Games from USB** reads `.iso` and `.zso` from a
+     FAT32/exFAT drive (no server needed; > 4 GiB needs exFAT).
+   * **PS1**: `.VCD` files (cue2pops) in the server's `POPS` folder (or
+     `POPS\` on USB) together with `POPSTARTER.KELF`, `POPS.ELF` and
+     `IOPRP252.IMG` (the last two are Sony files you supply); pick the
+     `.VCD` in either browser.
+   * In every list **L2** changes the order and **R2** searches by name.
+   * Hold **SELECT + O** to abort the game being copied. An interrupted
+     copy can be continued: **Installed Games > game > Resume copy**.
+   * **Installed Games > game > Rename** changes the title shown in the XMB.
 
 5. **Play.** Return to the XMB (or reboot). Each game has its own channel
    with its title and cover. Selecting it starts the game through OPL.

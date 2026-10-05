@@ -42,6 +42,7 @@ typedef enum {
   SRC_TYPE_ISO,
   SRC_TYPE_ZSO, /* udpfsd virtual "<name>.zso.iso" */
   SRC_TYPE_ZSO_FILE, /* a raw "<name>.zso" (USB), decompressed by source_zso */
+  SRC_TYPE_VCD, /* PS1 game for POPStarter (pops.h) */
 } source_type_t;
 
 /* Classify a UDPFS directory entry by name only (plan section 30).

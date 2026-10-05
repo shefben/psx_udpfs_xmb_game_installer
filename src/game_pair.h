@@ -13,6 +13,7 @@ typedef enum {
   PAIR_CHANNEL_BROKEN,       /* verified hidden game, PP invalid */
   PAIR_ORPHAN_CHANNEL,       /* PP exists, hidden missing */
   PAIR_HIDDEN_INVALID_WITH_CHANNEL, /* PP exists, hidden not verified */
+  PAIR_PS1, /* PP holds a PS1 game (IMAGE0.VCD, no __. partner); set by the scan */
 } pair_state_t;
 
 typedef enum {

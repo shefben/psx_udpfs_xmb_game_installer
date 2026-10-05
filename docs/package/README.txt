@@ -97,15 +97,38 @@ DESR SIDE
    Do not switch the DESR off while it is copying.
 
    With auto_install = no, use the menu:
-     Install Games from UDPFS            pick one game
+     Install Games from UDPFS            pick one game (PS2 .iso/.zso,
+                                         PS1 .VCD in the POPS folder)
+     Install Games from USB              same, from a FAT32/exFAT USB drive
+                                         (games over 4 GiB need exFAT)
      Install All Games from the server   pick several (Square toggles)
      Install Installer as XMB Channel    puts the installer itself in the
                                          XMB, so you no longer need the
                                          USB stick
-     Installed Games / Repair XMB Channels   delete, fix, reinstall
+     Installed Games / Repair XMB Channels   delete, fix, reinstall,
+                                         rename the XMB title, resume an
+                                         interrupted copy, verify, details
      Remove Games                        delete several games at once
                                          (Square toggles, Start = all,
                                          hold R1 + X to confirm)
+
+   In every game list: L2 changes the order (name A-Z, Z-A, size),
+   R2 searches (shows only names containing the text you enter).
+
+PS1 GAMES (POPSTARTER)
+----------------------
+
+   PS1 games must be in POPStarter's .VCD format (convert BIN/CUE with
+   cue2pops; multi-file BIN/CUE must be merged first). Put the .VCD files
+   in PC\udpfsd\POPS (or POPS\ on a USB drive) together with:
+     POPSTARTER.KELF   POPStarter (krHACKen), e.g. from the
+                       PFS-BatchKit-Manager POPS-Binaries folder
+     POPS.ELF, IOPRP252.IMG   Sony's POPS files; not included, you must
+                       supply them
+   Choose the .VCD in Install Games from UDPFS (or USB). Each PS1 game
+   gets its own XMB channel; POPS.ELF and IOPRP252.IMG are copied to
+   __common/POPS once. PS1 games are not part of Install All /
+   auto-install yet.
 
 4. Go back to the XMB (or restart the DESR). Each game and the installer
    ("UDPFS Game Installer") have their own icon. Selecting a game starts
@@ -126,8 +149,9 @@ IF SOMETHING GOES WRONG
   Game shows a plain       Restart the server (it rebuilds the covers),
   "PS2 GAME" cover         then Installed Games > the game > Repair XMB
                            channel.
-  Copy failed / power cut  Repair XMB Channels lists unfinished installs;
-                           delete and reinstall them.
+  Copy failed / power cut  Installed Games > the game > Resume copy
+                           continues where it stopped (the image must still
+                           be at the same place); Install All resumes it too.
   Anything else            Diagnostics on the DESR shows PASS / FAIL for
                            every part.
 

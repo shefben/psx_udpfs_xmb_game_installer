@@ -19,6 +19,7 @@
 #include "opl_launcher_payload.h"
 #include "partname.h"
 #include "pfs_channel.h"
+#include "pops_install.h"
 #include "remove_games.h"
 #include "settings.h"
 #include "transaction.h"
@@ -910,6 +911,101 @@ void flow_pair_actions(const char *visible, const char *hidden) {
 }
 
 /* ------------------------------------------------------------------ */
+/* PS1 games (POPStarter)                                              */
+
+void flow_install_ps1(const char *path) {
+  static pops_plan_t plan;
+  int rc = 0;
+  ui_header("Checking", path);
+  ui_at(4, " Reading the VCD (ISO9660 + SYSTEM.CNF)...");
+  inst_err_t e = pops_plan_build(path, &plan, &rc);
+  if (e) {
+    char msg[500];
+    snprintf(msg, sizeof(msg),
+             "%s\n\n%s (%s), code %d.\n\n"
+             "Only PS1 games converted to .VCD (POPStarter format, e.g. with\n"
+             "cue2pops) are supported. Nothing was written to the HDD.",
+             path, err_text(e), err_name(e), rc);
+    ui_message("Cannot install", msg);
+    return;
+  }
+  for (;;) {
+    ui_header("Install PS1 game", NULL);
+    ui_at(3, " Title       %.60s", plan.title);
+    ui_at(4, " Game ID     %s   (PS1, POPStarter)", plan.vcd.boot_id);
+    ui_at(5, " Source      %.64s", plan.source_path);
+    ui_at(6, " Partition   %s (%s)", plan.partition, plan.size_str);
+    ui_at(7, " Size        %lu MiB", (unsigned long)(plan.vcd.bytes >> 20));
+    ui_at(9, " Needs POPSTARTER.KELF next to the VCD or in POPS/ on the same");
+    ui_at(10, " device; POPS.ELF and IOPRP252.IMG are copied to __common/POPS");
+    ui_at(11, " if they are not there yet.");
+    ui_footer("[X] install  [Square] edit title  [O] back");
+    int b;
+    do
+      b = ui_wait_button();
+    while (!(b & (UI_CROSS | UI_SQUARE | UI_CIRCLE | UI_TRIANGLE)));
+    if (b & (UI_CIRCLE | UI_TRIANGLE))
+      return;
+    if (b & UI_SQUARE) {
+      char t[64];
+      str_copy(t, plan.title, sizeof(t));
+      if (ui_edit_text("Edit title", "Display title (game ID cannot be changed):", t, 48) &&
+          pops_plan_set_title(&plan, t) != ERR_OK)
+        ui_message("Title", "Invalid title.");
+      continue;
+    }
+    break;
+  }
+  progress_ctx_t ctx = {NULL, STAGE_PREPARING, 0, 0};
+  install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, cb_skip_verify};
+  install_report_t rep;
+  ui_header("Installing PS1 game", plan.partition);
+  ui_at(3, " Title       %.60s", plan.title);
+  ui_at(4, " Game ID     %s", plan.vcd.boot_id);
+  ui_footer("Do not power off.");
+  pops_install(&plan, &ui, &rep);
+  if (rep.err) {
+    flow_show_error("PS1 install did not complete.", &rep,
+                    rep.visible_exists ? "delete the game with Remove Games, then retry."
+                                       : "nothing is left on the HDD; fix the cause and retry.");
+    return;
+  }
+  char msg[400];
+  snprintf(msg, sizeof(msg),
+           "%s installed as %s.\n\n"
+           "Copied %llu bytes, CRC-32 %08lx, read back: %s.\n\n"
+           "It appears in the XMB after it refreshes and starts through\n"
+           "POPStarter. Memory cards: __common/POPS/%s/",
+           plan.title, plan.partition, (unsigned long long)rep.bytes_written,
+           (unsigned long)rep.source_crc32, rep.verify_skipped ? "SKIPPED" : "equal",
+           plan.partition + 3);
+  ui_message("Finished", msg);
+}
+
+void flow_ps1_actions(const char *partition) {
+  static char rows[3][UI_ROW_LEN] = {"Rename (title shown in the XMB)", "Delete game",
+                                     "Back"};
+  int c = ui_select("PS1 game", partition, rows, 3, 0, NULL, NULL);
+  if (c == 0) {
+    do_rename(partition);
+  } else if (c == 1) {
+    char txt[200];
+    snprintf(txt, sizeof(txt), "The PS1 game partition will be PERMANENTLY removed:\n\n  %s\n\n"
+                               "Its memory cards in __common/POPS stay.", partition);
+    if (!ui_confirm_destructive("Delete", txt))
+      return;
+    const char *failed;
+    int rc;
+    if (game_delete_pair(partition, NULL, &failed, &rc) != ERR_OK) {
+      snprintf(txt, sizeof(txt), "Could not remove %s (code %d).", partition, rc);
+      ui_message("Delete failed", txt);
+    } else {
+      ui_message("Deleted", "Done.");
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Installed games / repair                                            */
 
 #define MAX_PAIRS 128
@@ -958,7 +1054,11 @@ static int collect_pairs(void) {
     ui_at(4, " Checking %d/%d: %s", i + 1, n, pairs[i].hidden + 3);
     game_pair_facts(pairs[i].visible, pairs[i].hidden, &f);
     pairs[i].state = pair_classify(&f);
-    snprintf(pair_rows[i], UI_ROW_LEN, "%-34.34s %s", pairs[i].visible + 3, pair_label(&f));
+    /* A channel without a __. partner may be a PS1 game (IMAGE0.VCD). */
+    if (pairs[i].state == PAIR_ORPHAN_CHANNEL && pops_partition_is_ps1(pairs[i].visible))
+      pairs[i].state = PAIR_PS1;
+    snprintf(pair_rows[i], UI_ROW_LEN, "%-34.34s %s", pairs[i].visible + 3,
+             pairs[i].state == PAIR_PS1 ? pair_state_label(PAIR_PS1) : pair_label(&f));
   }
   return n;
 }
@@ -996,7 +1096,10 @@ static void pair_list(const char *title, int only_problems) {
     if (c < 0)
       return;
     sel = c;
-    flow_pair_actions(pairs[c].visible, pairs[c].hidden);
+    if (pairs[c].state == PAIR_PS1)
+      flow_ps1_actions(pairs[c].visible);
+    else
+      flow_pair_actions(pairs[c].visible, pairs[c].hidden);
   }
 }
 

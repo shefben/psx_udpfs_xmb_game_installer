@@ -92,6 +92,12 @@ inst_err_t game_plan_from_manifest(const manifest_entry_t *m, game_plan_t *p);
  * p->resume. game_install() re-checks everything before writing. */
 inst_err_t game_resume_plan(const char *hidden, game_plan_t *p, int *rc_out);
 
+/* XMB cover for a game: udpfsd's prepared jacket, then <source>.png, then
+ * the built-in default. *owned (if set) must be freed. Returns where it
+ * came from: "server" | "missing" | "default". */
+const char *game_load_jacket(const char *boot_id, const char *source_path,
+                             const uint8_t **data, uint32_t *size, void **owned);
+
 /* Gather on-disk facts for a pair (exists/valid/journal). */
 void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f);
 

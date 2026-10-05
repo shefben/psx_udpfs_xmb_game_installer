@@ -47,6 +47,8 @@ unsigned pair_actions(pair_state_t s) {
   case PAIR_ORPHAN_CHANNEL:
   case PAIR_HIDDEN_INVALID_WITH_CHANNEL:
     return ACT_REMOVE_CHANNEL;
+  case PAIR_PS1:
+    return ACT_DELETE;
   }
   return 0;
 }
@@ -78,6 +80,8 @@ const char *pair_state_label(pair_state_t s) {
     return "ORPHANED channel";
   case PAIR_HIDDEN_INVALID_WITH_CHANNEL:
     return "channel on UNVERIFIED data";
+  case PAIR_PS1:
+    return "PS1 game (POPStarter)";
   }
   return "?";
 }

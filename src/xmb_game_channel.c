@@ -249,7 +249,7 @@ size_t game_pair_details(const char *visible, const char *hidden, char *out, siz
 /* Jacket: udpfsd's prepared jkt/<BOOT_ID>.png, then udpfs:/ART/<BOOT_ID>.png,
  * then <source>.png, then the built-in default. Returns where it came
  * from (install_report_t.jacket). */
-static const char *load_jacket(const char *boot_id, const char *source_path,
+const char *game_load_jacket(const char *boot_id, const char *source_path,
                                const uint8_t **data, uint32_t *size, void **owned) {
   char path[SOURCE_PATH_MAX + 8];
   const char *fallback = "default";
@@ -410,7 +410,7 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
   const uint8_t *jkt;
   uint32_t jkt_size;
   void *jkt_owned;
-  rep->jacket = load_jacket(j->startup_id, j->source_path, &jkt, &jkt_size, &jkt_owned);
+  rep->jacket = game_load_jacket(j->startup_id, j->source_path, &jkt, &jkt_size, &jkt_owned);
 
   channel_content_t c = {kelf->data, kelf->size, info, info_len, jkt, jkt_size};
   int rc = 0;

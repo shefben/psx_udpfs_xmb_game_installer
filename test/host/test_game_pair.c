@@ -102,6 +102,9 @@ TEST(pair_actions_follow_plan) {
   CHECK_EQ_INT(pair_actions(PAIR_CHANNEL_BROKEN), ACT_CREATE_CHANNEL | ACT_DELETE);
   CHECK_EQ_INT(pair_actions(PAIR_ORPHAN_CHANNEL), ACT_REMOVE_CHANNEL);
   CHECK_EQ_INT(pair_actions(PAIR_HIDDEN_INVALID_WITH_CHANNEL), ACT_REMOVE_CHANNEL);
+  /* A PS1 (POPStarter) game is one partition: delete only. */
+  CHECK_EQ_INT(pair_actions(PAIR_PS1), ACT_DELETE);
+  CHECK_STR(pair_state_label(PAIR_PS1), "PS1 game (POPStarter)");
 }
 
 TEST(pair_labels_nonempty) {

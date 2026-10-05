@@ -80,3 +80,16 @@ level unless stated otherwise.
   partition stays (the installer may not delete `+OPL`); remove it with
   another tool. OPL itself creates its folders (CFG, ART, ...) on first
   start.
+
+* **PS1 games (POPStarter), first version.** Only .VCD images (convert
+  BIN/CUE with cue2pops); multi-disc games (DISCS.TXT) are not set up;
+  PS1 games are not part of Install All / auto-install. POPStarter and
+  Sony's POPS.ELF / IOPRP252.IMG are not included and must be supplied.
+  Whether the DESR XMB boots krHACKen's POPSTARTER.KELF as distributed
+  is untested; `POPSTARTER_ELF=/path/POPSTARTER.ELF make dist` signs one
+  the same way as the other KELFs (checklist D35).
+* **USB installs** read FAT32/exFAT drives on the first USB device
+  (`mass0:`). Covers and OPL settings still come from udpfsd when it is
+  running; without it the default cover is used.
+* **Resume copy** continues from the last 256 MiB checkpoint and always
+  reads the whole game back afterwards (START cannot skip that check).

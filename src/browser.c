@@ -170,7 +170,10 @@ static void browse(const char *title, const char *root, char *cwd, listui_state_
       /* Server ZSO: the exact listed path is udpfsd's virtual
        * "<name>.zso.iso", served as decompressed ISO bytes. USB ZSO: the
        * raw file, decompressed on the PS2 (source_zso). */
-      probe_and_install(path, server);
+      if (entries[pick].type == SRC_TYPE_VCD)
+        flow_install_ps1(path);
+      else
+        probe_and_install(path, server);
     }
   }
 }

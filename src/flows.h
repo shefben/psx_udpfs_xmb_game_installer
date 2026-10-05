@@ -29,6 +29,10 @@ void flow_batch_install(void);
 void flow_auto_install(void);
 
 void flow_installed_games(void);
+/* PS1 game (.VCD) from the server or USB: plan screen, then install. */
+void flow_install_ps1(const char *path);
+/* Rename / delete an installed PS1 game partition. */
+void flow_ps1_actions(const char *partition);
 /* Select several installed games and delete both partitions of each. */
 void flow_remove_games(void);
 void flow_repair(void);
