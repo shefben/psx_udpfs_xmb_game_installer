@@ -82,6 +82,7 @@ Run in this order. Nothing here creates or deletes a game partition.
 | D24 | DESR without OPL: auto-install creates `+OPL` with the server's OPNPS2LD.ELF, then installs games; channels boot through it | `+OPL` 128 MiB PFS, ELF hash = manifest, games reach title screen | NOT RUN |
 | D25 | OPL already present: server OPL is never written; a configured partition that is missing stops with a reason | | NOT RUN |
 | D26 | Text readable on the DESR's TV output: bold letters, nothing cut off at the screen edges, colours as in `docs/ui-preview-*.png` | | NOT RUN |
+| D27 | Install speed: Diagnostics shows `PASS fileXio transfer buffer 64 KiB`; MiB/s on the copy screen vs the 3.5 MiB/s seen with the 16 KiB default (same game, wired LAN) | note both speeds | NOT RUN |
 | D17 | Remove one of two games, reboot | other game and installer still work | NOT RUN |
 
 ### Acceptance chain for D4 / D5 (each must be observed)

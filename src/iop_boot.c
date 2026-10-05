@@ -13,6 +13,7 @@
 #include <fileXio_rpc.h>
 
 #include "iop_boot.h"
+#include "rw_buffer.h"
 
 /* Embedded IRX images (bin2c, see Makefile). */
 #define IRX(n)                                                                 \
@@ -123,6 +124,8 @@ void iop_boot_network(const char *local_ip, iop_status_t *st) {
     DelayThread(3 * 1000 * 1000);
   }
   net_fail |= LOAD(st, udpfs_ioman, 0, NULL);
+  /* After the last module load, so the bigger buffer cannot starve one. */
+  st->rw_buffer = rw_buffer_setup(fileXioSetRWBufferSize);
   st->net_ok = !net_fail;
   if (st->net_ok) {
     int dd = fileXioDopen("udpfs:/");

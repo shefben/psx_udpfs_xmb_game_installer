@@ -16,6 +16,7 @@
 #include "opl_dependency.h"
 #include "opl_launcher_payload.h"
 #include "partname.h"
+#include "rw_buffer.h"
 #include "sha256.h"
 #include "ui.h"
 #include "util.h"
@@ -111,6 +112,9 @@ static void check_network(void) {
   line(smap ? "PASS" : "FAIL", "SMAP driver loaded");
   line(ms ? "PASS" : "FAIL", "ministack loaded (ip=%s)", g_app.settings.local_ip);
   line(g_app.iop.udpfs_ok ? "PASS" : "FAIL", "UDPFS connected (%s)", net_state_name(g_app.net));
+  line(g_app.iop.rw_buffer == RW_BUFFER_FAST ? "PASS" : "WARN",
+       "fileXio transfer buffer %d KiB (64 KiB = full-speed install)",
+       g_app.iop.rw_buffer / 1024);
   if (g_app.iop.udpfs_ok) {
     int dd = fileXioDopen("udpfs:/"), n = 0;
     if (dd >= 0) {
