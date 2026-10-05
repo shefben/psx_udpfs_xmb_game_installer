@@ -199,13 +199,21 @@ DIST_FILES := desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
 
 dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME)
 	@# Empty dist/ rather than delete it: an Explorer window open on a
-	@# folder in it locks the folder on Windows. No old file may survive.
+	@# folder in it locks the folder on Windows. No old file may survive,
+	@# except a running udpfsd (Windows locks it) that is byte-identical
+	@# to the one being shipped.
 	mkdir -p $(DIST)
 	find $(DIST) -mindepth 1 -depth -delete 2>/dev/null || true
-	test -z "$$(find $(DIST) -type f)"
+	@for f in $$(find $(DIST) -type f); do \
+	  cmp -s "$$f" "$(BUILD)/udpfsd/$$(basename "$$f")" || \
+	    { echo "dist: cannot replace $$f (stop udpfsd first)"; exit 1; }; \
+	done
 	mkdir -p $(DIST)/udpfsd-example $(DIST)/docs $(DIST)/udpfsd
 	cp $(BOOT_ELF) $(APP_ELF) $(APP_KELF) $(OPL_KELF) $(DIST)/
-	cp $(UDPFSD_BIN) $(OPL_KELF) docs/udpfsd-example/udpfsd.cfg $(DIST)/udpfsd/
+	for b in $(UDPFSD_BIN); do \
+	  cmp -s "$$b" $(DIST)/udpfsd/$$(basename "$$b") || cp "$$b" $(DIST)/udpfsd/; \
+	done
+	cp $(OPL_KELF) docs/udpfsd-example/udpfsd.cfg $(DIST)/udpfsd/
 	cp $(OPL_RUNTIME) $(BUILD)/opl/OPL-LICENSE.txt $(DIST)/udpfsd/
 	cp docs/udpfsd-example/* $(DIST)/udpfsd-example/
 	cp docs/INSTALL.md docs/HARDWARE_TEST_CHECKLIST.md $(DIST)/docs/

@@ -22,6 +22,18 @@ typedef struct {
   void *ctx;
 } stream_cb_t;
 
+/* Where the time of the running hdl_stream()/hdl_verify() goes, in EE
+ * bus clock ticks (GetTimerSystemTime, STREAM_TIMER_HZ per second).
+ * Reset when each starts; read by the progress screen. */
+#define STREAM_TIMER_HZ 147456000u
+typedef struct {
+  uint64_t bytes;
+  uint64_t read_ticks;  /* UDPFS read (stream) or HDD read (verify) */
+  uint64_t crc_ticks;   /* CRC-32 on the EE */
+  uint64_t write_ticks; /* HDD write (stream only) */
+} stream_timing_t;
+extern stream_timing_t g_stream_timing;
+
 typedef struct {
   inst_err_t err;
   int rc;         /* underlying driver code */

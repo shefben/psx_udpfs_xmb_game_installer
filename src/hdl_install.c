@@ -2,6 +2,8 @@
 #include <string.h>
 #include <time.h>
 
+#include <timer.h>
+
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
 #include <hdd-ioctl.h>
@@ -14,6 +16,7 @@
 #include "util.h"
 
 static uint8_t stream_buf[STREAM_BUF_SIZE] __attribute__((aligned(64)));
+stream_timing_t g_stream_timing;
 
 static hdl_result_t res(inst_err_t e, int rc) {
   hdl_result_t r;
@@ -97,19 +100,23 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
   uint64_t written = 0;
   uint32_t crc = 0;
   int abort = 0;
+  memset(&g_stream_timing, 0, sizeof(g_stream_timing));
   while (written < total) {
     uint32_t want = total - written > STREAM_BUF_SIZE ? STREAM_BUF_SIZE
                                                       : (uint32_t)(total - written);
     /* A short read before the expected end is a hard error. */
+    u64 t0 = GetTimerSystemTime();
     inst_err_t e = source_read_exact(src, stream_buf, want);
     if (e) {
       out.err = e;
       out.rc = src->last_rc;
       break;
     }
+    u64 t1 = GetTimerSystemTime();
     /* CRC over exactly the bytes received from UDPFS (for a ZSO source:
      * the decompressed ISO stream). */
     crc = crc32_update(crc, stream_buf, want);
+    u64 t2 = GetTimerSystemTime();
     int w = fileXioWrite(fd, stream_buf, (int)want);
     if (w != (int)want) {
       out.err = ERR_HDL_WRITE;
@@ -117,6 +124,10 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total,
       break;
     }
     written += want;
+    g_stream_timing.read_ticks += t1 - t0;
+    g_stream_timing.crc_ticks += t2 - t1;
+    g_stream_timing.write_ticks += GetTimerSystemTime() - t2;
+    g_stream_timing.bytes = written;
     report(cb, start, &last, written, total, &abort);
     if (abort) {
       out.err = ERR_USER_ABORT;
@@ -224,11 +235,14 @@ hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
   uint64_t done_bytes = 0;
   uint32_t crc = 0;
   int abort = 0;
+  memset(&g_stream_timing, 0, sizeof(g_stream_timing));
   while (done_bytes < total) {
     uint32_t want = total - done_bytes > STREAM_BUF_SIZE
                         ? STREAM_BUF_SIZE
                         : (uint32_t)(total - done_bytes);
+    u64 t0 = GetTimerSystemTime();
     r = fileXioRead(fd, stream_buf, (int)want);
+    u64 t1 = GetTimerSystemTime();
     if (r != (int)want) {
       out = res(ERR_HDL_VERIFY, r);
       break;
@@ -245,6 +259,9 @@ hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
     }
     crc = crc32_update(crc, stream_buf, want);
     done_bytes += want;
+    g_stream_timing.read_ticks += t1 - t0;
+    g_stream_timing.crc_ticks += GetTimerSystemTime() - t1;
+    g_stream_timing.bytes = done_bytes;
     report(cb, start, &last, done_bytes, total, &abort);
     if (abort) {
       out = res(ERR_USER_ABORT, 0);

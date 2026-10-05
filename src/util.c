@@ -66,3 +66,10 @@ int parse_u64(const char *s, uint64_t *out) {
   *out = v;
   return 0;
 }
+
+unsigned rate_mib10(uint64_t bytes, uint64_t ticks, uint64_t hz) {
+  if (!ticks)
+    return 0;
+  /* Scale to MiB x10 first so the product stays far below 2^64. */
+  return (unsigned)((((bytes * 10) >> 20) * hz) / ticks);
+}

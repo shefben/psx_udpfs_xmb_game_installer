@@ -50,7 +50,7 @@ static void cb_stage(void *ctx, install_stage_t s) {
 }
 
 static void cb_progress(void *ctx, uint64_t done, uint64_t total, uint32_t el) {
-  (void)ctx;
+  const progress_ctx_t *c = ctx;
   char bar[52];
   int pct = total ? (int)((done * 100) / total) : 0;
   int fill = pct / 2;
@@ -66,6 +66,17 @@ static void cb_progress(void *ctx, uint64_t done, uint64_t total, uint32_t el) {
   ui_at(ROW_BAR + 2, " %u MiB of %u MiB   %u.%u MiB/s   elapsed %u:%02u   ETA %u:%02u",
         (unsigned)(done >> 20), (unsigned)(total >> 20), mbps10 / 10, mbps10 % 10,
         (unsigned)(el / 60), (unsigned)(el % 60), eta / 60, eta % 60);
+  /* Speed of each step on its own: the slowest one limits the install. */
+  const stream_timing_t *t = &g_stream_timing;
+  unsigned rd = rate_mib10(t->bytes, t->read_ticks, STREAM_TIMER_HZ);
+  unsigned cr = rate_mib10(t->bytes, t->crc_ticks, STREAM_TIMER_HZ);
+  unsigned wr = rate_mib10(t->bytes, t->write_ticks, STREAM_TIMER_HZ);
+  if (c && c->stage == STAGE_VALIDATING)
+    ui_at(ROW_BAR + 3, " HDD read %u.%u   CRC %u.%u MiB/s", rd / 10, rd % 10, cr / 10,
+          cr % 10);
+  else
+    ui_at(ROW_BAR + 3, " network %u.%u   CRC %u.%u   HDD write %u.%u MiB/s", rd / 10,
+          rd % 10, cr / 10, cr % 10, wr / 10, wr % 10);
   ui_at(ROW_BAR + 4, " Hold [SELECT]+[O] to abort (no XMB channel will be created).");
 }
 

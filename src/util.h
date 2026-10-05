@@ -22,4 +22,8 @@ void put_u32le(void *p, uint32_t v);
  * malformed or overflowing value. */
 int parse_u64(const char *s, uint64_t *out);
 
+/* Throughput in tenths of MiB/s for `bytes` moved in `ticks` of a
+ * clock running at `hz`. 0 if nothing was timed. */
+unsigned rate_mib10(uint64_t bytes, uint64_t ticks, uint64_t hz);
+
 #endif
