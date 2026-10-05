@@ -1,5 +1,5 @@
-UDPFS Game Installer for the PSX DESR
-=====================================
+UDPFS Game Installer for the PSX DESR - v2.0
+============================================
 
 Installs PS2 games (.iso / .zso) from your PC onto the PSX DESR's
 internal hard disk over the network. Every game gets its own icon in the
@@ -14,6 +14,7 @@ WHAT IS IN THIS ZIP
 -------------------
 
   CHANGELOG.txt                          what is new since 1.0
+  SERVER-MANUAL.txt                      every udpfsd.cfg setting and option
 
   PS2\
     desr-udpfs-installer-bootstrap.elf   the installer, started on the DESR

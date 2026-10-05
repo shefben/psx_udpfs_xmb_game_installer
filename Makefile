@@ -243,11 +243,12 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	cp docs/udpfsd-example/* $(DIST)/udpfsd-example/
 	cp docs/INSTALL.md docs/HARDWARE_TEST_CHECKLIST.md $(DIST)/docs/
 	cp docs/QUICKSTART.md $(DIST)/
-	cp KNOWN_LIMITATIONS.md CHANGELOG.md $(DIST)/
+	cp KNOWN_LIMITATIONS.md CHANGELOG.md docs/SERVER_MANUAL.md $(DIST)/
 	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF) $(BUILD)/.kelf-mode
 
 # ---- 7. end-user zip (README, PS2 bootstrap ELF, PC/udpfsd folder) -----
-PACKAGE := $(ROOT)/PSX-UDPFS-Installer.zip
+VERSION := 2.0
+PACKAGE := $(ROOT)/PSX-UDPFS-Installer_V$(VERSION).zip
 package: dist
 	bash tools/make-package.sh $(DIST) $(PACKAGE)
 
