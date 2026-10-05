@@ -25,12 +25,14 @@ SRCS := main.c app_state.c iop_boot.c network.c source.c source_udpfs.c \
         xmb_installer_app.c xmb_game_channel.c xmb_text.c transaction.c \
         settings.c ui.c partname.c errors.c util.c game_pair.c browser.c flows.c \
         diagnostics.c crc32.c sha256.c batch.c manifest.c \
-        server_assets.c ui_style.c rw_buffer.c remove_games.c listview.c listui.c
+        server_assets.c ui_style.c rw_buffer.c remove_games.c listview.c listui.c \
+        lz4_block.c source_zso.c
 
 # <bin2c symbol>=<file>. Standard PS2SDK modules, then the HDD driver
 # (source-built, see tools/driver/), hdlfs (HDLGameInstaller ec37c81),
 # the Neutrino network modules and the jacket images.
-SDK_IRX := iomanX fileXio poweroff ps2dev9 ps2atad ps2fs sio2man padman
+SDK_IRX := iomanX fileXio poweroff ps2dev9 ps2atad ps2fs sio2man padman \
+           usbd bdm bdmfs_fatfs usbmass_bd
 BLOBS := $(foreach m,$(SDK_IRX),$(m)_irx=$(PS2SDK)/iop/irx/$(m).irx) \
          ps2hdd_hdl_irx=vendor/irx/ps2hdd-hdl.irx \
          hdlfs_irx=reference/HDLGameInstaller/irx/hdlfs.irx \

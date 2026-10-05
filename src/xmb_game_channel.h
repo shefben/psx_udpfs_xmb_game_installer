@@ -75,6 +75,9 @@ typedef struct {
 /* Probe a UDPFS file and build names/sizes. Leaves no source open. */
 inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out);
 
+/* The image is on udpfsd (needs the network), not e.g. on USB. */
+int game_source_is_server(const char *path);
+
 /* Rebuild partition names after the title was edited. */
 inst_err_t game_plan_set_title(game_plan_t *p, const char *title);
 

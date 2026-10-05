@@ -32,6 +32,10 @@ IRX(ministack);
 IRX(udpfs_ioman);
 IRX(sio2man);
 IRX(padman);
+IRX(usbd);
+IRX(bdm);
+IRX(bdmfs_fatfs);
+IRX(usbmass_bd);
 
 /* ps2hdd-hdl.irx: -o 4 -n 128 (as proven by ps2-usbhdl/HDLGameInstaller). */
 static const char PS2HDD_ARGS[] = "-o\0"
@@ -107,6 +111,14 @@ void iop_boot_base(iop_status_t *st) {
   pad_fail |= LOAD(st, sio2man, 0, NULL);
   pad_fail |= LOAD(st, padman, 0, NULL);
   st->pad_ok = !pad_fail;
+
+  /* USB mass storage (FAT32/exFAT) as mass0: - an optional game source. */
+  int usb_fail = 0;
+  usb_fail |= LOAD(st, usbd, 0, NULL);
+  usb_fail |= LOAD(st, bdm, 0, NULL);
+  usb_fail |= LOAD(st, bdmfs_fatfs, 0, NULL);
+  usb_fail |= LOAD(st, usbmass_bd, 0, NULL);
+  st->usb_ok = !usb_fail;
 }
 
 void iop_boot_network(const char *local_ip, iop_status_t *st) {

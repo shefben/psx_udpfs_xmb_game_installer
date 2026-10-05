@@ -16,6 +16,7 @@
 #include "pfs_channel.h"
 #include "server_assets.h"
 #include "source_udpfs.h"
+#include "source_zso.h"
 #include "transaction.h"
 #include "util.h"
 #include "xmb_game_channel.h"
@@ -41,8 +42,22 @@ const char *install_stage_name(install_stage_t s) {
   return "?";
 }
 
-static GameSource g_src;
+static GameSource g_src, g_inner;
 static udpfs_src_t g_usrc;
+static zso_src_t g_zso;
+
+/* udpfs: (server-side decompression) or any other fileXio device such
+ * as mass0: (USB); a raw .zso file is decompressed here. */
+static void source_init_for(const char *path) {
+  if (source_is_raw_zso(path)) {
+    source_udpfs_init(&g_inner, &g_usrc);
+    source_zso_init(&g_src, &g_zso, &g_inner);
+  } else {
+    source_udpfs_init(&g_src, &g_usrc);
+  }
+}
+
+int game_source_is_server(const char *path) { return !strncmp(path, "udpfs:", 6); }
 
 inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out) {
   memset(p, 0, sizeof(*p));
@@ -50,7 +65,7 @@ inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out) {
   str_copy(p->source_path, path, sizeof(p->source_path));
   p->type = source_classify(path);
 
-  source_udpfs_init(&g_src, &g_usrc);
+  source_init_for(path);
   inst_err_t e = source_open(&g_src, path);
   if (!e)
     e = iso_probe(&g_src, iso_hint_from_path(path), &p->iso);
@@ -446,8 +461,8 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   memset(&kelf, 0, sizeof(kelf));
   stage(ui, rep, STAGE_PREPARING);
 
-  /* 1. network ready; journal storage present */
-  if (g_app.net != NETWORK_READY) {
+  /* 1. network ready (server images); journal storage present */
+  if (game_source_is_server(p->source_path) && g_app.net != NETWORK_READY) {
     rep->err = ERR_NETWORK;
     goto out;
   }
@@ -457,7 +472,7 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     goto out;
   }
   /* 2-4. source still accessible, re-parse and compare with the plan */
-  source_udpfs_init(&g_src, &g_usrc);
+  source_init_for(p->source_path);
   if ((rep->err = source_open(&g_src, p->source_path))) {
     rep->rc = g_src.last_rc;
     goto out;

@@ -41,6 +41,7 @@ typedef enum {
   SRC_TYPE_NONE = 0, /* not shown in the browser */
   SRC_TYPE_ISO,
   SRC_TYPE_ZSO, /* udpfsd virtual "<name>.zso.iso" */
+  SRC_TYPE_ZSO_FILE, /* a raw "<name>.zso" (USB), decompressed by source_zso */
 } source_type_t;
 
 /* Classify a UDPFS directory entry by name only (plan section 30).
@@ -48,6 +49,9 @@ typedef enum {
  * hidden in version 1; any other ".iso" -> ISO. Case-insensitive. */
 source_type_t source_classify(const char *name);
 const char *source_type_label(source_type_t t); /* "ISO", "ZSO", "" */
+
+/* A raw ZSO file (not udpfsd's virtual .zso.iso): needs source_zso. */
+int source_is_raw_zso(const char *path);
 
 /* Thin wrappers that keep error codes distinct. */
 inst_err_t source_open(GameSource *src, const char *path);

@@ -4,6 +4,8 @@
 #include "util.h"
 
 source_type_t source_classify(const char *name) {
+  if (name && strlen(name) > 4 && str_ends_with_ci(name, ".zso"))
+    return SRC_TYPE_ZSO_FILE;
   if (!name || strlen(name) <= 4 || !str_ends_with_ci(name, ".iso"))
     return SRC_TYPE_NONE;
   if (str_ends_with_ci(name, ".zso.iso"))
@@ -19,10 +21,15 @@ const char *source_type_label(source_type_t t) {
   case SRC_TYPE_ISO:
     return "ISO";
   case SRC_TYPE_ZSO:
+  case SRC_TYPE_ZSO_FILE:
     return "ZSO";
   default:
     return "";
   }
+}
+
+int source_is_raw_zso(const char *path) {
+  return path && str_ends_with_ci(path, ".zso");
 }
 
 inst_err_t source_open(GameSource *src, const char *path) {

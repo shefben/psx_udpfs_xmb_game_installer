@@ -31,7 +31,7 @@ TEST(source_classify_names) {
   CHECK_EQ_INT(source_classify("X.ZSO.ISO"), SRC_TYPE_ZSO);
   CHECK_EQ_INT(source_classify("X.cso.iso"), SRC_TYPE_NONE);
   CHECK_EQ_INT(source_classify("X.chd.iso"), SRC_TYPE_NONE);
-  CHECK_EQ_INT(source_classify("X.zso"), SRC_TYPE_NONE);
+  CHECK_EQ_INT(source_classify("X.zso"), SRC_TYPE_ZSO_FILE); /* USB: decompressed on the PS2 */
   CHECK_EQ_INT(source_classify("X.bin"), SRC_TYPE_NONE);
   CHECK_EQ_INT(source_classify(".iso"), SRC_TYPE_NONE);
   CHECK_STR(source_type_label(SRC_TYPE_ZSO), "ZSO");
