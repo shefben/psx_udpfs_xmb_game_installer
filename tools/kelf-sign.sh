@@ -31,7 +31,8 @@
 #
 # Verification: non-empty; not an ELF; `kelftool decrypt` (which checks
 # the signatures) succeeds and returns the input ELF bytes, followed by
-# at most 16 zero bytes of padding (ps2homebrew/kelftool pads).
+# at most 23 zero bytes of padding (ps2homebrew/kelftool pads to 8 bytes,
+# then adds 16).
 set -euo pipefail
 
 die() { printf 'kelf-sign: error: %s\n' "$1" >&2; exit 1; }
@@ -117,7 +118,7 @@ kt decrypt "$ABS_TMP" "$ABS_CHECK" "${DEC_OPTS[@]}" >/dev/null || die "kelftool 
 [ -s "$CHECK" ] || die "kelftool decrypt (signature check) failed"
 n=$(stat -c %s "$IN")
 m=$(stat -c %s "$CHECK")
-[ "$m" -ge "$n" ] && [ $((m - n)) -le 16 ] && cmp -s -n "$n" "$IN" "$CHECK" &&
+[ "$m" -ge "$n" ] && [ $((m - n)) -le 23 ] && cmp -s -n "$n" "$IN" "$CHECK" &&
   [ -z "$(tail -c +$((n + 1)) "$CHECK" | tr -d '\0')" ] ||
   die "decrypted KELF content differs from the input ELF"
 

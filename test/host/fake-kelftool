@@ -38,7 +38,8 @@ case "$cmd" in
     case "${FAKE_KELF:-ok}" in
       fail-decrypt) exit 1 ;;
       bad-decrypt) printf 'garbage' > "$out" ;;
-      pad) { tail -c +2057 "$in"; head -c 16 /dev/zero; } > "$out" ;;
+      pad) { tail -c +2057 "$in"; head -c 20 /dev/zero; } > "$out" ;; # POPStarter: 8-byte align + 16
+      bigpad) { tail -c +2057 "$in"; head -c 24 /dev/zero; } > "$out" ;;
       bad-pad) { tail -c +2057 "$in"; printf 'x'; } > "$out" ;;
       *) tail -c +2057 "$in" > "$out" ;;
     esac ;;

@@ -134,9 +134,10 @@ PS1 GAMES (POPSTARTER)
 
    PS1 games must be in POPStarter's .VCD format (convert BIN/CUE with
    cue2pops; multi-file BIN/CUE must be merged first). Put the .VCD files
-   in PC\udpfsd\POPS (or POPS\ on a USB drive) together with:
-     POPSTARTER.KELF   POPStarter (krHACKen), e.g. from the
-                       PFS-BatchKit-Manager POPS-Binaries folder
+   in PC\udpfsd\POPS or PC\udpfsd\CD (on a USB drive: POPS\ or CD\);
+   these files go in PC\udpfsd\POPS (USB: POPS\):
+     POPSTARTER.KELF   POPStarter rev13 Beta (krHACKen): already in
+                       PC\udpfsd\POPS; on USB copy it to POPS\ too
      POPS.ELF, IOPRP252.IMG   Sony's POPS files; not included, you must
                        supply them
    Choose the .VCD in Install Games from UDPFS (or USB). Each PS1 game

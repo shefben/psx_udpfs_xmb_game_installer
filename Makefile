@@ -203,16 +203,21 @@ $(BOOT_ELF): $(OPL_KELF) $(APP_KELF) $(EE_DEPS) FORCE
 	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) installer_kelf=$(APP_KELF)"
 	$(call STRIP_IF_CHANGED,$@,$(BUILD)/bootstrap/bootstrap-debug.elf)
 
-# ---- optional: POPStarter for PS1 games, signed like the other KELFs. The
-# ELF is never fetched: give its path explicitly, e.g.
-#   POPSTARTER_ELF=/path/POPSTARTER.ELF make dist
-# (krHACKen's POPStarter; PSBBN Definitive Project ships POPSTARTER.ELF).
+# ---- POPStarter for PS1 games, shipped in udpfsd/POPS/: the pinned
+# rev13 Beta POPSTARTER.KELF as distributed (tools/popstarter.env, kept in
+# vendor/popstarter/), the one PFS-BatchKit-Manager and PSX-XMB-Manager
+# use on the PSX. POPSTARTER_ELF=/path/POPSTARTER.ELF signs another one
+# like the other KELFs instead. POPS.ELF / IOPRP252.IMG are never included.
 POPS_KELF := $(BUILD)/kelf/POPSTARTER.KELF
+POPSTARTER_PIN := vendor/popstarter/POPSTARTER.KELF
 ifneq ($(POPSTARTER_ELF),)
 $(POPS_KELF): $(POPSTARTER_ELF) tools/kelf-sign.sh $(BUILD)/.kelf-mode
 	bash tools/kelf-sign.sh $(POPSTARTER_ELF) $@
-DIST_POPS := $(POPS_KELF)
+else
+$(POPS_KELF): tools/popstarter.env tools/fetch-popstarter.sh $(POPSTARTER_PIN)
+	bash tools/fetch-popstarter.sh $@
 endif
+DIST_POPS := $(POPS_KELF)
 
 kelfs: $(OPL_KELF) $(APP_KELF)
 

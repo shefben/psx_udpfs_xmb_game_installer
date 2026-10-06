@@ -61,6 +61,8 @@ run PS2KEYS=$W/PS2KEYS.dat FAKE_KELF=pad; rc=$?
 [ $rc -eq 0 ] && [ -s "$W/out.KELF" ]; check zero_padding_ok $?
 run PS2KEYS=$W/PS2KEYS.dat FAKE_KELF=bad-pad; rc=$?
 [ $rc -ne 0 ] && no_outputs; check nonzero_padding_rejected $?
+run PS2KEYS=$W/PS2KEYS.dat FAKE_KELF=bigpad; rc=$?
+[ $rc -ne 0 ] && no_outputs; check padding_over_23_rejected $?
 
 # 5. explicit mbr and none modes
 : > "$W/log"

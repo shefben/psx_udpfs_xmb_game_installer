@@ -23,6 +23,12 @@ lists what is still to check.
   OPL-Launcher and POPStarter KELFs that run from PSX XMB channels
   (`KELF_MODE=dnasload`), and OPL-Launcher is signed without its debug
   data (1.5 MB to 0.3 MB).
+- **PS1 installs said POPSTARTER.KELF was missing** although it was in
+  the server's `POPS` folder. The installer looked for it with a status
+  query that udpfsd only answers for files already open; it now opens the
+  file to check. The same applies to `POPS.ELF` and `IOPRP252.IMG`.
+  `.VCD` games can also be kept in the `CD` folder; the POPStarter files
+  are then taken from `POPS`.
 - **Delete/repair of games from other tools.** Installed Games and
   Remove Games now also list games PFS-BatchKit-Manager or hdl-dump
   installed (visible `PP.` HDL partitions): they can be hidden, deleted
@@ -48,6 +54,10 @@ lists what is still to check.
 - **Diagnostics > Dump XMB channels to USB.** Copies every `PP.`
   partition's header, files and PFS superblock to `mass0:/xmb-dump/`
   (read-only on the HDD), to compare channels with other tools'.
+- **POPStarter included.** `PC\udpfsd\POPS\POPSTARTER.KELF` is
+  POPStarter rev13 Beta (krHACKen; the last public release), unchanged:
+  the same KELF PFS-BatchKit-Manager and PSX-XMB-Manager use on the PSX. Sony's `POPS.ELF` and `IOPRP252.IMG` are still not
+  included: add your own next to it.
 - **Every partition header is complete:** `system.cnf`, `icon.sys` and an
   icon, as hdl_dump / PFS-BatchKit-Manager write them.
 

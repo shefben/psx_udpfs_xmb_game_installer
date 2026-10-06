@@ -35,8 +35,8 @@ contains the installer ELF, the ready-to-run server folder,
 - **From USB:** `.iso` and `.zso` files on a FAT32 or exFAT drive; no PC
   needed.
 - **PS1 games:** `.VCD` files through POPStarter. Each PS1 game gets its
-  own XMB channel. You supply `POPSTARTER.KELF`, `POPS.ELF` and
-  `IOPRP252.IMG`.
+  own XMB channel. POPStarter (rev13 Beta) is included in
+  `PC\udpfsd\POPS`; you supply Sony's `POPS.ELF` and `IOPRP252.IMG`.
 - **OPL:** installed automatically if the DESR has none. An existing OPL
   is never replaced. Per-game OPL settings (`CFG\<ID>.cfg`) are copied
   over.
@@ -153,13 +153,13 @@ docs/       guides, manual, checklist; docs/package/ = release zip texts
 | UDPFS / udpfsd, Neutrino network modules (smap, ministack, udpfs_ioman) | Maximus32 |
 | Open PS2 Loader, OPL-Launcher | ps2homebrew and contributors |
 | APA/HDL driver (`ps2hdd-hdl.irx`), `hdlfs.irx` | HDLGameInstaller (sp193) |
-| POPStarter (PS1 games; not included) | krHACKen |
+| POPStarter (PS1 games; rev13 Beta, included) | krHACKen |
 | PS2SDK (incl. USB / BDM drivers) | ps2dev |
 | Cover art downloads | xlenore/ps2-covers |
 | Partition naming, CFG/ART layout, `GameListPS2.txt`, game database (`PS2DB.xml`) | PFS-BatchKit-Manager (GDX-X) |
 
 Open PS2 Loader is distributed under the AFL-3.0 licence (shipped as
-`udpfsd/OPL-LICENSE.txt`). POPStarter and Sony's POPS files are not
-part of this project. Pinned upstream revisions:
+`udpfsd/OPL-LICENSE.txt`). POPStarter is krHACKen's freeware, shipped
+unchanged; Sony's POPS files are not part of this project. Pinned upstream revisions:
 [reference/REVISIONS.txt](reference/REVISIONS.txt) and
 [provenance](docs/PROVENANCE.md).

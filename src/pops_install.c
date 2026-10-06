@@ -65,18 +65,20 @@ inst_err_t pops_plan_build(const char *path, pops_plan_t *p, int *rc_out) {
   return p->size_mb < 0 ? ERR_HDL_PLAN : ERR_OK;
 }
 
-/* <folder of the VCD>/<name>, else <device>/POPS/<name>. */
+/* <folder of the VCD>/<name>, else <device>/POPS/<name>. Probed by
+ * opening the file: udpfsd answers getstat only for open files, so a
+ * getstat probe reported POPSTARTER.KELF etc. missing on the server. */
 static int find_pops_file(const char *vcd_path, const char *name, char *out, size_t sz) {
   const char *slash = strrchr(vcd_path, '/');
   if (slash) {
     snprintf(out, sz, "%.*s/%s", (int)(slash - vcd_path), vcd_path, name);
-    if (file_size(out) > 0)
+    if (file_open_size(out) > 0)
       return 0;
   }
   const char *colon = strchr(vcd_path, ':');
   if (colon) {
     snprintf(out, sz, "%.*s:/POPS/%s", (int)(colon - vcd_path), vcd_path, name);
-    if (file_size(out) > 0)
+    if (file_open_size(out) > 0)
       return 0;
   }
   return -1;

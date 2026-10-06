@@ -128,7 +128,8 @@ PS2KEYS=/absolute/path/to/PS2KEYS.dat make kelfs     # or make dist
 * Transactional: the old output is deleted first, the KELF is written to
   `<out>.tmp`, verified, then renamed. Verification: non-empty, >= 1 KiB,
   not an ELF, the header (dnasload), and `kelftool decrypt` (signature
-  check) returns the input ELF plus at most 16 zero bytes of padding. On
+  check) returns the input ELF plus at most 23 zero bytes of padding (an
+  8-byte boundary, then 16 more). On
   failure nothing is left behind and the exit code is non-zero.
   `test/host/test_kelf_sign.sh` covers every failure path.
 

@@ -95,4 +95,9 @@ int file_load(const char *path, void **out, uint32_t max);
 /* Size of a file via getstat; <0 if absent. */
 int64_t file_size(const char *path);
 
+/* Size by opening the file (open + seek to end). For udpfs: paths:
+ * udpfsd answers getstat only for files that are already open, so
+ * file_size() reports every other file there as missing. */
+int64_t file_open_size(const char *path);
+
 #endif

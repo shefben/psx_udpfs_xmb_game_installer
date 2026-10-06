@@ -30,10 +30,10 @@ the server stops with `config: ... line N`.
 | Key | What it does |
 |---|---|
 | `dvd = DVD` | DVD games (.iso / .zso, subfolders included) |
-| `cd = CD` | CD games |
+| `cd = CD` | CD games; PS1 `.VCD` games may be here too |
 | `games = <folder>` | games of either type (the disc type is read from the image) |
 | `install = <folder>` | an extra folder, shown to the DESR as `/INSTALL` |
-| `pops = POPS` | PS1 games (.VCD) plus `POPSTARTER.KELF`, `POPS.ELF`, `IOPRP252.IMG` |
+| `pops = POPS` | PS1 games (.VCD) plus `POPSTARTER.KELF` (included), `POPS.ELF`, `IOPRP252.IMG` (yours) |
 
 Each folder you set must exist. You can point the folders anywhere, for
 example at PFS-BatchKit-Manager's folders:
@@ -107,8 +107,9 @@ overrides `udpfsd.cfg`. Run the server with `-h` for the full list.
   duplicates (the same game as .iso and .zso is installed once).
 - **Auto-install, OPL install, covers, OPL settings, game info:** all
   come from the scan.
-- **PS1 games:** pick a `.VCD` from the `POPS` folder. The three
-  POPStarter files must sit next to it (or in the `POPS` folder).
+- **PS1 games:** pick a `.VCD` from the `POPS` or the `CD` folder.
+  `POPSTARTER.KELF` (shipped), `POPS.ELF` and `IOPRP252.IMG` are taken
+  from next to the `.VCD`, else from the `POPS` folder.
 - **Without the server:** Installed Games, Remove Games, Repair, Back up
   to USB, Install from USB and Diagnostics all keep working.
 
@@ -122,4 +123,4 @@ overrides `udpfsd.cfg`. Run the server with `-h` for the full list.
 | Game listed as "duplicate" | Two images of the same game; only one is installed. |
 | Plain "PS2 GAME" cover | Restart the server, then on the DESR: Installed Games > game > Repair XMB channel. |
 | No release date / genre in the XMB | Set `gamedb`; the game must be in that database. |
-| PS1 install says POPSTARTER.KELF / POPS.ELF missing | Put the three POPStarter files next to the .VCD or in the `POPS` folder. |
+| PS1 install says POPSTARTER.KELF / POPS.ELF missing | Keep the shipped `POPSTARTER.KELF` and add `POPS.ELF` and `IOPRP252.IMG` next to the .VCD or in the `POPS` folder. Installers before 3.0 reported these files missing on the server even when present; update the installer. |

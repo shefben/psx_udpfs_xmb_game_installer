@@ -346,6 +346,15 @@ int64_t file_size(const char *path) {
   return ((int64_t)st.hisize << 32) | st.size;
 }
 
+int64_t file_open_size(const char *path) {
+  int fd = fileXioOpen(path, FIO_O_RDONLY);
+  if (fd < 0)
+    return fd;
+  int64_t size = fileXioLseek64(fd, 0, FIO_SEEK_END);
+  fileXioClose(fd);
+  return size;
+}
+
 int file_load(const char *path, void **out, uint32_t max) {
   *out = NULL;
   int fd = fileXioOpen(path, FIO_O_RDONLY);
