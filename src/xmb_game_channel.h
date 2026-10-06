@@ -114,6 +114,11 @@ const char *game_load_jackets(const char *boot_id, jacket_pair_t *j, void *owned
  * the XMB (returns 1); -1 if neither exists as HDL (out = hidden). */
 int game_data_partition(const char *hidden, char out[APA_NAME_MAX + 1]);
 
+/* Give a shown game an XMB cover (experimental): PFS-BatchKit-Manager's
+ * resource-partition layout, PFS PP.X with res/ + the game hidden as
+ * __.X. Rebuild XMB channel undoes it. */
+void game_add_cover(const char *hidden, const install_ui_t *ui, install_report_t *rep);
+
 /* Change the XMB title of a shown game (its boot header's icon.sys). */
 inst_err_t game_set_title(const char *hidden, const char *title, int *rc_out);
 

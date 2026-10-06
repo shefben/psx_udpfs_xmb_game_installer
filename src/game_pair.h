@@ -34,7 +34,8 @@ typedef struct {
   int visible_exists; /* in the XMB: PP. game partition, or an old PFS channel */
   int visible_valid;  /* PP. game partition with a complete boot header */
   int data_visible;   /* the HDL game partition itself is PP.X (BatchKit layout) */
-  int legacy_channel; /* an older release's PFS channel PP.X next to __.X */
+  int legacy_channel; /* PFS PP.X next to __.X: a cover partition (or an older
+                       * release's channel) */
   int verify_skipped; /* journal: full read-back skipped by the user */
   int resumable;      /* interrupted copy, checkpoint bound to this partition */
   uint64_t resume_bytes; /* bytes already copied (when resumable) */
@@ -65,6 +66,10 @@ const char *pair_label(const pair_facts_t *f);
 /* Offer "Verify game data": a completed install with a journal bound to
  * the partition (verified or skipped). */
 int pair_can_verify(const pair_facts_t *f);
+
+/* "Add XMB cover": a complete game shown as one HDL partition whose boot
+ * header is intact (a game with a cover partition already has one). */
+int pair_can_add_cover(const pair_facts_t *f);
 
 /* One partition of the APA list. */
 typedef struct {

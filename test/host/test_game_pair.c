@@ -150,3 +150,25 @@ TEST(pair_collect_lists_batchkit_and_own_games) {
   CHECK_STR(out[5].hidden, "__.SLUS-21000..BOTH");
   CHECK_EQ_INT(pair_collect(parts, 15, out, 2), 2); /* bounded */
 }
+
+/* Game with a PFS cover partition (PP.X PFS + hidden __.X), the layout
+ * PFS-BatchKit-Manager uses to show covers. */
+TEST(cover_partition_is_complete_and_labelled) {
+  pair_facts_t f;
+  memset(&f, 0, sizeof(f));
+  f.hidden_exists = f.hidden_header_valid = f.has_journal = 1;
+  f.journal_verified = f.journal_matches_partition = 1;
+  f.visible_exists = f.legacy_channel = f.visible_valid = 1;
+  CHECK_EQ_INT(pair_classify(&f), PAIR_COMPLETE);
+  CHECK_STR(pair_label(&f), "installed, with cover");
+  CHECK(pair_can_add_cover(&f) == 0);
+  /* Shown game (one HDL partition): a cover can be added. */
+  f.legacy_channel = 0;
+  f.data_visible = 1;
+  CHECK_STR(pair_label(&f), "installed");
+  CHECK(pair_can_add_cover(&f) == 1);
+  f.verify_skipped = 1;
+  CHECK(pair_can_add_cover(&f) == 1);
+  f.visible_valid = 0; /* broken boot header: repair first */
+  CHECK(pair_can_add_cover(&f) == 0);
+}

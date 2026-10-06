@@ -195,7 +195,11 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
                       hdd_stat(visible, &vtype, NULL, NULL) == 0 &&
                       partition_is_xmb_channel(visible, vtype);
   f->visible_exists = f->data_visible || f->legacy_channel;
-  f->visible_valid = f->data_visible && game_header_check(data) == ERR_OK;
+  /* Shown game: its boot header. Cover partition (PFS PP.X next to the
+   * hidden game, PFS-BatchKit-Manager's "resource partition"): its files
+   * and header. */
+  f->visible_valid = f->data_visible ? game_header_check(data) == ERR_OK
+                                     : f->legacy_channel && channel_quick_check(visible) == ERR_OK;
 }
 
 static int count_journals(void) {
@@ -897,6 +901,92 @@ inst_err_t game_remove_channel(const char *visible, int *rc_out) {
   }
   pfs_umount(PFS_WORK); /* a mounted channel cannot be removed (-EBUSY) */
   return hdd_remove_exact(visible, rc_out);
+}
+
+/* Covers need a PFS partition with res/ (the XMB reads jkt_001/002.png
+ * there; an HDL partition has none). PFS-BatchKit-Manager's "resource
+ * partition": the game is hidden (PP.X -> __.X, its PATINFO header stays)
+ * and a 128 MiB PFS PP.X gets EXECUTE.KELF (OPL-Launcher, which finds
+ * the game under __.X), res/ and a pfs:/EXECUTE.KELF boot header. Any
+ * failure removes the new partition and shows the game again. */
+void game_add_cover(const char *hidden, const install_ui_t *ui, install_report_t *rep) {
+  memset(rep, 0, sizeof(*rep));
+  char visible[APA_NAME_MAX + 1], part_id[PART_ID_LEN + 1] = "";
+  payload_t kelf;
+  memset(&kelf, 0, sizeof(kelf));
+  jacket_pair_t jkt;
+  void *jkt_owned[2] = {NULL, NULL};
+  stage(ui, rep, STAGE_CREATING_CHANNEL);
+  pair_facts_t f;
+  if (partition_partner(hidden, visible) < 0 || !partition_is_hidden_game(hidden)) {
+    rep->err = ERR_INVALID_ARG;
+    return;
+  }
+  game_pair_facts(visible, hidden, &f);
+  if (!pair_can_add_cover(&f)) {
+    rep->err = ERR_INVALID_ARG;
+    rep->detail = "only for an installed game shown in the XMB";
+    goto out;
+  }
+  hdl_header_info_t h;
+  char title[64] = "";
+  if (hdl_read_header(visible, &h) < 0) {
+    rep->err = ERR_HDL_VERIFY;
+    goto out;
+  }
+  if (game_header_get_title(visible, title, sizeof(title)) < 0 || !title[0])
+    str_copy(title, h.title, sizeof(title));
+  boot_id_to_part_id(h.startup, part_id);
+  if ((rep->err = payload_opl_launcher(&kelf, g_app.net == NETWORK_READY))) {
+    rep->detail = "OPL-Launcher EXECUTE.KELF";
+    goto out;
+  }
+  uint32_t free_mb = 0;
+  if (hdd_space_mb(NULL, &free_mb, NULL) < 0 || free_mb < CHANNEL_SIZE_MB) {
+    rep->err = ERR_NO_SPACE;
+    goto out;
+  }
+  char info[1024], today[9];
+  xmb_game_info_t gi;
+  int have_gi = game_load_info(h.startup, &gi);
+  install_date(today);
+  uint32_t info_len = (uint32_t)xmb_game_info_sys_ex(info, sizeof(info), title, h.startup,
+                                                     have_gi ? &gi : NULL, today);
+  rep->jacket = game_load_jackets(h.startup, &jkt, jkt_owned);
+  channel_content_t c = {kelf.data, kelf.size, info, info_len, jkt, title, part_id};
+
+  fileXioUmount("hdl0:");
+  if ((rep->err = hdd_rename_game(visible, hidden, &rep->rc))) {
+    rep->detail = "hide the game partition (PP. to __.)";
+    goto out;
+  }
+  channel_result_t cr;
+  int rc = 0;
+  inst_err_t e = pfs_create_partition(visible, CHANNEL_SIZE_STR, &rc);
+  cr = (channel_result_t){e, rc, "create the PFS cover partition"};
+  if (!cr.err)
+    cr = channel_populate(visible, &c);
+  if (!cr.err)
+    cr = channel_verify(visible, &c);
+  if (cr.err) {
+    rep->err = cr.err;
+    rep->rc = cr.rc;
+    rep->detail = cr.step;
+    pfs_umount(PFS_WORK);
+    int rrc = 0;
+    if (hdd_remove_exact(visible, &rrc) != ERR_OK ||
+        hdd_rename_game(hidden, visible, &rrc) != ERR_OK)
+      rep->detail = "cover partition failed and the game could NOT be shown again: "
+                    "use Rebuild XMB channel";
+    goto out;
+  }
+  rep->err = ERR_OK;
+  stage(ui, rep, STAGE_FINISHED);
+out:
+  free(jkt_owned[0]);
+  free(jkt_owned[1]);
+  payload_release(&kelf);
+  finish_report(rep, visible, hidden);
 }
 
 inst_err_t game_set_title(const char *hidden, const char *title, int *rc_out) {

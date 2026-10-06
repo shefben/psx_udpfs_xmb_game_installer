@@ -117,6 +117,19 @@ static void dump_one(const hdd_part_t *p) {
     }
   }
 
+  /* PFS superblock (partition sector 8192 = fd offset 4 MiB - 0x1000),
+   * to compare the PFS format with other tools' partitions. */
+  if (type == APA_TYPE_PFS_ID && (fd = fileXioOpen(dev, FIO_O_RDONLY)) >= 0) {
+    int r = fileXioLseek(fd, 8192 * 512 - 0x1000, FIO_SEEK_SET) >= 0
+                ? fileXioRead(fd, buf, 64 * 1024)
+                : -1;
+    fileXioClose(fd);
+    if (r > 0) {
+      snprintf(path, sizeof(path), "%s/pfs_super_sector8192.bin", out);
+      file_write_all(path, buf, (uint32_t)r);
+    }
+  }
+
   if (type == APA_TYPE_PFS_ID && pfs_mount(PFS_WORK, p->name, FIO_MT_RDONLY) == 0) {
     char files[112];
     snprintf(files, sizeof(files), "%s/files", out);

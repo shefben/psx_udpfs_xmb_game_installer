@@ -94,6 +94,14 @@ check.
   again. PFS-BatchKit-Manager's games are now listed too (as not verified
   by this installer: they can be hidden, deleted or backed up).
   The installer's own channel and PS1 games stay PFS channels.
+- **XMB covers for PS2 games (experimental).** A game shown as one HDL
+  partition has no picture: the XMB reads covers only from a PFS
+  partition's `res/`. *Installed Games > game > Add XMB cover* uses
+  PFS-BatchKit-Manager's resource-partition layout: the game partition is
+  hidden again (`__.`, not copied) and a 128 MiB PFS `PP.` partition gets
+  the covers, title and OPL-Launcher, which starts the game from `__.`.
+  *Remove cover* turns it back into one partition. Two of our PFS
+  partitions froze the XMB in earlier tests, so this is opt-in, per game.
 - **Broken USB backups.** Backing up a game whose copy never finished
   is refused, so a broken `.iso` can no longer pass its own check.
 - **Game info memory bug.** Loading the game info no longer writes

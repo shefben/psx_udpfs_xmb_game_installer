@@ -830,6 +830,35 @@ static void do_remove_channel(const char *visible, int shown) {
   }
 }
 
+static void do_add_cover(const char *hidden) {
+  if (!ui_confirm("Add XMB cover",
+                  "EXPERIMENTAL. The XMB shows covers only from a PFS partition\n"
+                  "with res/ (PFS-BatchKit-Manager's resource partition):\n"
+                  "  - the game is hidden again (PP. renamed to __., not copied)\n"
+                  "  - a 128 MiB PFS partition PP. gets the cover, title and\n"
+                  "    OPL-Launcher\n\n"
+                  "Earlier tests froze the XMB with two such partitions. If\n"
+                  "it freezes: start this installer from wLaunchELF, then\n"
+                  "Installed Games > game > Remove cover.\n\nContinue?"))
+    return;
+  progress_ctx_t ctx = {NULL, STAGE_CREATING_CHANNEL, 1, 0, 0};
+  install_ui_t ui = {cb_stage, NULL, NULL, &ctx, NULL, NULL};
+  install_report_t rep;
+  ui_header("Add XMB cover", hidden);
+  game_add_cover(hidden, &ui, &rep);
+  if (rep.err) {
+    flow_show_error("No cover was added.", &rep, "the game is unchanged (still shown).");
+  } else {
+    char msg[300];
+    snprintf(msg, sizeof(msg),
+             "Cover partition created and verified.\nCover: %s\n\n"
+             "Return to the XMB (or reboot) to see it.",
+             rep.jacket && !strcmp(rep.jacket, "server") ? "from the server"
+                                                         : "built-in (none on the server)");
+    ui_message("Add XMB cover", msg);
+  }
+}
+
 static void do_create_channel(const char *hidden) {
   progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0, 0};
   install_ui_t ui = {cb_stage, NULL, NULL, &ctx, NULL, NULL};
@@ -852,6 +881,7 @@ static void do_create_channel(const char *hidden) {
 #define ROW_RENAME (1 << 17)
 #define ROW_RESUME (1 << 18)
 #define ROW_BACKUP (1 << 19)
+#define ROW_COVER (1 << 20)
 
 /* ps1: "name" is the PS1 channel, else the hidden PS2 partition. */
 static void do_backup(const char *name, int ps1) {
@@ -995,10 +1025,12 @@ void flow_pair_actions(const char *visible, const char *hidden) {
     str_copy(rows[n], label, UI_ROW_LEN);                                      \
     map[n++] = (a);                                                            \
   }
-  ADD(ACT_CREATE_CHANNEL, st == PAIR_HIDDEN_ONLY ? "Create XMB channel"
-                          : st == PAIR_COMPLETE  ? "Repair XMB channel"
-                                                 : "Rebuild XMB channel");
+  ADD(ACT_CREATE_CHANNEL, st == PAIR_HIDDEN_ONLY                      ? "Create XMB channel"
+                          : st == PAIR_COMPLETE && f.legacy_channel ? "Remove cover (one partition again)"
+                          : st == PAIR_COMPLETE                      ? "Repair XMB channel"
+                                                                     : "Rebuild XMB channel");
   ADD(ACT_REMOVE_CHANNEL, f.data_visible             ? "Hide from the XMB (keep the game)"
+                          : st == PAIR_COMPLETE       ? "Hide from the XMB (removes the cover)"
                           : st == PAIR_ORPHAN_CHANNEL ? "Remove broken channel"
                                                       : "Remove old channel (game data invalid)");
   ADD(ACT_DELETE_INCOMPLETE, "Delete incomplete game");
@@ -1013,6 +1045,10 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   if (f.visible_exists && f.visible_valid) {
     str_copy(rows[n], "Rename (title shown in the XMB)", UI_ROW_LEN);
     map[n++] = ROW_RENAME;
+  }
+  if (pair_can_add_cover(&f)) {
+    str_copy(rows[n], "Add XMB cover (experimental)", UI_ROW_LEN);
+    map[n++] = ROW_COVER;
   }
   /* Not while a copy is unfinished (offer Resume instead). */
   if (f.hidden_exists && f.hidden_header_valid && !f.resumable &&
@@ -1047,6 +1083,9 @@ void flow_pair_actions(const char *visible, const char *hidden) {
     break;
   case ROW_BACKUP:
     do_backup(hidden, 0);
+    break;
+  case ROW_COVER:
+    do_add_cover(hidden);
     break;
   case 0: {
     static char details[2048];

@@ -37,8 +37,9 @@ level unless stated otherwise.
   visible `PP.` HDL partitions) are listed, as not verified by this
   installer: they can be hidden, deleted or backed up; a same-named one
   blocks a new install (partition already exists).
-* **XMB info for PS2 games:** the XMB shows the title and icon from the
-  game's boot header. Covers, release date, developer and genre
+* **XMB info for PS2 games:** the XMB shows the title from the game's
+  boot header, but no cover (that needs a PFS partition: *Add XMB cover*,
+  experimental). Covers, release date, developer and genre
   (`info.sys`, `gamedb`) only apply to PFS channels (PS1 games, installer).
 * **Game IDs and titles.** A game without a `XXXX_NNN.NN` BOOT2 entry is
   rejected. Titles that sanitize to the same partition name are a

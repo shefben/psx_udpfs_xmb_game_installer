@@ -65,7 +65,13 @@ const char *pair_label(const pair_facts_t *f) {
     return "installed, NOT VERIFIED";
   if (f->verify_skipped && s == PAIR_HIDDEN_ONLY)
     return "not verified, channel pending";
+  if (s == PAIR_COMPLETE && f->legacy_channel)
+    return "installed, with cover";
   return pair_state_label(s);
+}
+
+int pair_can_add_cover(const pair_facts_t *f) {
+  return pair_classify(f) == PAIR_COMPLETE && f->data_visible && f->visible_valid;
 }
 
 int pair_can_verify(const pair_facts_t *f) { return pair_hidden_trusted(f); }
