@@ -1196,40 +1196,17 @@ static hdd_part_t parts[256];
 
 static int collect_pairs(void) {
   ui_header("Scanning", "Reading APA partition table...");
-  int np = hdd_list(parts, 256), n = 0;
+  int np = hdd_list(parts, 256);
   if (np < 0)
     return np;
-  for (int i = 0; i < np && n < MAX_PAIRS; i++) {
-    const char *name = parts[i].name;
-    char partner[APA_NAME_MAX + 1];
-    /* A game is an HDL partition: hidden (__.X) or shown in the XMB
-     * (PP.X, PFS-BatchKit-Manager's layout and ours). A PFS PP.X is an
-     * older release's channel (paired via its __.X) or a PS1 game. */
-    if ((partition_is_hidden_game(name) || partition_is_game_channel(name)) &&
-        parts[i].type == APA_TYPE_HDL_ID) {
-      partition_partner(name, partner);
-      int dup = 0; /* __.X and PP.X both HDL: list the game once */
-      for (int k = 0; k < n; k++)
-        dup |= !strcmp(pairs[k].visible + 3, name + 3);
-      if (dup)
-        continue;
-      const char *hid = name[0] == '_' ? name : partner;
-      const char *vis = name[0] == '_' ? partner : name;
-      str_copy(pairs[n].hidden, hid, sizeof(pairs[n].hidden));
-      str_copy(pairs[n].visible, vis, sizeof(pairs[n].visible));
-      n++;
-    } else if (partition_is_xmb_channel(name, parts[i].type)) {
-      partition_partner(name, partner);
-      int have = 0;
-      for (int k = 0; k < np; k++)
-        if (strcmp(parts[k].name, partner) == 0)
-          have = 1;
-      if (!have) { /* orphan; paired ones are added via the hidden side */
-        str_copy(pairs[n].visible, name, sizeof(pairs[n].visible));
-        str_copy(pairs[n].hidden, partner, sizeof(pairs[n].hidden));
-        n++;
-      }
-    }
+  static pair_part_t pp[256];
+  static pair_ref_t refs[MAX_PAIRS];
+  for (int i = 0; i < np; i++)
+    pp[i] = (pair_part_t){parts[i].name, parts[i].type};
+  int n = pair_collect(pp, np, refs, MAX_PAIRS);
+  for (int i = 0; i < n; i++) {
+    str_copy(pairs[i].visible, refs[i].visible, sizeof(pairs[i].visible));
+    str_copy(pairs[i].hidden, refs[i].hidden, sizeof(pairs[i].hidden));
   }
   for (int i = 0; i < n; i++) {
     pair_facts_t f;

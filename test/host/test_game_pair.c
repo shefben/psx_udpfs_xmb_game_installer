@@ -117,3 +117,36 @@ TEST(pair_labels_nonempty) {
     CHECK(pair_state_label((pair_state_t)s)[0] != 0);
   CHECK(strstr(pair_state_label(PAIR_HIDDEN_UNVERIFIED), "UNVERIFIED") != NULL);
 }
+
+/* The DESR's partition list from Diagnostics > Dump XMB channels, plus our
+ * own layouts: every game must be found once. */
+TEST(pair_collect_lists_batchkit_and_own_games) {
+  static const pair_part_t parts[] = {
+      {"__mbr", 0x0001},
+      {"__net", 0x0100},
+      {"__system", 0x0100},
+      {"__sysconf", 0x0100},
+      {"__common", 0x0100},
+      {"PP.SLUS-20066..HALF_LIFE", 0x1337},        /* PFS-BatchKit-Manager */
+      {"+OPL", 0x0100},
+      {"PP.SLUS-20380..JURASSIC_PARK___", 0x1337}, /* PFS-BatchKit-Manager */
+      {"PP.UDPF-00001..INSTALLER", 0x0100},        /* our installer: no game */
+      {"__.SLUS-20312..GRAN_TURISMO_4", 0x1337},   /* ours, hidden */
+      {"PP.SLES-50330..OLD_BUILD", 0x0100},        /* earlier v2.0: PFS channel ... */
+      {"__.SLES-50330..OLD_BUILD", 0x1337},        /* ... + hidden game */
+      {"PP.SCUS-94600..PS1_OR_ORPHAN", 0x0100},    /* PFS channel alone */
+      {"__.SLUS-21000..BOTH", 0x1337},             /* both names HDL: once */
+      {"PP.SLUS-21000..BOTH", 0x1337},
+  };
+  pair_ref_t out[16];
+  int n = pair_collect(parts, (int)(sizeof(parts) / sizeof(parts[0])), out, 16);
+  CHECK_EQ_INT(n, 6);
+  CHECK_STR(out[0].visible, "PP.SLUS-20066..HALF_LIFE");
+  CHECK_STR(out[0].hidden, "__.SLUS-20066..HALF_LIFE");
+  CHECK_STR(out[1].visible, "PP.SLUS-20380..JURASSIC_PARK___");
+  CHECK_STR(out[2].hidden, "__.SLUS-20312..GRAN_TURISMO_4");
+  CHECK_STR(out[3].hidden, "__.SLES-50330..OLD_BUILD");
+  CHECK_STR(out[4].visible, "PP.SCUS-94600..PS1_OR_ORPHAN");
+  CHECK_STR(out[5].hidden, "__.SLUS-21000..BOTH");
+  CHECK_EQ_INT(pair_collect(parts, 15, out, 2), 2); /* bounded */
+}

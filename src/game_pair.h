@@ -66,4 +66,25 @@ const char *pair_label(const pair_facts_t *f);
  * the partition (verified or skipped). */
 int pair_can_verify(const pair_facts_t *f);
 
+/* One partition of the APA list. */
+typedef struct {
+  const char *name;
+  unsigned type;
+} pair_part_t;
+
+/* One game for Installed Games / Remove Games: its two names. */
+typedef struct {
+  char visible[33]; /* PP.X */
+  char hidden[33];  /* __.X (the key of its journal) */
+} pair_ref_t;
+
+/* Games on the HDD, from the APA list, in list order:
+ *  - an HDL partition named __.X or PP.X (hidden, or shown in the XMB
+ *    as PFS-BatchKit-Manager and this installer install games), listed
+ *    once even if both names exist;
+ *  - a PFS PP.X channel without a __.X partner (an orphaned channel of
+ *    an older release, or a PS1 game).
+ * A PFS PP.X next to its __.X belongs to that game. Returns the count. */
+int pair_collect(const pair_part_t *parts, int np, pair_ref_t *out, int max);
+
 #endif

@@ -1,4 +1,8 @@
+#include <string.h>
+
 #include "game_pair.h"
+#include "partname.h"
+#include "util.h"
 
 int pair_hidden_trusted(const pair_facts_t *f) {
   return f->hidden_exists && f->hidden_header_valid && f->has_journal &&
@@ -86,4 +90,35 @@ const char *pair_state_label(pair_state_t s) {
     return "PS1 game (POPStarter)";
   }
   return "?";
+}
+
+int pair_collect(const pair_part_t *parts, int np, pair_ref_t *out, int max) {
+  int n = 0;
+  for (int i = 0; i < np && n < max; i++) {
+    const char *name = parts[i].name;
+    char partner[APA_NAME_MAX + 1];
+    if ((partition_is_hidden_game(name) || partition_is_game_channel(name)) &&
+        parts[i].type == APA_TYPE_HDL_ID) {
+      int dup = 0;
+      for (int k = 0; k < n; k++)
+        dup |= !strcmp(out[k].visible + 3, name + 3);
+      if (dup)
+        continue;
+      partition_partner(name, partner);
+      str_copy(out[n].hidden, name[0] == '_' ? name : partner, sizeof(out[n].hidden));
+      str_copy(out[n].visible, name[0] == '_' ? partner : name, sizeof(out[n].visible));
+      n++;
+    } else if (partition_is_xmb_channel(name, parts[i].type)) {
+      partition_partner(name, partner);
+      int have = 0;
+      for (int k = 0; k < np; k++)
+        have |= !strcmp(parts[k].name, partner);
+      if (!have) {
+        str_copy(out[n].visible, name, sizeof(out[n].visible));
+        str_copy(out[n].hidden, partner, sizeof(out[n].hidden));
+        n++;
+      }
+    }
+  }
+  return n;
 }
