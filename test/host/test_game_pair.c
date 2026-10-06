@@ -165,7 +165,7 @@ TEST(cover_partition_is_complete_and_labelled) {
   /* Shown game (one HDL partition): a cover can be added. */
   f.legacy_channel = 0;
   f.data_visible = 1;
-  CHECK_STR(pair_label(&f), "installed");
+  CHECK_STR(pair_label(&f), "installed, no cover");
   CHECK(pair_can_add_cover(&f) == 1);
   f.verify_skipped = 1;
   CHECK(pair_can_add_cover(&f) == 1);

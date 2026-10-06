@@ -1025,6 +1025,10 @@ void flow_pair_actions(const char *visible, const char *hidden) {
     str_copy(rows[n], label, UI_ROW_LEN);                                      \
     map[n++] = (a);                                                            \
   }
+  if (pair_can_add_cover(&f)) {
+    str_copy(rows[n], "Add XMB cover (experimental: PFS cover partition)", UI_ROW_LEN);
+    map[n++] = ROW_COVER;
+  }
   ADD(ACT_CREATE_CHANNEL, st == PAIR_HIDDEN_ONLY                      ? "Create XMB channel"
                           : st == PAIR_COMPLETE && f.legacy_channel ? "Remove cover (one partition again)"
                           : st == PAIR_COMPLETE                      ? "Repair XMB channel"
@@ -1045,10 +1049,6 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   if (f.visible_exists && f.visible_valid) {
     str_copy(rows[n], "Rename (title shown in the XMB)", UI_ROW_LEN);
     map[n++] = ROW_RENAME;
-  }
-  if (pair_can_add_cover(&f)) {
-    str_copy(rows[n], "Add XMB cover (experimental)", UI_ROW_LEN);
-    map[n++] = ROW_COVER;
   }
   /* Not while a copy is unfinished (offer Resume instead). */
   if (f.hidden_exists && f.hidden_header_valid && !f.resumable &&
@@ -1225,6 +1225,7 @@ typedef struct {
   char visible[APA_NAME_MAX + 1];
   char hidden[APA_NAME_MAX + 1];
   pair_state_t state;
+  int can_cover; /* pair_can_add_cover(): listed under Repair too */
 } pair_row_t;
 
 static pair_row_t pairs[MAX_PAIRS];
@@ -1252,6 +1253,7 @@ static int collect_pairs(void) {
     ui_at(4, " Checking %d/%d: %s", i + 1, n, pairs[i].hidden + 3);
     game_pair_facts(pairs[i].visible, pairs[i].hidden, &f);
     pairs[i].state = pair_classify(&f);
+    pairs[i].can_cover = pair_can_add_cover(&f);
     /* A channel without a __. partner may be a PS1 game (IMAGE0.VCD). */
     if (pairs[i].state == PAIR_ORPHAN_CHANNEL && pops_partition_is_ps1(pairs[i].visible))
       pairs[i].state = PAIR_PS1;
@@ -1272,7 +1274,7 @@ static void pair_list(const char *title, int only_problems) {
     if (only_problems) {
       int m = 0;
       for (int i = 0; i < n; i++)
-        if (pairs[i].state != PAIR_COMPLETE) {
+        if (pairs[i].state != PAIR_COMPLETE || pairs[i].can_cover) {
           pairs[m] = pairs[i];
           memcpy(pair_rows[m], pair_rows[i], UI_ROW_LEN);
           m++;
@@ -1281,7 +1283,7 @@ static void pair_list(const char *title, int only_problems) {
     }
     char status[96];
     snprintf(status, sizeof(status), "%d game%s%s", n, n == 1 ? "" : "s",
-             only_problems ? " need attention" : "");
+             only_problems ? " to repair or give a cover" : "");
     for (int i = 0; i < n; i++) {
       pair_items[i].name = pairs[i].visible + 3; /* "SLUS-20312..TITLE" */
       pair_items[i].size = 0;
