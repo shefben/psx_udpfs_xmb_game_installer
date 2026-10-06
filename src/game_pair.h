@@ -31,8 +31,10 @@ typedef struct {
   int has_journal;         /* a journal for exactly this pair exists */
   int journal_verified;    /* tx_hidden_data_verified() on that journal */
   int journal_matches_partition; /* tx_identity_matches() on the live partition */
-  int visible_exists;
-  int visible_valid; /* files + PPAA header verified */
+  int visible_exists; /* in the XMB: PP. game partition, or an old PFS channel */
+  int visible_valid;  /* PP. game partition with a complete boot header */
+  int data_visible;   /* the HDL game partition itself is PP.X (BatchKit layout) */
+  int legacy_channel; /* an older release's PFS channel PP.X next to __.X */
   int verify_skipped; /* journal: full read-back skipped by the user */
   int resumable;      /* interrupted copy, checkpoint bound to this partition */
   uint64_t resume_bytes; /* bytes already copied (when resumable) */

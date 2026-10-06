@@ -3,7 +3,7 @@
 ## 2.0 (from 1.0)
 
 Only partly tested on a DESR: back up anything important on the hard
-disk first. `docs/HARDWARE_TEST_CHECKLIST.md` (D28-D44) lists what to
+disk first. `docs/HARDWARE_TEST_CHECKLIST.md` (D28-D47) lists what to
 check.
 
 ### New
@@ -78,26 +78,22 @@ check.
   *Install Installer as XMB Channel* to replace the installer's KELF,
   and use the new `udpfsd` folder.
 - **XMB froze while loading with two or more of our channels** (the
-  installer and a game, or two games; any one alone was fine). Our
-  partition headers held only `system.cnf`. PFS-BatchKit-Manager,
-  PSX-XMB-Manager and HDLGameInstaller also write an `icon.sys` and an
-  icon into every header, including the hidden game partition's. Every
-  header now has all three (the icon is HDLGameInstaller's default).
-  `info.sys` now matches those tools too: `title_id = SLUS-20312`
-  without the region, `area` from the game ID, `copyright_imgcount = 1`.
-  Each channel also gets the files PFS-BatchKit-Manager's channels have
-  (those are confirmed to load together on a DESR): covers at its sizes
-  (`jkt_001.png` 256x256, `jkt_002.png` 76x108, 256 colours; udpfsd now
-  makes both), a blank `jkt_cp.png`, a default manual page (`res/man.xml`
-  with blank pages) when the channel has none, and an `info.sys` with no
-  empty field (the install date as release date when the game database
-  has none, "Unknown" developer/publisher/genre, a note and web address)
-  and no line break after its last line, like BatchKit's template. The console no
-  longer copies unresized `ART\<ID>.png` / `<game>.png` images itself;
-  udpfsd resizes those.
-  Channels made by an earlier build show as needing repair: choose
-  *Repair XMB Channels* (or *Installed Games > game > Rebuild XMB channel*) for each, and reinstall
-  the installer channel from the bootstrap ELF.
+  installer and a game, or two games; any one alone was fine). A dump of
+  a DESR where PFS-BatchKit-Manager's games load showed why it works
+  there: a PS2 game is ONE partition, the HDL game partition itself under
+  the name `PP.<ID>..<TITLE>`. Its header holds `system.cnf`
+  (`BOOT2 = PATINFO`), `icon.sys`, an icon and OPL-Launcher as boot KELF;
+  there is no separate PFS channel. Games are now installed exactly like
+  that: copied and verified as hidden `__.<ID>..<TITLE>`, then given that
+  header and renamed to `PP.` (the HDD driver now allows that rename for
+  `__.` HDL games only; system partitions stay protected). Each game
+  saves the 128 MiB a channel partition took. Rename changes the header's
+  title; "Hide from the XMB" renames back to `__.` without deleting.
+  Games installed by an earlier v2.0 build are listed under *Repair XMB
+  Channels*: *Rebuild XMB channel* converts each one without copying it
+  again. PFS-BatchKit-Manager's games are now listed too (as not verified
+  by this installer: they can be hidden, deleted or backed up).
+  The installer's own channel and PS1 games stay PFS channels.
 - **Broken USB backups.** Backing up a game whose copy never finished
   is refused, so a broken `.iso` can no longer pass its own check.
 - **Game info memory bug.** Loading the game info no longer writes

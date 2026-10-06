@@ -57,7 +57,9 @@ TEST(installer_policy_game_pairs) {
   CHECK(partition_remove_allowed("__.SLUS-20312..", T_HDL)); /* empty title (hdl-dump allows) */
   /* Wrong type for the role: refused. */
   CHECK(!partition_remove_allowed("__.SLUS-20312..GRAN_TURISMO_4", T_PFS));
-  CHECK(!partition_remove_allowed("PP.SLUS-20312..GRAN_TURISMO_4", T_HDL));
+  /* A visible game (PFS-BatchKit-Manager layout, ours since 2.0): HDL. */
+  CHECK(partition_remove_allowed("PP.SLUS-20312..GRAN_TURISMO_4", T_HDL));
+  CHECK(!partition_remove_allowed("PP.SLUS-20312..GRAN_TURISMO_4", 0x0001)); /* other types */
 }
 
 TEST(installer_policy_own_partitions) {

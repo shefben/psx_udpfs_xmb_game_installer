@@ -5,7 +5,7 @@
 | Module | Source | Revision | License |
 |---|---|---|---|
 | iomanX.irx, fileXio.irx, poweroff.irx, ps2dev9.irx, ps2atad.irx, ps2fs.irx, sio2man.irx, padman.irx | PS2SDK installed with the toolchain (`$PS2SDK/iop/irx`) | toolchain build | AFL 2.0 (PS2SDK) |
-| ps2hdd-hdl.irx (`vendor/irx/`, embedded as `ps2hdd_hdl_irx`) | source build of HDLGameInstaller `apa-hdl` (cdc6636 = ec37c81) + PS2SDK 1de4bd8 libapa in `ps2dev/ps2dev:v1.0`, with `patches/apa-hdl/0001` | cdc6636 | GPL-2.0 (HDLGameInstaller) / AFL-2.0 (libapa) |
+| ps2hdd-hdl.irx (`vendor/irx/`, embedded as `ps2hdd_hdl_irx`) | source build of HDLGameInstaller `apa-hdl` (cdc6636 = ec37c81) + PS2SDK 1de4bd8 libapa in `ps2dev/ps2dev:v1.0`, with `patches/apa-hdl/0001` (remove) and `0002` (rename) of hidden `__.` HDL games | cdc6636 | GPL-2.0 (HDLGameInstaller) / AFL-2.0 (libapa) |
 | hdlfs.irx | HDLGameInstaller `irx/hdlfs.irx` | ec37c81 | GPL-2.0 |
 | OSD header icon (embedded as `osd_icon_ico`; list and delete icon of every partition header) | HDLGameInstaller `res/icon.ico` | ec37c81 | GPL-2.0 |
 | smap.irx, ministack.irx, udpfs_ioman.irx | Neutrino `iop/smap`, `iop/ministack`, `iop/udpfs` (UDPFS_IOMAN=1), built here with `patches/neutrino/0001` | 7be8de2 | Neutrino license (see reference/neutrino/LICENSE) |

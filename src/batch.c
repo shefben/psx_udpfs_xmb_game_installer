@@ -91,9 +91,10 @@ int batch_count_selected(const batch_entry_t *e, int n) {
   return c;
 }
 
-/* Data partitions (none for a resume: they exist) + the 128 MiB channel. */
+/* Data partitions (none for a resume: they exist). The XMB entry is the
+ * game partition itself (no channel partition). */
 static uint64_t batch_entry_need_mb(const batch_entry_t *e) {
-  return (e->status == BATCH_RESUME ? 0 : (uint64_t)e->alloc_mb) + 128;
+  return e->status == BATCH_RESUME ? 0 : (uint64_t)e->alloc_mb;
 }
 
 uint64_t batch_needed_mb(const batch_entry_t *e, int n) {

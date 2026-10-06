@@ -29,6 +29,26 @@ inst_err_t osd_header_write(const char *partition, const char *syscnf, const cha
 inst_err_t osd_header_verify(const char *partition, const char *syscnf, const char *title0,
                              const char *title1, int *rc_out);
 
+/* PS2 game in the XMB, as PFS-BatchKit-Manager installs it (its games
+ * load together on a DESR; our PFS channels froze the XMB once two
+ * existed): the HDL game partition's own header gets system.cnf
+ * "BOOT2 = PATINFO", icon.sys (title, game ID), the default icon as
+ * list and delete icon and OPL-Launcher as boot KELF. Written into
+ * `part` (the __. or PP. HDL partition), read back and verified. The
+ * HDL game header and data are not touched. kelf NULL (write only):
+ * the boot KELF stays as it is (Rename). */
+inst_err_t game_header_write(const char *part, const char *title, const char *part_id,
+                             const void *kelf, uint32_t kelf_len, int *rc_out);
+inst_err_t game_header_verify(const char *part, const char *title, const char *part_id,
+                              const void *kelf, uint32_t kelf_len, int *rc_out);
+
+/* Magic, PATINFO system.cnf, icon.sys + icon and a boot KELF present.
+ * ERR_OK or ERR_XMB_VERIFY. */
+inst_err_t game_header_check(const char *part);
+
+/* title0 of the header's icon.sys (the XMB title), or -1. */
+int game_header_get_title(const char *part, char *out, size_t outsz);
+
 typedef struct {
   inst_err_t err;
   int rc;

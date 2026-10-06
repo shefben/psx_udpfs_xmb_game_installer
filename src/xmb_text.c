@@ -160,7 +160,7 @@ size_t xmb_render_icon_sys(char *out, size_t outsz, const char *title0, const ch
                    "PS2X\n"
                    "title0 = %s\n"
                    "title1 = %s\n"
-                   "bgcola = 64\n"
+                   "bgcola = 0\n"
                    "bgcol0 = 22,47,92\n"
                    "bgcol1 = 3,10,28\n"
                    "bgcol2 = 3,10,28\n"
@@ -172,9 +172,9 @@ size_t xmb_render_icon_sys(char *out, size_t outsz, const char *title0, const ch
                    "lightcol0 = 62,62,55\n"
                    "lightcol1 = 33,42,64\n"
                    "lightcol2 = 18,18,49\n"
-                   "uninstallmes0 = This will delete the game.\n"
-                   "uninstallmes1 =\n"
-                   "uninstallmes2 =\n",
+                   "uninstallmes0 =  \n"
+                   "uninstallmes1 =  \n"
+                   "uninstallmes2 =  \n",
                    t0, t1);
   if (n < 0 || (size_t)n >= outsz) {
     if (outsz)

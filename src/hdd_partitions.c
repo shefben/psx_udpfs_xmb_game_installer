@@ -109,6 +109,36 @@ int installer_partition_migrate(void) {
   }
 }
 
+inst_err_t hdd_rename_game(const char *from, const char *to, int *rc_out) {
+  int rc = 0;
+  if (!rc_out)
+    rc_out = &rc;
+  *rc_out = 0;
+  if (!(partition_pair_matches(from, to) || partition_pair_matches(to, from)))
+    return ERR_INVALID_ARG;
+  uint16_t type = 0;
+  int r = hdd_stat(from, &type, NULL, NULL);
+  if (r < 0) {
+    *rc_out = r;
+    return ERR_PARTITION_RENAME;
+  }
+  if (type != APA_TYPE_HDL_ID) {
+    *rc_out = type;
+    return ERR_INVALID_ARG;
+  }
+  if (hdd_exists(to) != 0)
+    return ERR_PARTITION_EXISTS;
+  char a[48], b[48];
+  snprintf(a, sizeof(a), "hdd0:%s", from);
+  snprintf(b, sizeof(b), "hdd0:%s", to);
+  r = fileXioRename(a, b);
+  if (r < 0) {
+    *rc_out = r;
+    return ERR_PARTITION_RENAME;
+  }
+  return hdd_exists(to) > 0 && hdd_exists(from) == 0 ? ERR_OK : ERR_PARTITION_RENAME;
+}
+
 int hdd_stat(const char *name, uint16_t *type, uint32_t *size_sectors,
              uint32_t *start_sector) {
   char path[48];

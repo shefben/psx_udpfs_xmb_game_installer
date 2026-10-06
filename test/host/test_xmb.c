@@ -238,16 +238,20 @@ TEST(icon_sys_hdd_format) {
   size_t n = xmb_render_icon_sys(buf, sizeof(buf), "Gran Turismo 4\r\nx", "SLUS-20312");
   CHECK(n > 0 && n < PPAA_ICONSYS_MAX);
   CHECK_EQ_INT(n, strlen(buf));
-  CHECK(strncmp(buf, "PS2X\ntitle0 = Gran Turismo 4x\ntitle1 = SLUS-20312\nbgcola = 64\n", 61) == 0);
-  CHECK(strstr(buf, "lightcol2 = 18,18,49\nuninstallmes0 = This will delete the game.\n"
-                    "uninstallmes1 =\nuninstallmes2 =\n") != NULL);
+  CHECK(strncmp(buf, "PS2X\ntitle0 = Gran Turismo 4x\ntitle1 = SLUS-20312\nbgcola = 0\n", 60) == 0);
+  /* Byte-identical tail to PFS-BatchKit-Manager's (DESR dump). */
+  CHECK(strstr(buf, "lightdir0 = 0.5000,0.5000,0.5000\nlightdir1 = 0.0000,-0.4000,-1.0000\n"
+                    "lightdir2 = 0.5000,-0.5000,0.5000\nlightcolamb = 31,31,31\n"
+                    "lightcol0 = 62,62,55\nlightcol1 = 33,42,64\nlightcol2 = 18,18,49\n"
+                    "uninstallmes0 =  \nuninstallmes1 =  \nuninstallmes2 =  \n") != NULL);
   CHECK(memchr(buf, '\r', n) == NULL);
   CHECK_EQ_INT(xmb_render_icon_sys(buf, 40, "T", "I"), 0);
 }
 
-TEST(hidden_system_cnf_is_hdlgi_res) {
-  CHECK_STR(XMB_HIDDEN_SYSTEM_CNF,
-            "BOOT2 = PATINFO\nVER = 1.00\nVMODE = NTSC\nHDDUNITPOWER = NICHDD\n");
+TEST(patinfo_system_cnf_matches_batchkit) {
+  CHECK_STR(XMB_PATINFO_SYSTEM_CNF,
+            "BOOT2 = PATINFO\nVER = 1.20\nVMODE = NTSC\nHDDUNITPOWER = NICHDD\n");
+  CHECK_EQ_INT(strlen(XMB_PATINFO_SYSTEM_CNF), 0x3e); /* BatchKit header: 0x3e bytes */
 }
 
 static const uint8_t ICON[1000] = {0, 0, 1, 0, 1, 0, 0, 0, 7};
@@ -256,7 +260,7 @@ static const char ICONSYS[] = "PS2X\ntitle0 = A\ntitle1 = B\n";
 TEST(ppaa_files_layout_matches_hdl_dump) {
   static uint8_t region[PPAA_OSD_MAX];
   ppaa_files_t f = {XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF), ICONSYS, strlen(ICONSYS),
-                    ICON, sizeof(ICON)};
+                    ICON, sizeof(ICON), 0, NULL, 0};
   CHECK_EQ_INT(ppaa_files_span(&f), 0x800 + 1024);
   memset(region, 0xEE, sizeof(region));
   CHECK_EQ_INT(ppaa_apply_files(region, sizeof(region), &f), ERR_OK);
@@ -286,16 +290,54 @@ TEST(ppaa_files_layout_matches_hdl_dump) {
   CHECK_EQ_INT(ppaa_verify_files(region, sizeof(region), &f), ERR_XMB_VERIFY);
 }
 
+static uint32_t le32(const uint8_t *p) {
+  return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+/* The header PFS-BatchKit-Manager's PS2 games have on the DESR (dump of
+ * PP.SLUS-20066..HALF_LIFE): list icon 0x800, delete icon 0x40000, boot
+ * KELF 0x110000, system.cnf "BOOT2 = PATINFO". */
+TEST(ppaa_game_layout_matches_batchkit) {
+  static uint8_t region[PPAA_OSD_MAX], kelf[2000];
+  memset(kelf, 0x5A, sizeof(kelf));
+  ppaa_files_t f = {XMB_PATINFO_SYSTEM_CNF, strlen(XMB_PATINFO_SYSTEM_CNF), ICONSYS,
+                    strlen(ICONSYS), ICON, sizeof(ICON), 1, kelf, sizeof(kelf)};
+  CHECK_EQ_INT(ppaa_files_span(&f), 0x40000 + 1024);
+  memset(region, 0xEE, sizeof(region));
+  CHECK_EQ_INT(ppaa_apply_files(region, sizeof(region), &f), ERR_OK);
+  CHECK_EQ_INT(le32(region + 0x10), 0x200);
+  CHECK_EQ_INT(le32(region + 0x14), 0x3e);
+  CHECK_EQ_INT(le32(region + 0x20), 0x800);
+  CHECK_EQ_INT(le32(region + 0x28), 0x40000);
+  CHECK_EQ_INT(le32(region + 0x2C), sizeof(ICON));
+  CHECK_EQ_INT(le32(region + 0x30), 0x110000);
+  CHECK_EQ_INT(le32(region + 0x34), sizeof(kelf));
+  CHECK(memcmp(region + 0x40000, ICON, sizeof(ICON)) == 0);
+  CHECK_EQ_INT(region[0x800 + sizeof(ICON)], 0); /* zeros up to the delete icon */
+  CHECK_EQ_INT(region[0x3FFFF], 0);
+  CHECK_EQ_INT(ppaa_verify_files(region, sizeof(region), &f), ERR_OK);
+  CHECK(ppaa_has_kelf(region, sizeof(region)));
+  char cnf[600];
+  CHECK_EQ_INT(ppaa_read_syscnf(region, sizeof(region), cnf, sizeof(cnf)), 0x3e);
+  char isys[600];
+  CHECK_EQ_INT(ppaa_read_iconsys(region, sizeof(region), isys, sizeof(isys)), (int)strlen(ICONSYS));
+  CHECK_STR(isys, ICONSYS);
+  /* A KELF that is too small for one is refused. */
+  f.kelf_len = 100;
+  CHECK_EQ_INT(ppaa_files_span(&f), 0);
+}
+
 TEST(ppaa_syscnf_only_has_no_icons) {
   static uint8_t region[PPAA_REGION_LEN];
   memset(region, 0, sizeof(region));
   ppaa_apply(region, sizeof(region), XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF));
   CHECK(!ppaa_has_icons(region, sizeof(region))); /* older channels: Repair offered */
+  CHECK(!ppaa_has_kelf(region, sizeof(region)));
 }
 
 TEST(ppaa_files_rejects_bad_sizes) {
   static uint8_t region[PPAA_OSD_MAX];
-  ppaa_files_t f = {XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF), ICONSYS, 0, NULL, 0};
+  ppaa_files_t f = {XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF), ICONSYS, 0, NULL, 0, 0, NULL, 0};
   CHECK_EQ_INT(ppaa_files_span(&f), 0);
   f.iconsys_len = PPAA_ICONSYS_MAX + 1;
   CHECK_EQ_INT(ppaa_apply_files(region, sizeof(region), &f), ERR_INVALID_ARG);

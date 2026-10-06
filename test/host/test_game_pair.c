@@ -44,7 +44,7 @@ TEST(pair_untrusted_reason_names_first_failed_check) {
   pair_facts_t f = facts(1, 1, 1, 1, 1, 1);
   CHECK(pair_untrusted_reason(&f) == NULL);
   f = facts(0, 0, 0, 0, 1, 1);
-  CHECK_STR(pair_untrusted_reason(&f), "game data partition (__.) missing");
+  CHECK_STR(pair_untrusted_reason(&f), "game partition (__. or PP. HDL) missing");
   f = facts(1, 0, 1, 1, 1, 1);
   CHECK_STR(pair_untrusted_reason(&f), "game data header unreadable or not HDL");
   f = facts(1, 1, 0, 0, 1, 1);
@@ -105,7 +105,8 @@ TEST(pair_actions_follow_plan) {
   CHECK_EQ_INT(pair_actions(PAIR_HIDDEN_UNVERIFIED), ACT_DELETE_INCOMPLETE | ACT_REINSTALL);
   CHECK_EQ_INT(pair_actions(PAIR_CHANNEL_BROKEN), ACT_CREATE_CHANNEL | ACT_DELETE);
   CHECK_EQ_INT(pair_actions(PAIR_ORPHAN_CHANNEL), ACT_REMOVE_CHANNEL);
-  CHECK_EQ_INT(pair_actions(PAIR_HIDDEN_INVALID_WITH_CHANNEL), ACT_REMOVE_CHANNEL);
+  /* e.g. a game PFS-BatchKit-Manager installed: hide it, or delete it */
+  CHECK_EQ_INT(pair_actions(PAIR_HIDDEN_INVALID_WITH_CHANNEL), ACT_REMOVE_CHANNEL | ACT_DELETE);
   /* A PS1 (POPStarter) game is one partition: delete only. */
   CHECK_EQ_INT(pair_actions(PAIR_PS1), ACT_DELETE);
   CHECK_STR(pair_state_label(PAIR_PS1), "PS1 game (POPStarter)");

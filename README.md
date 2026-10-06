@@ -3,16 +3,17 @@
 An installer for the PSX DESR that runs on the console as its own XMB
 channel. It installs PS2 and PS1 games to the internal HDD from a PC over
 the network ([udpfsd](https://github.com/pcm720/udpfsd)) or from a USB
-drive. Every installed game gets its own XMB channel with title, cover
-and game info, and starts through
+drive. Every installed game appears in the XMB and starts through
 [OPL-Launcher](https://github.com/ps2homebrew/OPL-Launcher) (PS2) or
-POPStarter (PS1).
+POPStarter (PS1). PS2 games use PFS-BatchKit-Manager's layout, which
+loads reliably on a DESR: one partition per game, booted from its own
+header.
 
 ```
 PC .iso/.zso/.vcd -> udpfsd -> UDPFS/UDPRDMA (DHCP or fixed IP) -> udpfs:/...
 USB .iso/.zso/.vcd -> mass0:/...
   -> GameSource (ZSO unpacked on the EE) -> CRC-32 -> hddpump.irx -> hdl0:
-  -> hidden __.<ID>..<TITLE> -> full read-back -> visible PP.<ID>..<TITLE>
+  -> hidden __.<ID>..<TITLE> -> full read-back -> boot header -> renamed PP.<ID>..<TITLE>
 ```
 
 Status: tested on the PC side (host tests, signed build, server smoke
@@ -101,13 +102,15 @@ contains the installer ELF, the ready-to-run server folder,
 
 ## How it works
 
-- **Partition names:** the hidden game data
-  `__.SLUS-20312..GRAN_TURISMO_4` and the visible channel
-  `PP.SLUS-20312..GRAN_TURISMO_4` differ only in their first two bytes.
-  OPL-Launcher uses that to find the game.
-- **Channel last:** the channel is created only after the full read-back
-  matches. A PS1 game's XMB header is written last, after its
-  `IMAGE0.VCD` has been verified.
+- **One partition per PS2 game:** a game is copied into the hidden HDL
+  partition `__.SLUS-20312..GRAN_TURISMO_4`. After the full read-back
+  matches, its header gets `system.cnf` (`BOOT2 = PATINFO`), `icon.sys`,
+  an icon and OPL-Launcher as boot KELF, and the partition is renamed
+  `PP.SLUS-20312..GRAN_TURISMO_4`; that rename is what puts it in the
+  XMB. This is exactly how PFS-BatchKit-Manager installs games (checked
+  against a dump of its games on a DESR). Separate PFS channels per game
+  froze the DESR XMB once two existed. A PS1 game's XMB header is
+  written last, after its `IMAGE0.VCD` has been verified.
 - **Journal:** every step is journaled under
   `PP.UDPF-00001..INSTALLER:/state/`, together with the copy checkpoints
   (`install-<name>.seg`). The journal, not the HDL format, records

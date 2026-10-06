@@ -177,8 +177,8 @@ int partition_remove_allowed(const char *name, unsigned apa_type) {
     return 0;
   if (partition_is_hidden_game(name))
     return apa_type == APA_TYPE_HDL_ID;
-  if (partition_is_game_channel(name))
-    return apa_type == APA_TYPE_PFS_ID;
+  if (partition_is_game_channel(name)) /* old PFS channel, or a visible HDL game */
+    return apa_type == APA_TYPE_PFS_ID || apa_type == APA_TYPE_HDL_ID;
   if (partition_is_installer(name) || !strcmp(name, TEST_PARTITION_NAME))
     return apa_type == APA_TYPE_PFS_ID;
   return 0;

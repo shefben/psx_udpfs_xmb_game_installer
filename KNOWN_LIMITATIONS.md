@@ -4,18 +4,13 @@ Status vocabulary: see `docs/HARDWARE_TEST_CHECKLIST.md`. Nothing is
 yet DESR-verified; everything below "works" only at the PC VERIFIED
 level unless stated otherwise.
 
-* **First DESR results (v2.0 build signed with `KELF_MODE=none`):**
-  installs and deletes work from the bootstrap ELF. The installer channel
-  stays on a black screen when started from the XMB, and with two or more
-  installed games the XMB freezes on its loading screen; deleting the
-  games fixes that. Both builds had KELFs with a PSX `xosdmain` header.
-  The freeze needed any two of our channels (installer + game counts).
-  KELFs are now signed with the header that is known to start from PSX
-  XMB channels (`KELF_MODE=dnasload`, see `docs/BUILD.md`), and every
-  partition header carries icon.sys and an icon like PFS-BatchKit-
-  Manager's and PSX-XMB-Manager's; D43, D44 and D46 confirm on hardware.
-* **PS1 channels from an earlier build** keep their old header (no
-  Repair for PS1 games yet): delete and reinstall them.
+* **First DESR results (v2.0 builds):** installs and deletes work from
+  the bootstrap ELF. With two or more of our PFS channels the XMB froze
+  while loading; two PFS-BatchKit-Manager games load fine. PS2 games are
+  now installed in BatchKit's layout (one visible HDL partition with a
+  PATINFO boot header, no PFS channel); D47 confirms it on hardware. The
+  installer channel is still a PFS channel: whether one PFS channel next
+  to several such games loads is part of D47.
 * **Signing is external.** `kelftool` (ps2homebrew/kelftool) and
   `PS2KEYS.dat` are build prerequisites, never shipped.
 * **KELF sizes.** The app KELF embeds the OPL-Launcher KELF (~0.3 MB,
@@ -38,9 +33,13 @@ level unless stated otherwise.
   tools, or for a same-named partition recreated by another tool, the
   data shows as UNKNOWN/UNVERIFIED (delete or reinstall; no channel is
   ever created on it).
-* **hdl-dump visible installs** (`PP.` partitions of type HDL) are not
-  managed: they are neither listed nor removable by this installer, and
-  a same-named one blocks a new install (partition already exists).
+* **Games installed by other tools** (hdl-dump / PFS-BatchKit-Manager:
+  visible `PP.` HDL partitions) are listed, as not verified by this
+  installer: they can be hidden, deleted or backed up; a same-named one
+  blocks a new install (partition already exists).
+* **XMB info for PS2 games:** the XMB shows the title and icon from the
+  game's boot header. Covers, release date, developer and genre
+  (`info.sys`, `gamedb`) only apply to PFS channels (PS1 games, installer).
 * **Game IDs and titles.** A game without a `XXXX_NNN.NN` BOOT2 entry is
   rejected. Titles that sanitize to the same partition name are a
   conflict (shown as an existing installation), never silently renamed.

@@ -1,5 +1,5 @@
 # ps2hdd-hdl.irx
-# sha256 df6bea5a03d42e4a9babde9b068d0df562db56e9a11cc800b75eeef872baf8d3, 31609 bytes; addresses are file offsets
+# sha256 f14fed88d134145f33f8d61ffe339c3b037f4c9da1118b0064126691c7ee3d0b, 31657 bytes; addresses are file offsets
 
 ## '_' comparison site 1
 0000a0  80830000  lb v1,0(a0)
@@ -50,5 +50,5 @@
 000124  00809021  move s2,a0
 000128  00008821  move s1,zero
 00012c  3c100000  lui s0,0x0
-000130  26105b48  addiu s0,s0,23368
+000130  26105b68  addiu s0,s0,23400
 000134  8e050000  lw a1,0(s0)

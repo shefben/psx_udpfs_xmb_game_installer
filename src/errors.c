@@ -42,6 +42,8 @@ static const struct {
     [ERR_HDL_PLAN] = {"ERR_HDL_PLAN",
                       "game does not fit the drive's APA partition limits"},
     [ERR_PAUSED] = {"ERR_PAUSED", "copy paused (Resume copy continues it)"},
+    [ERR_PARTITION_RENAME] = {"ERR_PARTITION_RENAME",
+                              "partition rename failed (game shown/hidden in the XMB)"},
 };
 
 const char *err_name(inst_err_t err) {

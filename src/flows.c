@@ -201,16 +201,12 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
              "%s installed (TX_COMPLETE).\n\n%s\n%s\n\n"
              "Bytes copied:     %llu\nBytes read back:  %llu\n"
              "Source CRC-32:    %08lx\nInstalled CRC-32: %s\n"
-             "OPL settings:     %s\n"
-             "Cover:            %s\n\n"
-             "The game appears as its own XMB channel\n"
-             "after the XMB refreshes (return to the XMB or reboot).",
+             "OPL settings:     %s\n\n"
+             "The game partition is now %s and appears in the XMB\n"
+             "after it refreshes (return to the XMB or reboot).",
              p->title, p->visible, p->hidden, (unsigned long long)rep.bytes_written,
              (unsigned long long)rep.bytes_verified, (unsigned long)rep.source_crc32,
-             installed, rep.opl_cfg ? rep.opl_cfg : "none",
-             rep.jacket && !strcmp(rep.jacket, "missing")
-                 ? "not found on server, default used"
-                 : (rep.jacket ? rep.jacket : "none"));
+             installed, rep.opl_cfg ? rep.opl_cfg : "none", p->visible);
     ui_message("Finished", msg);
     return;
   }
@@ -732,13 +728,13 @@ void flow_install_game(game_plan_t *p) {
     ui_at(9, " Volume ID   %s", p->iso.volume_id);
     ui_at(10, " Size        %s (%u sectors)%s", sz, (unsigned)p->iso.sectors,
           p->iso.layer1_start ? "  DVD9" : "");
-    ui_at(11, " Allocation  %s main + %d sub partition(s), %u MiB total + 128 MiB channel",
+    ui_at(11, " Allocation  %s main + %d sub partition(s), %u MiB total",
           p->alloc.main_size_str, p->alloc.subs, (unsigned)p->alloc.total_mb);
     ui_at(12, " Validation  ISO9660 PVD ok, SYSTEM.CNF ok, BOOT2 %.40s", p->iso.boot2);
     ui_at(13, " Region      %s     Install state: %s", region_label(p->iso.boot_id),
           pair_state_label(st));
-    ui_at(15, " The data is copied to the hidden partition, read back in full and");
-    ui_at(16, " CRC-checked before the visible XMB channel is created.");
+    ui_at(15, " The game is copied to the hidden __. partition, read back in full and");
+    ui_at(16, " CRC-checked; only then is it renamed to PP. and shown in the XMB.");
     ui_footer("[X] install  [Square] edit title  [O] back");
 
     int b;
@@ -807,25 +803,30 @@ static void do_delete(const char *visible, const char *hidden, int pp_only,
   }
 }
 
-/* Complete game: drop only its XMB channel; the verified game data and
- * journal stay, and Create XMB channel brings the channel back. */
-static void do_remove_channel(const char *visible) {
+/* Take a game out of the XMB and keep it: a shown game partition is
+ * renamed back to __. (nothing is deleted); an older release's PFS
+ * channel is removed. Create XMB channel shows it again. */
+static void do_remove_channel(const char *visible, int shown) {
   char txt[400];
   snprintf(txt, sizeof(txt),
-           "The XMB channel will be removed:\n\n  %s\n\n"
-           "The game data stays installed and verified. Installed Games >\n"
-           "this game > Create XMB channel brings the channel back.",
+           shown ? "The game will be hidden from the XMB:\n\n  %s\n\n"
+                   "Nothing is deleted: the partition is only renamed to __.\n"
+                   "Installed Games > this game > Create XMB channel shows it again."
+                 : "The XMB channel will be removed:\n\n  %s\n\n"
+                   "The game data stays installed. Installed Games >\n"
+                   "this game > Create XMB channel brings the channel back.",
            visible);
-  if (!ui_confirm_destructive("Remove XMB channel", txt))
+  if (!ui_confirm_destructive(shown ? "Hide from the XMB" : "Remove XMB channel", txt))
     return;
   int rc;
   inst_err_t e = game_remove_channel(visible, &rc);
   if (e) {
-    snprintf(txt, sizeof(txt), "Could not remove %s (code %d).\nNothing else was changed.",
-             visible, rc);
-    ui_message("Remove failed", txt);
+    snprintf(txt, sizeof(txt), "Could not %s %s (%s, code %d).\nNothing else was changed.",
+             shown ? "hide" : "remove", visible, err_name(e), rc);
+    ui_message(shown ? "Hide failed" : "Remove failed", txt);
   } else {
-    ui_message("XMB channel removed", "Done. The game data was not touched.");
+    ui_message(shown ? "Hidden from the XMB" : "XMB channel removed",
+               "Done. The game data was not touched.");
   }
 }
 
@@ -839,15 +840,11 @@ static void do_create_channel(const char *hidden) {
   if (rep.err)
     flow_show_error("XMB channel was not created.", &rep, recovery_for(&rep));
   else {
-    char msg[300];
-    snprintf(msg, sizeof(msg),
-             "The channel was created and verified.\n"
-             "It appears after the XMB refreshes. Game data was not rewritten.\n\n"
-             "Cover: %s",
-             rep.jacket && !strcmp(rep.jacket, "missing")
-                 ? "not found on server, default used (restart udpfsd)"
-                 : (rep.jacket ? rep.jacket : "none"));
-    ui_message("XMB channel created", msg);
+    ui_message("XMB channel created",
+               "The game partition got its boot header (OPL-Launcher, icon,\n"
+               "title) and is shown in the XMB under its PP. name; an older\n"
+               "PFS channel was removed. Game data was not rewritten.\n\n"
+               "It appears after the XMB refreshes.");
   }
 }
 
@@ -926,14 +923,23 @@ static void do_resume(const char *hidden) {
   run_install(&plan, allow_without_opl);
 }
 
-static void do_rename(const char *visible) {
+/* hidden NULL: a PS1 game (title in its PFS channel's res/info.sys);
+ * else a shown PS2 game (title in its boot header's icon.sys). */
+static void do_rename(const char *visible, const char *hidden) {
   char t[64] = "";
-  if (channel_get_title(visible, t, sizeof(t)) < 0)
+  if ((hidden ? game_header_get_title(visible, t, sizeof(t))
+              : channel_get_title(visible, t, sizeof(t))) < 0)
     str_copy(t, visible + 3 + PART_ID_LEN + 2, sizeof(t)); /* "..TITLE" part */
   if (!ui_edit_text("Rename", "Title shown in the XMB (the game ID stays the same):", t, 48))
     return;
   ui_header("Rename", visible);
-  channel_result_t r = channel_set_title(visible, t);
+  channel_result_t r = {ERR_OK, 0, NULL};
+  if (hidden) {
+    r.err = game_set_title(hidden, t, &r.rc);
+    r.step = "boot header icon.sys";
+  } else {
+    r = channel_set_title(visible, t);
+  }
   char msg[300];
   if (r.err)
     snprintf(msg, sizeof(msg),
@@ -992,9 +998,9 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   ADD(ACT_CREATE_CHANNEL, st == PAIR_HIDDEN_ONLY ? "Create XMB channel"
                           : st == PAIR_COMPLETE  ? "Repair XMB channel"
                                                  : "Rebuild XMB channel");
-  ADD(ACT_REMOVE_CHANNEL, st == PAIR_COMPLETE       ? "Remove XMB channel (keep game data)"
+  ADD(ACT_REMOVE_CHANNEL, f.data_visible             ? "Hide from the XMB (keep the game)"
                           : st == PAIR_ORPHAN_CHANNEL ? "Remove broken channel"
-                                                      : "Remove channel (game data invalid)");
+                                                      : "Remove old channel (game data invalid)");
   ADD(ACT_DELETE_INCOMPLETE, "Delete incomplete game");
   ADD(ACT_REINSTALL, "Reinstall game (delete, then copy again)");
   ADD(ACT_DELETE, "Delete game");
@@ -1034,7 +1040,7 @@ void flow_pair_actions(const char *visible, const char *hidden) {
     do_verify(visible, hidden);
     break;
   case ROW_RENAME:
-    do_rename(visible);
+    do_rename(visible, hidden);
     break;
   case ROW_RESUME:
     do_resume(hidden);
@@ -1052,10 +1058,8 @@ void flow_pair_actions(const char *visible, const char *hidden) {
     do_create_channel(hidden);
     break;
   case ACT_REMOVE_CHANNEL:
-    if (st == PAIR_COMPLETE)
-      do_remove_channel(visible);
-    else
-      do_delete(visible, hidden, 1, 0);
+    /* Never a delete: a shown game is renamed back to __. */
+    do_remove_channel(visible, f.data_visible);
     break;
   case ACT_DELETE_INCOMPLETE:
     do_delete(visible, hidden, 0, 1);
@@ -1064,10 +1068,15 @@ void flow_pair_actions(const char *visible, const char *hidden) {
     /* Delete here; flow_install_game continues with a fresh install
      * if the pair is now free. From the manage menu, the user picks
      * the source in the browser afterwards. */
-    do_delete(visible, hidden, 0, !f.visible_exists);
+    do_delete(visible, hidden, f.data_visible, f.data_visible ? 0 : !f.visible_exists);
     break;
   case ACT_DELETE:
-    do_delete(visible, hidden, !f.hidden_exists, !f.visible_exists);
+    /* A shown game is one partition (PP.X); an older install may have
+     * a PFS channel PP.X and the game __.X. */
+    if (f.data_visible)
+      do_delete(visible, hidden, 1, 0);
+    else
+      do_delete(visible, hidden, !f.hidden_exists, !f.visible_exists);
     break;
   }
 }
@@ -1149,7 +1158,7 @@ void flow_ps1_actions(const char *partition) {
                                      "Back up to USB (.VCD)", "Delete game", "Back"};
   int c = ui_select("PS1 game", partition, rows, 4, 0, NULL, NULL);
   if (c == 0) {
-    do_rename(partition);
+    do_rename(partition, NULL);
   } else if (c == 1) {
     do_backup(partition, 1);
   } else if (c == 2) {
@@ -1193,12 +1202,21 @@ static int collect_pairs(void) {
   for (int i = 0; i < np && n < MAX_PAIRS; i++) {
     const char *name = parts[i].name;
     char partner[APA_NAME_MAX + 1];
-    /* Hidden games must be HDL; channels must be PFS. hdl-dump's
-     * visible installs ("PP." of type HDL) are left alone. */
-    if (partition_is_hidden_game(name) && parts[i].type == APA_TYPE_HDL_ID) {
+    /* A game is an HDL partition: hidden (__.X) or shown in the XMB
+     * (PP.X, PFS-BatchKit-Manager's layout and ours). A PFS PP.X is an
+     * older release's channel (paired via its __.X) or a PS1 game. */
+    if ((partition_is_hidden_game(name) || partition_is_game_channel(name)) &&
+        parts[i].type == APA_TYPE_HDL_ID) {
       partition_partner(name, partner);
-      str_copy(pairs[n].hidden, name, sizeof(pairs[n].hidden));
-      str_copy(pairs[n].visible, partner, sizeof(pairs[n].visible));
+      int dup = 0; /* __.X and PP.X both HDL: list the game once */
+      for (int k = 0; k < n; k++)
+        dup |= !strcmp(pairs[k].visible + 3, name + 3);
+      if (dup)
+        continue;
+      const char *hid = name[0] == '_' ? name : partner;
+      const char *vis = name[0] == '_' ? partner : name;
+      str_copy(pairs[n].hidden, hid, sizeof(pairs[n].hidden));
+      str_copy(pairs[n].visible, vis, sizeof(pairs[n].visible));
       n++;
     } else if (partition_is_xmb_channel(name, parts[i].type)) {
       partition_partner(name, partner);

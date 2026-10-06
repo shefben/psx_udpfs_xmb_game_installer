@@ -7,7 +7,7 @@ int pair_hidden_trusted(const pair_facts_t *f) {
 
 const char *pair_untrusted_reason(const pair_facts_t *f) {
   if (!f->hidden_exists)
-    return "game data partition (__.) missing";
+    return "game partition (__. or PP. HDL) missing";
   if (!f->hidden_header_valid)
     return "game data header unreadable or not HDL";
   if (!f->has_journal)
@@ -46,8 +46,9 @@ unsigned pair_actions(pair_state_t s) {
   case PAIR_CHANNEL_BROKEN:
     return ACT_CREATE_CHANNEL | ACT_DELETE;
   case PAIR_ORPHAN_CHANNEL:
-  case PAIR_HIDDEN_INVALID_WITH_CHANNEL:
     return ACT_REMOVE_CHANNEL;
+  case PAIR_HIDDEN_INVALID_WITH_CHANNEL:
+    return ACT_REMOVE_CHANNEL | ACT_DELETE;
   case PAIR_PS1:
     return ACT_DELETE;
   }

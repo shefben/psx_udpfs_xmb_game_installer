@@ -24,7 +24,7 @@ WHAT IS IN THIS ZIP
     udpfsd-linux-amd64                   server for Linux
     udpfsd.cfg                           server settings
     opl-launcher-EXECUTE.KELF            OPL-Launcher (signed), put into
-                                         each game's XMB channel
+                                         each game's boot header
     OPNPS2LD.ELF                         Open PS2 Loader 1.2.0-Beta-2245,
                                          installed on the DESR if missing
     OPL-LICENSE.txt                      OPL licence (AFL-3.0)

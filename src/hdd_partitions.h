@@ -46,6 +46,14 @@ int installer_partition_migrate(void);
  * ERR_OK if gone (or was already absent), ERR_PARTITION_DELETE. */
 inst_err_t hdd_remove_exact(const char *name, int *rc_out);
 
+/* Show a game in the XMB ("__.X" -> "PP.X") or hide it ("PP.X" ->
+ * "__.X"): an APA rename, the data stays where it is. Both names must
+ * be the two names of one game, the source an HDL partition and the
+ * target absent. Needs the patched driver (patches/apa-hdl/0002).
+ * ERR_OK (verified by listing), ERR_INVALID_ARG, ERR_PARTITION_EXISTS
+ * or ERR_PARTITION_RENAME. */
+inst_err_t hdd_rename_game(const char *from, const char *to, int *rc_out);
+
 /* Create a 128 MiB PFS partition and format it. ERR_OK,
  * ERR_PARTITION_EXISTS, ERR_PFS_CREATE or ERR_PFS_FORMAT. A
  * half-created partition is removed on format failure. */

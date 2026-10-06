@@ -102,11 +102,11 @@ int batch_toggle(batch_entry_t *e);
 
 int batch_count_selected(const batch_entry_t *e, int n);
 
-/* MiB the selected entries need on the HDD (data + 128 MiB channel each). */
+/* MiB the selected entries need on the HDD (data partitions). */
 uint64_t batch_needed_mb(const batch_entry_t *e, int n);
 
 /* Auto mode: select eligible entries in list order while their total
- * need (data + 128 MiB channel each) fits free_mb; eligible entries that
+ * need (data partitions) fits free_mb; eligible entries that
  * do not fit become BATCH_NO_SPACE. Returns the number selected. */
 int batch_auto_select(batch_entry_t *e, int n, uint64_t free_mb);
 

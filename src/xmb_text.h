@@ -66,18 +66,19 @@ size_t xmb_game_info_sys(char *out, size_t outsz, const char *title,
  * U (SLUS/SCUS), E (SLES/SCES), J (SLPS/SLPM/SCPS), A, C, K; else X. */
 char xmb_area_letter(const char *boot_id);
 
-/* OSD-header system.cnf of a hidden HDL game partition: HDLGameInstaller
- * res/system.cnf (hdl_dump writes the same with VER = 1.20). The XMB
- * never boots it; OPL-Launcher starts the game. */
-#define XMB_HIDDEN_SYSTEM_CNF                                                  \
+/* OSD-header system.cnf of a PS2 game (one visible HDL partition, as
+ * PFS-BatchKit-Manager installs it): the XMB starts the boot KELF stored
+ * in the header (OPL-Launcher). Byte-identical to BatchKit's (hdl_dump's
+ * HDL_HDR1). */
+#define XMB_PATINFO_SYSTEM_CNF                                                 \
   "BOOT2 = PATINFO\n"                                                          \
-  "VER = 1.00\n"                                                               \
+  "VER = 1.20\n"                                                               \
   "VMODE = NTSC\n"                                                             \
   "HDDUNITPOWER = NICHDD\n"
-
-/* HDD-format icon.sys ("PS2X") for the OSD header: title0 = title,
- * title1 = second line (game ID), hdl_dump's default colours and
- * lights. LF line endings. Returns length or 0. */
+/* HDD-format icon.sys ("PS2X") for the OSD header: title0 = title (the
+ * XMB name), title1 = second line (game ID), in PFS-BatchKit-Manager's
+ * exact form (hdl_dump colours and lights, bgcola 0, empty uninstall
+ * messages). LF line endings. Returns length or 0. */
 size_t xmb_render_icon_sys(char *out, size_t outsz, const char *title0, const char *title1);
 
 /* Default res/man.xml (the XMB "Manual" entry), as PFS-BatchKit-Manager's

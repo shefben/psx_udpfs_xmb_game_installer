@@ -30,7 +30,7 @@ static int osd_files(ppaa_files_t *f, const char *syscnf, const char *title0,
   if (!n)
     return -1;
   payload_osd_icon(&icon, &icon_len);
-  *f = (ppaa_files_t){syscnf, strlen(syscnf), g_iconsys, n, icon, icon_len};
+  *f = (ppaa_files_t){syscnf, strlen(syscnf), g_iconsys, n, icon, icon_len, 0, NULL, 0};
   return 0;
 }
 
@@ -48,6 +48,45 @@ inst_err_t osd_header_verify(const char *partition, const char *syscnf, const ch
   if (osd_files(&f, syscnf, title0, title1) < 0)
     return ERR_XMB_VERIFY;
   return ppaa_verify_partition_files(partition, &f, rc_out);
+}
+
+/* PS2 game header, PFS-BatchKit-Manager's layout: delete icon copied to
+ * 0x40000, OPL-Launcher as boot KELF (kelf NULL: left as it is). */
+static int game_files(ppaa_files_t *f, const char *title, const char *part_id, const void *kelf,
+                      uint32_t kelf_len) {
+  if (osd_files(f, XMB_PATINFO_SYSTEM_CNF, title, part_id) < 0)
+    return -1;
+  f->del_copy = 1;
+  f->kelf = kelf;
+  f->kelf_len = kelf ? kelf_len : 0;
+  return 0;
+}
+
+inst_err_t game_header_write(const char *part, const char *title, const char *part_id,
+                             const void *kelf, uint32_t kelf_len, int *rc_out) {
+  ppaa_files_t f;
+  if (game_files(&f, title, part_id, kelf, kelf_len) < 0)
+    return ERR_XMB_HEADER_WRITE;
+  return ppaa_write_files(part, &f, rc_out);
+}
+
+inst_err_t game_header_verify(const char *part, const char *title, const char *part_id,
+                              const void *kelf, uint32_t kelf_len, int *rc_out) {
+  ppaa_files_t f;
+  if (game_files(&f, title, part_id, kelf, kelf_len) < 0)
+    return ERR_XMB_VERIFY;
+  return ppaa_verify_partition_files(part, &f, rc_out);
+}
+
+inst_err_t game_header_check(const char *part) {
+  return ppaa_check_partition(part, XMB_PATINFO_SYSTEM_CNF, strlen(XMB_PATINFO_SYSTEM_CNF), 1,
+                              NULL);
+}
+
+int game_header_get_title(const char *part, char *out, size_t outsz) {
+  if (ppaa_partition_iconsys(part, g_iconsys, sizeof(g_iconsys)) < 0)
+    return -1;
+  return xmb_info_sys_get(g_iconsys, "title0", out, outsz);
 }
 
 int install_date(char out[9]) {
@@ -164,7 +203,7 @@ inst_err_t channel_quick_check(const char *partition) {
   pfs_umount(W);
   if (!ok)
     return ERR_XMB_VERIFY;
-  return ppaa_check_partition(partition, XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF), NULL);
+  return ppaa_check_partition(partition, XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF), 0, NULL);
 }
 
 #define INFO_SYS_MAX 2048

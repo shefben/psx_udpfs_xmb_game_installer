@@ -151,33 +151,51 @@ static int load_pair_journal(const char *hidden, tx_journal_t *j) {
   return strcmp(j->hidden_partition, hidden) == 0;
 }
 
+int game_data_partition(const char *hidden, char out[APA_NAME_MAX + 1]) {
+  uint16_t t = 0;
+  if (hdd_stat(hidden, &t, NULL, NULL) == 0 && t == APA_TYPE_HDL_ID) {
+    str_copy(out, hidden, APA_NAME_MAX + 1);
+    return 0;
+  }
+  if (partition_partner(hidden, out) == 0 && hdd_stat(out, &t, NULL, NULL) == 0 &&
+      t == APA_TYPE_HDL_ID)
+    return 1;
+  str_copy(out, hidden, APA_NAME_MAX + 1);
+  return -1;
+}
+
 void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
   memset(f, 0, sizeof(*f));
   hdl_header_info_t h;
-  f->hidden_exists = hdd_exists(hidden) > 0;
+  char data[APA_NAME_MAX + 1];
+  int where = game_data_partition(hidden, data);
+  f->hidden_exists = where >= 0; /* the HDL game partition, either name */
+  f->data_visible = where == 1;
   if (f->hidden_exists)
-    f->hidden_header_valid = hdl_partition_looks_valid(hidden, &h);
+    f->hidden_header_valid = hdl_partition_looks_valid(data, &h);
   tx_journal_t j;
   if (load_pair_journal(hidden, &j)) {
     f->has_journal = 1;
     f->journal_verified = tx_hidden_data_verified(&j);
     f->verify_skipped = j.verify_skipped;
     uint32_t start, size, hcrc;
+    /* A rename (__. <-> PP.) keeps start, size and HDL header. */
     f->journal_matches_partition =
-        f->hidden_exists && hdl_partition_identity(hidden, &start, &size, &hcrc) == 0 &&
+        f->hidden_exists && hdl_partition_identity(data, &start, &size, &hcrc) == 0 &&
         tx_identity_matches(&j, start, size, hcrc);
-    f->resumable = tx_resumable(&j) && f->journal_matches_partition;
+    f->resumable = tx_resumable(&j) && f->journal_matches_partition && !f->data_visible;
     f->resume_bytes = f->resumable ? j.bytes_written : 0;
   }
-  /* Only a PFS partition is an XMB channel; a same-named HDL partition
-   * (hdl-dump visible install) still blocks a new install via
-   * hdd_exists() in game_install step 6. */
+  /* In the XMB: the game partition itself under its PP. name with a boot
+   * header (PFS-BatchKit-Manager's layout, ours since 2.0), or an older
+   * release's PFS channel next to the hidden game, which "Rebuild XMB
+   * channel" converts. */
   uint16_t vtype = 0;
-  f->visible_exists = hdd_exists(visible) > 0 &&
+  f->legacy_channel = !f->data_visible && hdd_exists(visible) > 0 &&
                       hdd_stat(visible, &vtype, NULL, NULL) == 0 &&
                       partition_is_xmb_channel(visible, vtype);
-  if (f->visible_exists)
-    f->visible_valid = channel_quick_check(visible) == ERR_OK;
+  f->visible_exists = f->data_visible || f->legacy_channel;
+  f->visible_valid = f->data_visible && game_header_check(data) == ERR_OK;
 }
 
 static int count_journals(void) {
@@ -212,8 +230,10 @@ size_t game_pair_details(const char *visible, const char *hidden, char *out, siz
   const char *why = pair_untrusted_reason(&f);
   uint16_t htype = 0, vtype = 0;
   uint32_t start = 0, size = 0, hcrc = 0;
-  int hst = f.hidden_exists ? hdd_stat(hidden, &htype, NULL, NULL) : -2;
-  int hid = f.hidden_exists ? hdl_partition_identity(hidden, &start, &size, &hcrc) : -2;
+  char data[APA_NAME_MAX + 1];
+  game_data_partition(hidden, data);
+  int hst = f.hidden_exists ? hdd_stat(data, &htype, NULL, NULL) : -2;
+  int hid = f.hidden_exists ? hdl_partition_identity(data, &start, &size, &hcrc) : -2;
   int vst = hdd_exists(visible) > 0 ? hdd_stat(visible, &vtype, NULL, NULL) : -2;
   char fn[96] = "-";
   tx_journal_filename_for(hidden, fn);
@@ -230,7 +250,7 @@ size_t game_pair_details(const char *visible, const char *hidden, char *out, siz
                      "Journal %s/%s\n"
                      "  installer partition %s  mounted %s  journals in folder %d\n"
                      "  (rename rc %d)\n",
-                     pair_state_label(pair_classify(&f)), why ? why : "-", hidden,
+                     pair_state_label(pair_classify(&f)), why ? why : "-", data,
                      f.hidden_exists ? "yes" : "NO", hst, htype,
                      f.hidden_header_valid ? "valid" : "INVALID", hid, (unsigned long)start,
                      (unsigned long)size, (unsigned long)hcrc, APP_STATE_DIR, fn,
@@ -259,10 +279,14 @@ size_t game_pair_details(const char *visible, const char *hidden, char *out, siz
     off += snprintf(out + off, outsz - off, "  NOT LOADED (missing or unreadable)\n\n");
   if (off > 0 && (size_t)off < outsz)
     off += snprintf(out + off, outsz - off,
-                    "Channel %s\n"
-                    "  exists %s  stat %d  type 0x%04x  files/header %s\n",
-                    visible, f.visible_exists ? "yes" : "NO", vst, vtype,
-                    !f.visible_exists ? "-" : f.visible_valid ? "valid" : "INVALID");
+                    "XMB %s\n"
+                    "  %s  stat %d  type 0x%04x  boot header %s\n",
+                    visible,
+                    f.data_visible     ? "shown (game partition, PATINFO boot)"
+                    : f.legacy_channel ? "OLD PFS channel: Rebuild converts it"
+                                       : "not shown (hidden game)",
+                    vst, vtype,
+                    !f.data_visible ? "-" : f.visible_valid ? "valid" : "INVALID");
   if (off < 0)
     return 0;
   return (size_t)off < outsz ? (size_t)off : outsz - 1;
@@ -457,61 +481,60 @@ static const char *copy_opl_cfg(const char *boot_id) {
   return result;
 }
 
-/* Build the channel for a verified hidden game. The journal is at
- * TX_HDL_VERIFIED and saved; `kelf` was loaded by the caller before
- * anything was removed, and is released here. */
+/* Show a verified game in the XMB the way PFS-BatchKit-Manager does (its
+ * games load together on a DESR; separate PFS channels froze the XMB
+ * once two existed): the game's own HDL partition gets the boot header
+ * (system.cnf "BOOT2 = PATINFO", icon.sys, icon, OPL-Launcher as boot
+ * KELF) and is renamed __.X -> PP.X. The header is written and checked
+ * while the game is still hidden; an older release's PFS channel PP.X is
+ * removed only then. The journal is at TX_HDL_VERIFIED and saved; `kelf`
+ * was loaded by the caller and is released here. */
 static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
                           const install_ui_t *ui, install_report_t *rep) {
   str_copy(j->launcher_source, !strcmp(kelf->origin, "server") ? "server" : "embedded",
            sizeof(j->launcher_source));
   stage(ui, rep, STAGE_CREATING_CHANNEL);
-  char info[1024], today[9];
-  xmb_game_info_t gi;
-  int have_gi = game_load_info(j->startup_id, &gi);
-  install_date(today);
-  uint32_t info_len = (uint32_t)xmb_game_info_sys_ex(info, sizeof(info), title, j->startup_id,
-                                                     have_gi ? &gi : NULL, today);
-  jacket_pair_t jkt;
-  void *jkt_owned[2];
-  rep->jacket = game_load_jackets(j->startup_id, &jkt, jkt_owned);
-
-  char part_id[PART_ID_LEN + 1] = "";
+  rep->jacket = NULL; /* the XMB shows the header's icon for these games */
+  char data[APA_NAME_MAX + 1], part_id[PART_ID_LEN + 1] = "";
   boot_id_to_part_id(j->startup_id, part_id);
-  channel_content_t c = {kelf->data, kelf->size, info, info_len, jkt, title, part_id};  int rc = 0;
-  /* The hidden game gets the OSD header PFS-BatchKit-Manager and
-   * HDLGameInstaller give it (BOOT2 = PATINFO, icon.sys, icon). It sits
-   * below the HDL game header and the game data, which stay untouched. */
-  inst_err_t e = osd_header_write(j->hidden_partition, XMB_HIDDEN_SYSTEM_CNF, title, part_id, &rc);
-  channel_result_t cr = {e, rc, "OSD header of the game data partition"};
-  if (!cr.err) {
-    e = pfs_create_partition(j->visible_partition, CHANNEL_SIZE_STR, &rc);
-    cr = (channel_result_t){e, rc, "create PFS partition"};
-  }
-  if (!cr.err)
-    cr = channel_populate(j->visible_partition, &c);
+  int rc = 0, where = game_data_partition(j->hidden_partition, data);
+  channel_result_t cr = {ERR_OK, 0, NULL};
+  inst_err_t e;
+  if (where < 0)
+    cr = (channel_result_t){ERR_HDL_VERIFY, 0, "game partition missing"};
+  if (!cr.err && (e = game_header_write(data, title, part_id, kelf->data, kelf->size, &rc)))
+    cr = (channel_result_t){e, rc, "boot header (PATINFO, icon, OPL-Launcher)"};
   if (!cr.err && (e = advance(j, TX_CHANNEL_CREATED)))
     cr = (channel_result_t){e, 0, "journal"};
-  if (!cr.err)
-    cr = channel_verify(j->visible_partition, &c);
+  if (!cr.err && where == 0) {
+    uint16_t t = 0;
+    if (hdd_exists(j->visible_partition) > 0) {
+      /* Only an older release's PFS channel may stand in the way. */
+      if (hdd_stat(j->visible_partition, &t, NULL, NULL) == 0 && t == APA_TYPE_PFS_ID) {
+        pfs_umount(PFS_WORK);
+        if ((e = hdd_remove_exact(j->visible_partition, &rc)))
+          cr = (channel_result_t){e, rc, "remove the old PFS channel"};
+      } else {
+        cr = (channel_result_t){ERR_PARTITION_EXISTS, t, "a PP. partition of another kind"};
+      }
+    }
+    if (!cr.err && (e = hdd_rename_game(data, j->visible_partition, &rc)))
+      cr = (channel_result_t){e, rc, "show in the XMB (rename __. to PP.)"};
+    if (!cr.err)
+      str_copy(data, j->visible_partition, sizeof(data));
+  }
+  if (!cr.err && (e = game_header_verify(data, title, part_id, kelf->data, kelf->size, &rc)))
+    cr = (channel_result_t){e, rc, "boot header read-back"};
   if (!cr.err && (e = advance(j, TX_CHANNEL_VERIFIED)))
     cr = (channel_result_t){e, 0, "journal"};
   if (!cr.err && (e = advance(j, TX_COMPLETE)))
     cr = (channel_result_t){e, 0, "journal"};
 
   if (cr.err) {
-    /* Never leave a visible channel that did not verify. The hidden
-     * game stays so the channel can be repaired without recopying. A
-     * failed step may have left the work mount open, which makes the
-     * APA driver refuse removal (-EBUSY), so release it first. */
+    /* Nothing is removed: the verified game stays (hidden: "channel
+     * pending", shown: "channel BROKEN"), and Create/Repair XMB channel
+     * finishes it without copying again. */
     fail(j, rep, cr.err, cr.rc, cr.step);
-    if (cr.err != ERR_PARTITION_EXISTS && hdd_exists(j->visible_partition) > 0) {
-      pfs_umount(PFS_WORK);
-      int rrc = 0;
-      if (hdd_remove_exact(j->visible_partition, &rrc) != ERR_OK) {
-        rep->detail = "unverified channel could NOT be removed: use Repair";
-        rep->rc = rrc;
-      }
-    }
   } else {
     rep->err = ERR_OK;
     /* The game is complete; its OPL settings are a best-effort extra. */
@@ -519,8 +542,6 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
     str_copy(j->opl_cfg, rep->opl_cfg, sizeof(j->opl_cfg));
     persist(j);
   }
-  free(jkt_owned[0]);
-  free(jkt_owned[1]);
   payload_release(kelf);
 }
 
@@ -586,11 +607,11 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     rep->err = ERR_PARTITION_EXISTS;
     goto out_src;
   }
-  /* 7. free space: data partitions + the 128 MiB channel (a resume
-   * already holds its data partitions) */
+  /* 7. free space: the data partitions (a resume already holds them).
+   * The XMB entry is the game partition itself: no extra partition. */
   uint32_t total_mb, free_mb, max_mb;
   if (hdd_space_mb(&total_mb, &free_mb, &max_mb) < 0 ||
-      (uint64_t)(p->resume ? 0 : p->alloc.total_mb) + CHANNEL_SIZE_MB > free_mb) {
+      (uint64_t)(p->resume ? 0 : p->alloc.total_mb) > free_mb) {
     rep->err = ERR_NO_SPACE;
     goto out_src;
   }
@@ -767,7 +788,9 @@ void game_verify_data(const char *hidden, const install_ui_t *ui, install_report
   }
   stream_cb_t cb = {ui ? ui->progress : NULL, ui ? ui->should_abort : NULL,
                     ui ? ui->ctx : NULL, NULL, NULL};
-  hdl_result_t hr = hdl_read_back(hidden, j.bytes_expected, &cb);
+  char data[APA_NAME_MAX + 1];
+  game_data_partition(hidden, data); /* __.X, or PP.X once shown */
+  hdl_result_t hr = hdl_read_back(data, j.bytes_expected, &cb);
   rep->bytes_written = j.bytes_written;
   rep->bytes_verified = hr.bytes;
   rep->source_crc32 = j.source_crc32;
@@ -820,7 +843,9 @@ void game_create_channel(const char *hidden, const install_ui_t *ui,
     goto out;
   }
   hdl_header_info_t h;
-  if (hdl_read_header(hidden, &h) < 0) {
+  char data[APA_NAME_MAX + 1];
+  game_data_partition(hidden, data);
+  if (hdl_read_header(data, &h) < 0) {
     rep->err = ERR_HDL_VERIFY;
     goto out;
   }
@@ -839,15 +864,16 @@ void game_create_channel(const char *hidden, const install_ui_t *ui,
     goto out;
   }
 
-  /* Rebuild: an existing (broken) PP. is removed first. A title the user
-   * set with Rename is kept if the old info.sys is still readable. */
-  char title[64];
-  if (!f.visible_exists || channel_get_title(visible, title, sizeof(title)) < 0 || !title[0])
+  /* A title the user set with Rename is kept: from the boot header of a
+   * shown game, or the info.sys of an older release's PFS channel (which
+   * build_channel replaces). */
+  char title[64] = "";
+  if (f.data_visible)
+    game_header_get_title(data, title, sizeof(title));
+  else if (f.legacy_channel)
+    channel_get_title(visible, title, sizeof(title));
+  if (!title[0])
     str_copy(title, h.title, sizeof(title));
-  if (f.visible_exists && (rep->err = hdd_remove_exact(visible, &rep->rc))) {
-    rep->detail = visible;
-    goto out;
-  }
   build_channel(&j, title, &kelf, ui, rep);
   if (!rep->err)
     stage(ui, rep, STAGE_FINISHED);
@@ -860,8 +886,29 @@ inst_err_t game_remove_channel(const char *visible, int *rc_out) {
   *rc_out = 0;
   if (!partition_is_game_channel(visible))
     return ERR_INVALID_ARG;
+  uint16_t t = 0;
+  if (hdd_stat(visible, &t, NULL, NULL) == 0 && t == APA_TYPE_HDL_ID) {
+    /* The game itself is shown: hide it again (PP.X -> __.X). */
+    char hidden[APA_NAME_MAX + 1];
+    partition_partner(visible, hidden);
+    return hdd_rename_game(visible, hidden, rc_out);
+  }
   pfs_umount(PFS_WORK); /* a mounted channel cannot be removed (-EBUSY) */
   return hdd_remove_exact(visible, rc_out);
+}
+
+inst_err_t game_set_title(const char *hidden, const char *title, int *rc_out) {
+  char data[APA_NAME_MAX + 1], clean[64], part_id[PART_ID_LEN + 1];
+  *rc_out = 0;
+  if (game_data_partition(hidden, data) != 1)
+    return ERR_INVALID_ARG; /* only a shown game has a title in the XMB */
+  xmb_sanitize_value(title, clean, sizeof(clean));
+  if (!clean[0] || strlen(hidden) < 3 + PART_ID_LEN)
+    return ERR_INVALID_ARG;
+  memcpy(part_id, hidden + 3, PART_ID_LEN);
+  part_id[PART_ID_LEN] = 0;
+  /* icon.sys only; the boot KELF stays as it is. */
+  return game_header_write(data, clean, part_id, NULL, 0, rc_out);
 }
 
 inst_err_t game_delete_pair(const char *visible, const char *hidden,
