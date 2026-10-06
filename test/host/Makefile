@@ -11,7 +11,7 @@ LIB_SRCS := errors.c util.c partname.c source.c iso9660.c hdl_plan.c \
             xmb_text.c apa_osd_header.c transaction.c settings.c \
             opl_dependency.c hdl_header.c game_pair.c crc32.c sha256.c batch.c \
             manifest.c server_assets.c ui_style.c rw_buffer.c \
-            remove_games.c listview.c lz4_block.c source_zso.c pops.c dhcp_proto.c resume_seg.c
+            remove_games.c listview.c lz4_block.c source_zso.c pops.c dhcp_proto.c resume_seg.c space.c
 CFLAGS += -DFIXTURE_DIR=\"$(abspath ../fixtures)\"
 TEST_SRCS := $(wildcard test_*.c)
 

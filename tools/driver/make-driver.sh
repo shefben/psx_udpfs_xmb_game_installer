@@ -9,6 +9,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 . "$ROOT/tools/driver/driver.env"
+. "$ROOT/tools/ps2env.sh" # mipsel-none-elf-objdump for the evidence files
 IMAGE=ps2dev/ps2dev:v1.0
 
 HDLGI=$ROOT/reference/HDLGameInstaller
@@ -25,7 +26,7 @@ git -C "$HDLGI" archive "$DRIVER_SRC_REV" apa-hdl | tar -x -C "$W"
 mkdir -p "$W/sdk"
 git -C "$PS2SDK_GIT" archive "$DRIVER_PS2SDK_REV" | tar -x -C "$W/sdk"
 cp "$ROOT/tools/driver/build-ps2hdd-hdl.sh" "$ROOT/tools/driver/remove_policy.h" \
-   "$ROOT/patches/apa-hdl/0001-allow-removing-hidden-hdl-games.patch" "$W/"
+   "$ROOT"/patches/apa-hdl/*.patch "$W/"
 
 # Under WSL without the Docker integration, use Docker Desktop's
 # Windows CLI with a Windows path for the bind mount.
@@ -37,8 +38,8 @@ else echo "ERROR: docker not found"; exit 1; fi
   set -e
   apk add --no-cache make patch >/dev/null
   sh /w/build-ps2hdd-hdl.sh /w/apa-hdl /w/sdk /w/upstream.irx
-  sh /w/build-ps2hdd-hdl.sh /w/apa-hdl /w/sdk /w/patched.irx \
-     /w/0001-allow-removing-hidden-hdl-games.patch /w/remove_policy.h
+  sh /w/build-ps2hdd-hdl.sh /w/apa-hdl /w/sdk /w/patched.irx /w/remove_policy.h \
+     /w/0001-allow-removing-hidden-hdl-games.patch /w/0002-allow-renaming-hidden-hdl-games.patch
   chmod 666 /w/*.irx'
 
 up=$(sha256sum "$W/upstream.irx" | cut -d' ' -f1)

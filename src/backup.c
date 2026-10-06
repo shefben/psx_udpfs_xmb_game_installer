@@ -17,6 +17,7 @@
 #include "remove_games.h"
 #include "transaction.h"
 #include "util.h"
+#include "xmb_game_channel.h"
 
 #define BK_BUF (1024 * 1024)
 static uint8_t bk_buf[BK_BUF] __attribute__((aligned(64)));
@@ -161,9 +162,11 @@ void backup_ps2_game(const char *hidden, const install_ui_t *ui, install_report_
   memset(rep, 0, sizeof(*rep));
   dest[0] = 0;
   stage(ui, rep, STAGE_PREPARING);
+  char data[APA_NAME_MAX + 1];
+  game_data_partition(hidden, data);
   hdl_header_info_t h;
   char boot_id[16];
-  if (hdl_read_header(hidden, &h) < 0 || part_id_from_partition(hidden, boot_id) < 0 ||
+  if (hdl_read_header(data, &h) < 0 || part_id_from_partition(hidden, boot_id) < 0 ||
       h.data_bytes == 0 || h.data_bytes % 2048) {
     rep->err = ERR_HDL_VERIFY;
     rep->detail = "game header unreadable";
@@ -192,7 +195,7 @@ void backup_ps2_game(const char *hidden, const install_ui_t *ui, install_report_
     return;
   }
   char dev[48];
-  snprintf(dev, sizeof(dev), "hdd0:%s", hidden);
+  snprintf(dev, sizeof(dev), "hdd0:%s", data); /* __.X, or PP.X once shown */
   fileXioUmount("hdl0:");
   int r = fileXioMount("hdl0:", dev, FIO_MT_RDONLY);
   int fd = r < 0 ? r : fileXioOpen("hdl0:", FIO_O_RDONLY);

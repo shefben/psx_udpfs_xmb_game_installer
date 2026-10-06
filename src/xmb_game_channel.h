@@ -9,6 +9,7 @@
 #include "hdl_plan.h"
 #include "iso9660.h"
 #include "manifest.h"
+#include "opl_launcher_payload.h"
 #include "partname.h"
 #include "source.h"
 
@@ -102,11 +103,24 @@ inst_err_t game_resume_plan(const char *hidden, game_plan_t *p, int *rc_out);
  * prepared from its game database; 0 if none (server down, no entry). */
 int game_load_info(const char *boot_id, xmb_game_info_t *gi);
 
-/* XMB cover for a game: udpfsd's prepared jacket, then <source>.png, then
- * the built-in default. *owned (if set) must be freed. Returns where it
- * came from: "server" | "missing" | "default". */
-const char *game_load_jacket(const char *boot_id, const char *source_path,
-                             const uint8_t **data, uint32_t *size, void **owned);
+/* XMB covers for a game: udpfsd's prepared pair (jkt/<ID>_L.png 140x200
+ * and jkt/<ID>.png 74x108), used only at exactly those sizes; else the
+ * built-in default pair. owned[0..1] (if set) must be freed. Returns
+ * where they came from: "server" | "missing" | "default". */
+const char *game_load_jackets(const char *boot_id, jacket_pair_t *j, void *owned[2]);
+
+/* The game's HDL partition for the pair key `hidden` ("__.X"): "__.X"
+ * while it is copied or hidden (returns 0), "PP.X" once it is shown in
+ * the XMB (returns 1); -1 if neither exists as HDL (out = hidden). */
+int game_data_partition(const char *hidden, char out[APA_NAME_MAX + 1]);
+
+/* Give a shown game an XMB cover (experimental): PFS-BatchKit-Manager's
+ * resource-partition layout, PFS PP.X with res/ + the game hidden as
+ * __.X. Rebuild XMB channel undoes it. */
+void game_add_cover(const char *hidden, const install_ui_t *ui, install_report_t *rep);
+
+/* Change the XMB title of a shown game (its boot header's icon.sys). */
+inst_err_t game_set_title(const char *hidden, const char *title, int *rc_out);
 
 /* Gather on-disk facts for a pair (exists/valid/journal). */
 void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f);
@@ -127,8 +141,10 @@ size_t game_pair_details(const char *visible, const char *hidden, char *out, siz
 void game_install(game_plan_t *p, int allow_without_opl,
                   const install_ui_t *ui, install_report_t *rep);
 
-/* Create or rebuild only the PP. channel for a verified hidden game.
- * Never touches the hidden partition. */
+/* Show a verified game in the XMB, or repair/convert its entry: writes
+ * the boot header into the game partition (the game data and HDL header
+ * stay untouched), removes an older release's PFS channel and renames
+ * __.X to PP.X. */
 void game_create_channel(const char *hidden, const install_ui_t *ui,
                          install_report_t *rep);
 
@@ -137,5 +153,11 @@ void game_create_channel(const char *hidden, const install_ui_t *ui,
  * remove the journal. Either name may be absent. */
 inst_err_t game_delete_pair(const char *visible, const char *hidden,
                             const char **failed_name, int *rc_out);
+
+/* Take a game out of the XMB, keeping it: a shown game partition is
+ * renamed back to __.X; an older release's PFS channel is removed. The
+ * game and its journal stay as they are (still verified), so Create XMB channel
+ * restores the channel without copying again. */
+inst_err_t game_remove_channel(const char *visible, int *rc_out);
 
 #endif

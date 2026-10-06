@@ -1,4 +1,4 @@
-UDPFS Game Installer for the PSX DESR - v2.0
+UDPFS Game Installer for the PSX DESR - v3.0
 ============================================
 
 Installs PS2 games (.iso / .zso) from your PC onto the PSX DESR's
@@ -24,7 +24,7 @@ WHAT IS IN THIS ZIP
     udpfsd-linux-amd64                   server for Linux
     udpfsd.cfg                           server settings
     opl-launcher-EXECUTE.KELF            OPL-Launcher (signed), put into
-                                         each game's XMB channel
+                                         each game's boot header
     OPNPS2LD.ELF                         Open PS2 Loader 1.2.0-Beta-2245,
                                          installed on the DESR if missing
     OPL-LICENSE.txt                      OPL licence (AFL-3.0)
@@ -134,9 +134,10 @@ PS1 GAMES (POPSTARTER)
 
    PS1 games must be in POPStarter's .VCD format (convert BIN/CUE with
    cue2pops; multi-file BIN/CUE must be merged first). Put the .VCD files
-   in PC\udpfsd\POPS (or POPS\ on a USB drive) together with:
-     POPSTARTER.KELF   POPStarter (krHACKen), e.g. from the
-                       PFS-BatchKit-Manager POPS-Binaries folder
+   in PC\udpfsd\POPS or PC\udpfsd\CD (on a USB drive: POPS\ or CD\);
+   these files go in PC\udpfsd\POPS (USB: POPS\):
+     POPSTARTER.KELF   POPStarter rev13 Beta (krHACKen): already in
+                       PC\udpfsd\POPS; on USB copy it to POPS\ too
      POPS.ELF, IOPRP252.IMG   Sony's POPS files; not included, you must
                        supply them
    Choose the .VCD in Install Games from UDPFS (or USB). Each PS1 game
@@ -170,6 +171,12 @@ IF SOMETHING GOES WRONG
                            be at the same place); Install All resumes it too.
                            The last copied part is read back first; a part
                            that did not reach the disk is copied again.
+  Installer channel shows  Made by v2.0 (or an earlier zip). Start this zip's
+  a black screen, or the   bootstrap ELF from wLaunchELF and choose
+  XMB freezes while        Install Installer as XMB Channel. Replace the
+  loading                  PC\udpfsd folder with this zip's, then
+                           Repair XMB Channels, then each game >
+                           Rebuild XMB channel. Then restart the DESR.
   Install hangs or fails   Network Settings > Copy engine: basic (turns off
   with the fast copy       the overlapped network + HDD copy), Save.
   Anything else            Diagnostics on the DESR shows PASS / FAIL for

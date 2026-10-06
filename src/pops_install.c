@@ -11,6 +11,7 @@
 #include "app_state.h"
 #include "crc32.h"
 #include "hdd_partitions.h"
+#include "pfs_channel.h"
 #include "pops_install.h"
 #include "source_udpfs.h"
 #include "util.h"
@@ -64,18 +65,20 @@ inst_err_t pops_plan_build(const char *path, pops_plan_t *p, int *rc_out) {
   return p->size_mb < 0 ? ERR_HDL_PLAN : ERR_OK;
 }
 
-/* <folder of the VCD>/<name>, else <device>/POPS/<name>. */
+/* <folder of the VCD>/<name>, else <device>/POPS/<name>. Probed by
+ * opening the file: udpfsd answers getstat only for open files, so a
+ * getstat probe reported POPSTARTER.KELF etc. missing on the server. */
 static int find_pops_file(const char *vcd_path, const char *name, char *out, size_t sz) {
   const char *slash = strrchr(vcd_path, '/');
   if (slash) {
     snprintf(out, sz, "%.*s/%s", (int)(slash - vcd_path), vcd_path, name);
-    if (file_size(out) > 0)
+    if (file_open_size(out) > 0)
       return 0;
   }
   const char *colon = strchr(vcd_path, ':');
   if (colon) {
     snprintf(out, sz, "%.*s:/POPS/%s", (int)(colon - vcd_path), vcd_path, name);
-    if (file_size(out) > 0)
+    if (file_open_size(out) > 0)
       return 0;
   }
   return -1;
@@ -225,7 +228,7 @@ static void stage(const install_ui_t *ui, install_report_t *rep, install_stage_t
 
 void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep) {
   memset(rep, 0, sizeof(*rep));
-  void *kelf = NULL, *jkt_owned = NULL;
+  void *kelf = NULL, *jkt_owned[2] = {NULL, NULL};
   int created = 0;
   stage(ui, rep, STAGE_PREPARING);
 
@@ -250,11 +253,8 @@ void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep)
     rep->err = ERR_PARTITION_EXISTS;
     goto out;
   }
-  uint32_t free_mb = 0;
-  if (hdd_space_mb(NULL, &free_mb, NULL) < 0 || (uint32_t)p->size_mb > free_mb) {
-    rep->err = ERR_NO_SPACE;
+  if ((rep->err = hdd_space_check((uint32_t)p->size_mb))) /* incl. the 128 GiB limit */
     goto out;
-  }
   /* Everything that can be missing is checked before the partition. */
   char kpath[SOURCE_PATH_MAX + 16];
   int klen = -1;
@@ -285,22 +285,22 @@ void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep)
     rep->detail = "EXECUTE.KELF";
     goto out;
   }
-  char info[1024];
+  char info[1024], today[9];
   xmb_game_info_t gi;
   int have_gi = game_load_info(p->vcd.boot_id, &gi);
+  install_date(today);
   uint32_t info_len = (uint32_t)xmb_game_info_sys_ex(info, sizeof(info), p->title, p->vcd.boot_id,
-                                                     have_gi ? &gi : NULL);
-  const uint8_t *jkt;
-  uint32_t jkt_size;
-  rep->jacket = game_load_jacket(p->vcd.boot_id, p->source_path, &jkt, &jkt_size, &jkt_owned);
-  if (!info_len || file_write_all(W "res/info.sys", info, info_len) < 0 ||
-      file_write_all(W "res/jkt_001.png", jkt, jkt_size) < 0 ||
-      file_write_all(W "res/jkt_002.png", jkt, jkt_size) < 0) {
-    rep->err = ERR_XMB_RESOURCE_WRITE;
-    rep->detail = "res/";
+                                                     have_gi ? &gi : NULL, today);
+  jacket_pair_t jkt;
+  rep->jacket = game_load_jackets(p->vcd.boot_id, &jkt, jkt_owned);
+  channel_result_t cr = info_len ? channel_write_res(p->title, info, info_len, &jkt)
+                                 : (channel_result_t){ERR_XMB_RESOURCE_WRITE, 0, "res/info.sys"};
+  if (cr.err) {
+    rep->err = cr.err;
+    rep->rc = cr.rc;
+    rep->detail = cr.step;
     goto out;
-  }
-  stage(ui, rep, STAGE_COPYING);
+  }  stage(ui, rep, STAGE_COPYING);
   if ((rep->err = copy_vcd(p, ui, rep)))
     goto out;
   source_close(&g_src);
@@ -328,9 +328,11 @@ void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep)
 
   /* Last: the header that makes the channel appear in the XMB. */
   stage(ui, rep, STAGE_CREATING_CHANNEL);
-  if ((rep->err = ppaa_write_partition(p->partition, XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF),
-                                       &rep->rc))) {
-    rep->detail = "PPAA/system.cnf header";
+  char part_id[PART_ID_LEN + 1] = "";
+  boot_id_to_part_id(p->vcd.boot_id, part_id);
+  if ((rep->err = osd_header_write(p->partition, XMB_SYSTEM_CNF, p->title, part_id,
+                                   &rep->rc))) {
+    rep->detail = "OSD header (system.cnf, icon.sys, icon)";
     goto out;
   }
   stage(ui, rep, STAGE_FINISHED);
@@ -344,7 +346,8 @@ out:
   }
   rep->visible_exists = hdd_exists(p->partition) > 0;
   free(kelf);
-  free(jkt_owned);
+  free(jkt_owned[0]);
+  free(jkt_owned[1]);
 }
 
 int pops_partition_is_ps1(const char *partition) {

@@ -1,18 +1,19 @@
-# PSX DESR UDPFS XMB Game Installer (v2.0)
+# PSX DESR UDPFS XMB Game Installer (v3.0)
 
 An installer for the PSX DESR that runs on the console as its own XMB
 channel. It installs PS2 and PS1 games to the internal HDD from a PC over
 the network ([udpfsd](https://github.com/pcm720/udpfsd)) or from a USB
-drive. Every installed game gets its own XMB channel with title, cover
-and game info, and starts through
+drive. Every installed game appears in the XMB and starts through
 [OPL-Launcher](https://github.com/ps2homebrew/OPL-Launcher) (PS2) or
-POPStarter (PS1).
+POPStarter (PS1). PS2 games use PFS-BatchKit-Manager's layout, which
+loads reliably on a DESR: one partition per game, booted from its own
+header.
 
 ```
 PC .iso/.zso/.vcd -> udpfsd -> UDPFS/UDPRDMA (DHCP or fixed IP) -> udpfs:/...
 USB .iso/.zso/.vcd -> mass0:/...
   -> GameSource (ZSO unpacked on the EE) -> CRC-32 -> hddpump.irx -> hdl0:
-  -> hidden __.<ID>..<TITLE> -> full read-back -> visible PP.<ID>..<TITLE>
+  -> hidden __.<ID>..<TITLE> -> full read-back -> boot header -> renamed PP.<ID>..<TITLE>
 ```
 
 Status: tested on the PC side (host tests, signed build, server smoke
@@ -20,7 +21,7 @@ tests). Testing on a DESR is in progress; see the
 [hardware checklist](docs/HARDWARE_TEST_CHECKLIST.md). Back up the HDD
 before the first run.
 
-**Download:** `PSX-UDPFS-Installer_V2.0.zip` (from `make package`)
+**Download:** `PSX-UDPFS-Installer_V3.0.zip` (from `make package`)
 contains the installer ELF, the ready-to-run server folder,
 `README.txt`, `CHANGELOG.txt` and `SERVER-MANUAL.txt`.
 
@@ -34,8 +35,8 @@ contains the installer ELF, the ready-to-run server folder,
 - **From USB:** `.iso` and `.zso` files on a FAT32 or exFAT drive; no PC
   needed.
 - **PS1 games:** `.VCD` files through POPStarter. Each PS1 game gets its
-  own XMB channel. You supply `POPSTARTER.KELF`, `POPS.ELF` and
-  `IOPRP252.IMG`.
+  own XMB channel. POPStarter (rev13 Beta) is included in
+  `PC\udpfsd\POPS`; you supply Sony's `POPS.ELF` and `IOPRP252.IMG`.
 - **OPL:** installed automatically if the DESR has none. An existing OPL
   is never replaced. Per-game OPL settings (`CFG\<ID>.cfg`) are copied
   over.
@@ -46,6 +47,9 @@ contains the installer ELF, the ready-to-run server folder,
     PFS-BatchKit-Manager's `PS2DB.xml` (`gamedb`).
 - **Sort and search:** in every game list, L2 changes the order and R2
   searches by name.
+- **128 GiB limit:** games and data together never pass 128 GiB, and no
+  partition is ever placed beyond the 128 GiB mark of the disk. The space
+  used by games and data is shown in the game lists and Diagnostics.
 
 ### Safe copies
 - **Verified copies:** every game is read back from the HDD and its
@@ -101,13 +105,15 @@ contains the installer ELF, the ready-to-run server folder,
 
 ## How it works
 
-- **Partition names:** the hidden game data
-  `__.SLUS-20312..GRAN_TURISMO_4` and the visible channel
-  `PP.SLUS-20312..GRAN_TURISMO_4` differ only in their first two bytes.
-  OPL-Launcher uses that to find the game.
-- **Channel last:** the channel is created only after the full read-back
-  matches. A PS1 game's XMB header is written last, after its
-  `IMAGE0.VCD` has been verified.
+- **One partition per PS2 game:** a game is copied into the hidden HDL
+  partition `__.SLUS-20312..GRAN_TURISMO_4`. After the full read-back
+  matches, its header gets `system.cnf` (`BOOT2 = PATINFO`), `icon.sys`,
+  an icon and OPL-Launcher as boot KELF, and the partition is renamed
+  `PP.SLUS-20312..GRAN_TURISMO_4`; that rename is what puts it in the
+  XMB. This is exactly how PFS-BatchKit-Manager installs games (checked
+  against a dump of its games on a DESR). Separate PFS channels per game
+  froze the DESR XMB once two existed. A PS1 game's XMB header is
+  written last, after its `IMAGE0.VCD` has been verified.
 - **Journal:** every step is journaled under
   `PP.UDPF-00001..INSTALLER:/state/`, together with the copy checkpoints
   (`install-<name>.seg`). The journal, not the HDL format, records
@@ -147,13 +153,13 @@ docs/       guides, manual, checklist; docs/package/ = release zip texts
 | UDPFS / udpfsd, Neutrino network modules (smap, ministack, udpfs_ioman) | Maximus32 |
 | Open PS2 Loader, OPL-Launcher | ps2homebrew and contributors |
 | APA/HDL driver (`ps2hdd-hdl.irx`), `hdlfs.irx` | HDLGameInstaller (sp193) |
-| POPStarter (PS1 games; not included) | krHACKen |
+| POPStarter (PS1 games; rev13 Beta, included) | krHACKen |
 | PS2SDK (incl. USB / BDM drivers) | ps2dev |
 | Cover art downloads | xlenore/ps2-covers |
 | Partition naming, CFG/ART layout, `GameListPS2.txt`, game database (`PS2DB.xml`) | PFS-BatchKit-Manager (GDX-X) |
 
 Open PS2 Loader is distributed under the AFL-3.0 licence (shipped as
-`udpfsd/OPL-LICENSE.txt`). POPStarter and Sony's POPS files are not
-part of this project. Pinned upstream revisions:
+`udpfsd/OPL-LICENSE.txt`). POPStarter is krHACKen's freeware, shipped
+unchanged; Sony's POPS files are not part of this project. Pinned upstream revisions:
 [reference/REVISIONS.txt](reference/REVISIONS.txt) and
 [provenance](docs/PROVENANCE.md).

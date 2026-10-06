@@ -29,7 +29,7 @@ cp "$ROOT/docs/package/udpfsd.cfg" "$P/PC/udpfsd/"
 chmod +x "$P/PC/udpfsd/udpfsd-linux-amd64"
 # The server refuses a configured folder that does not exist, and some
 # unzip tools drop empty folders: give each one a note.
-# POPStarter, when make dist signed one (POPSTARTER_ELF=...).
+# POPStarter (pinned rev13 Beta KELF, unchanged).
 mkdir -p "$P/PC/udpfsd/POPS"
 [ -f "$DIST/udpfsd/POPS/POPSTARTER.KELF" ] && cp "$DIST/udpfsd/POPS/POPSTARTER.KELF" "$P/PC/udpfsd/POPS/"
 for d in DVD CD CFG ART; do
@@ -39,7 +39,11 @@ echo "Put DVD game images (.iso / .zso) in this folder." > "$P/PC/udpfsd/DVD/_pu
 echo "Put CD game images (.iso / .zso) in this folder." > "$P/PC/udpfsd/CD/_put_CD_games_here.txt"
 echo "Optional: OPL per-game settings named <GAME-ID>.cfg, e.g. SLUS_203.12.cfg." > "$P/PC/udpfsd/CFG/_optional_OPL_settings_here.txt"
 echo "Optional: covers named <GAME-ID>_COV.png or .jpg, e.g. SLUS_203.12_COV.jpg." > "$P/PC/udpfsd/ART/_optional_covers_here.txt"
-printf '%s\n' "PS1 games: put .VCD files here (convert BIN/CUE with cue2pops)." "" `n  "Also needed here (not included, see README.txt):" `n  "  POPSTARTER.KELF   POPStarter, signed for the PS2" `n  "  POPS.ELF          Sony POPS emulator (from your own console/files)" `n  "  IOPRP252.IMG      Sony POPS IOP image" > "$P/PC/udpfsd/POPS/_put_PS1_VCD_games_here.txt"
+printf '%s\n' "PS1 games: put .VCD files here (convert BIN/CUE with cue2pops)." "" \
+  "POPSTARTER.KELF (POPStarter rev13 Beta) is already here." "" \
+  "Also needed here, NOT included (Sony's POPS emulator, supply your own):" \
+  "  POPS.ELF" \
+  "  IOPRP252.IMG" > "$P/PC/udpfsd/POPS/_put_PS1_VCD_games_here.txt"
 # Windows line endings for the files people open in Notepad.
 for f in "$P/README.txt" "$P/CHANGELOG.txt" "$P/SERVER-MANUAL.txt" "$P/PC/udpfsd/udpfsd.cfg" "$P"/PC/udpfsd/*/_*.txt; do
   sed -i 's/\r$//; s/$/\r/' "$f"

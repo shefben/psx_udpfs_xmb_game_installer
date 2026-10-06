@@ -135,10 +135,10 @@ static void browse(const char *title, const char *root, char *cwd, listui_state_
       if (e->is_dir) {
         snprintf(rows[i], UI_ROW_LEN, "[DIR] %.60s/", e->name);
       } else {
-        char sz[24];
+        char sz[24], shown[NAME_MAX_];
         format_size(e->size, sz, sizeof(sz));
         snprintf(rows[i], UI_ROW_LEN, "[%s] %-50.50s %10s", source_type_label(e->type),
-                 e->name, sz);
+                 source_display_name(e->name, shown, sizeof(shown)), sz);
       }
       items[i].name = e->name;
       items[i].size = e->size;

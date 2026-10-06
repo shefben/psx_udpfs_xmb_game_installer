@@ -31,8 +31,11 @@ typedef struct {
   int has_journal;         /* a journal for exactly this pair exists */
   int journal_verified;    /* tx_hidden_data_verified() on that journal */
   int journal_matches_partition; /* tx_identity_matches() on the live partition */
-  int visible_exists;
-  int visible_valid; /* files + PPAA header verified */
+  int visible_exists; /* in the XMB: PP. game partition, or an old PFS channel */
+  int visible_valid;  /* PP. game partition with a complete boot header */
+  int data_visible;   /* the HDL game partition itself is PP.X (BatchKit layout) */
+  int legacy_channel; /* PFS PP.X next to __.X: a cover partition (or an older
+                       * release's channel) */
   int verify_skipped; /* journal: full read-back skipped by the user */
   int resumable;      /* interrupted copy, checkpoint bound to this partition */
   uint64_t resume_bytes; /* bytes already copied (when resumable) */
@@ -63,5 +66,30 @@ const char *pair_label(const pair_facts_t *f);
 /* Offer "Verify game data": a completed install with a journal bound to
  * the partition (verified or skipped). */
 int pair_can_verify(const pair_facts_t *f);
+
+/* "Add XMB cover": a complete game shown as one HDL partition whose boot
+ * header is intact (a game with a cover partition already has one). */
+int pair_can_add_cover(const pair_facts_t *f);
+
+/* One partition of the APA list. */
+typedef struct {
+  const char *name;
+  unsigned type;
+} pair_part_t;
+
+/* One game for Installed Games / Remove Games: its two names. */
+typedef struct {
+  char visible[33]; /* PP.X */
+  char hidden[33];  /* __.X (the key of its journal) */
+} pair_ref_t;
+
+/* Games on the HDD, from the APA list, in list order:
+ *  - an HDL partition named __.X or PP.X (hidden, or shown in the XMB
+ *    as PFS-BatchKit-Manager and this installer install games), listed
+ *    once even if both names exist;
+ *  - a PFS PP.X channel without a __.X partner (an orphaned channel of
+ *    an older release, or a PS1 game).
+ * A PFS PP.X next to its __.X belongs to that game. Returns the count. */
+int pair_collect(const pair_part_t *parts, int np, pair_ref_t *out, int max);
 
 #endif

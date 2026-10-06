@@ -64,6 +64,17 @@ def main():
           any("apaRemoveTypeAllowed(id, clink->header->type)" in l for l in hunks) and
           any('#include "remove_policy.h"' in l for l in hunks))
 
+    ren = open(os.path.join(ROOT, "patches/apa-hdl/0002-allow-renaming-hidden-hdl-games.patch")).read()
+    rh = [l for l in ren.splitlines() if l.startswith(("+", "-")) and not l.startswith(("+++", "---"))]
+    check("rename_patch_removes_only_dunder_check",
+          [l for l in rh if l.startswith("-")] ==
+          ["-\t// Do not allow system partitions (__*) to be renamed.",
+           "-\tif(oldParams->id[0]=='_' && oldParams->id[1]=='_')"],
+          repr([l for l in rh if l.startswith("-")]))
+    check("rename_patch_uses_same_policy",
+          any("apaRemoveNameAllowed(oldParams->id)" in l for l in rh) and
+          any("apaRemoveTypeAllowed(oldParams->id, clink->header->type)" in l for l in rh))
+
     pol = open(os.path.join(ROOT, "tools/driver/remove_policy.h")).read()
     check("policy_requires_dot_and_hdl_type",
           "id[2] == '.'" in pol and "0x1337" in pol)

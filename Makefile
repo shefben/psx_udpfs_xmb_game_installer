@@ -36,8 +36,9 @@ NEUTRINO_IRX := $(BUILD)/irx/smap.irx $(BUILD)/irx/ministack.irx $(BUILD)/irx/ud
 EE_DEPS := $(NEUTRINO_IRX) $(BUILD)/.driver-ok $(BUILD)/.refs-ok $(BUILD)/.gitid
 
 # KELF_MODE is part of every KELF's identity: switching it re-signs and
-# re-embeds. Only mbr (default) and none are accepted by kelf-sign.sh.
-KELF_MODE ?= mbr
+# re-embeds. dnasload (default; the header PSX XMB channels start), mbr
+# and none are accepted by kelf-sign.sh.
+KELF_MODE ?= dnasload
 export KELF_MODE
 
 # Stamps that change content (and so trigger rebuilds) only when their
@@ -166,8 +167,13 @@ $(OPL_ELF): $(BUILD)/.refs-ok tools/bin2s
 	  EE_CFLAGS="$(OPL_LAUNCHER_CFLAGS)"
 
 # ---- 2. signed OPL-Launcher -------------------------------------------
-$(OPL_KELF): $(OPL_ELF) tools/kelf-sign.sh $(BUILD)/.kelf-mode
-	bash tools/kelf-sign.sh $(OPL_ELF) $@
+# Signed without its debug sections (1.5 MB -> ~0.3 MB), like the app.
+OPL_ELF_STRIPPED := $(BUILD)/opl-launcher/OPL-Launcher-stripped.elf
+$(OPL_ELF_STRIPPED): $(OPL_ELF)
+	mips64r5900el-ps2-elf-strip -o $@ $<
+
+$(OPL_KELF): $(OPL_ELF_STRIPPED) tools/kelf-sign.sh $(BUILD)/.kelf-mode
+	bash tools/kelf-sign.sh $(OPL_ELF_STRIPPED) $@
 
 # ---- 3. app ELF (embeds 2) ---------------------------------------------
 # The sub-make is always entered (FORCE) but only relinks when an input
@@ -197,16 +203,21 @@ $(BOOT_ELF): $(OPL_KELF) $(APP_KELF) $(EE_DEPS) FORCE
 	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) installer_kelf=$(APP_KELF)"
 	$(call STRIP_IF_CHANGED,$@,$(BUILD)/bootstrap/bootstrap-debug.elf)
 
-# ---- optional: POPStarter for PS1 games, signed like the other KELFs. The
-# ELF is never fetched: give its path explicitly, e.g.
-#   POPSTARTER_ELF=/path/POPSTARTER.ELF make dist
-# (krHACKen's POPStarter; PSBBN Definitive Project ships POPSTARTER.ELF).
+# ---- POPStarter for PS1 games, shipped in udpfsd/POPS/: the pinned
+# rev13 Beta POPSTARTER.KELF as distributed (tools/popstarter.env, kept in
+# vendor/popstarter/), the one PFS-BatchKit-Manager and PSX-XMB-Manager
+# use on the PSX. POPSTARTER_ELF=/path/POPSTARTER.ELF signs another one
+# like the other KELFs instead. POPS.ELF / IOPRP252.IMG are never included.
 POPS_KELF := $(BUILD)/kelf/POPSTARTER.KELF
+POPSTARTER_PIN := vendor/popstarter/POPSTARTER.KELF
 ifneq ($(POPSTARTER_ELF),)
 $(POPS_KELF): $(POPSTARTER_ELF) tools/kelf-sign.sh $(BUILD)/.kelf-mode
 	bash tools/kelf-sign.sh $(POPSTARTER_ELF) $@
-DIST_POPS := $(POPS_KELF)
+else
+$(POPS_KELF): tools/popstarter.env tools/fetch-popstarter.sh $(POPSTARTER_PIN)
+	bash tools/fetch-popstarter.sh $@
 endif
+DIST_POPS := $(POPS_KELF)
 
 kelfs: $(OPL_KELF) $(APP_KELF)
 
@@ -247,7 +258,7 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF) $(BUILD)/.kelf-mode
 
 # ---- 7. end-user zip (README, PS2 bootstrap ELF, PC/udpfsd folder) -----
-VERSION := 2.0
+VERSION := 3.0
 PACKAGE := $(ROOT)/PSX-UDPFS-Installer_V$(VERSION).zip
 package: dist
 	bash tools/make-package.sh $(DIST) $(PACKAGE)

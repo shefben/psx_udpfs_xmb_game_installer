@@ -1,30 +1,46 @@
 #!/usr/bin/env bash
 # Test double for kelftool, used only by test/host/test_kelf_sign.sh.
-# "encrypt" writes a reversible non-ELF container; "decrypt" restores it.
-# FAKE_KELF selects a failure: ok | fail-encrypt | empty | plain-elf |
-# fail-decrypt | bad-decrypt | tiny. Every invocation is logged.
+# "encrypt" writes a reversible non-ELF container whose first 32 bytes
+# are a KELF header (the DNASLOAD/PS2/app 11 one for "dnasload");
+# "decrypt" restores it. FAKE_KELF selects a failure: ok | fail-encrypt |
+# empty | plain-elf | fail-decrypt | bad-decrypt | tiny | no-mode-arg |
+# bad-header | pad | bad-pad. Every invocation is logged.
 set -eu
 echo "$*" >> "${FAKE_KELF_LOG:-/dev/null}"
 [ -f "$HOME/PS2KEYS.dat" ] || { echo "no keys" >&2; exit 3; }
+args=()
+for a in "$@"; do case "$a" in --*) ;; *) args+=("$a") ;; esac; done
+set -- "${args[@]}"
+hex() { printf "$(echo "$1" | sed 's/../\\x&/g')"; }
 cmd=$1; shift
 case "$cmd" in
   encrypt)
     # xfwcfw-style fork: no mode argument, crashes when given one.
     [ "${FAKE_KELF:-ok}" = "no-mode-arg" ] && [ $# -eq 3 ] && exit 139
-    [ $# -eq 3 ] && shift  # drop mode
+    mode=none
+    [ $# -eq 3 ] && { mode=$1; shift; }
     in=$1 out=$2
     case "${FAKE_KELF:-ok}" in
       fail-encrypt) exit 1 ;;
       empty) : > "$out" ;;
       plain-elf) cp "$in" "$out" ;;
       tiny) printf 'KELF' > "$out" ;;
-      *) { printf 'FAKEKELF'; head -c 2048 /dev/zero; cat "$in"; } > "$out" ;;
+      *)
+        if [ "$mode" = dnasload ] && [ "${FAKE_KELF:-ok}" != bad-header ]; then
+          h=010000040006004a000e010000000002000000008000000b2c020000ff000000
+        else
+          h=46414b454b454c46$(printf '%048d' 0) # "FAKEKELF", no real header
+        fi
+        { hex "$h"; head -c 2024 /dev/zero; cat "$in"; } > "$out" ;;
     esac ;;
   decrypt)
     in=$1 out=$2
     case "${FAKE_KELF:-ok}" in
       fail-decrypt) exit 1 ;;
       bad-decrypt) printf 'garbage' > "$out" ;;
+      pad) { tail -c +2057 "$in"; head -c 20 /dev/zero; } > "$out" ;; # POPStarter: 8-byte align + 16
+      bigpad) { tail -c +2057 "$in"; head -c 24 /dev/zero; } > "$out" ;;
+      bad-pad) { tail -c +2057 "$in"; printf 'x'; } > "$out" ;;
       *) tail -c +2057 "$in" > "$out" ;;
     esac ;;
   *) exit 2 ;;

@@ -112,6 +112,9 @@ TEST(png_sanity) {
   png[18] = 0; png[19] = 74;   /* width 74 (BE) */
   png[22] = 0; png[23] = 108;  /* height 108 (BE) */
   CHECK(png_basic_valid(png, sizeof(png)));
+  CHECK(png_is_size(png, sizeof(png), 74, 108));
+  CHECK(!png_is_size(png, sizeof(png), 140, 200));
+  CHECK(!png_is_size(png, 20, 74, 108));
   CHECK(!png_basic_valid(png, 20));
   png[19] = 0; /* width 0 */
   CHECK(!png_basic_valid(png, sizeof(png)));

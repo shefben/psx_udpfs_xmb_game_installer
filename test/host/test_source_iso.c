@@ -206,3 +206,13 @@ TEST(iso_hint_from_paths) {
   CHECK_EQ_INT(iso_hint_from_path("udpfs:/DVDs/Game.iso"), DISC_HINT_NONE);
 }
 
+
+TEST(source_display_name_hides_virtual_iso) {
+  char out[64];
+  CHECK_STR(source_display_name("Gran Turismo 4.zso.iso", out, sizeof(out)), "Gran Turismo 4.zso");
+  CHECK_STR(source_display_name("GT4.CSO.ISO", out, sizeof(out)), "GT4.CSO");
+  CHECK_STR(source_display_name("Gran Turismo 4.iso", out, sizeof(out)), "Gran Turismo 4.iso");
+  CHECK_STR(source_display_name("Game.zso", out, sizeof(out)), "Game.zso");
+  CHECK_STR(source_display_name(".zso.iso", out, sizeof(out)), ".zso.iso");
+  CHECK_STR(source_display_name("Long name.zso.iso", out, 6), "Long ");
+}

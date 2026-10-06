@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
   app_boot(); /* the network keeps starting in the background */
   startup_notices();
 
-  static char rows[10][UI_ROW_LEN] = {
+  static char rows[11][UI_ROW_LEN] = {
       "Install Games from UDPFS",
       "Install Games from USB",
       "Install All Games from the server",
@@ -65,6 +65,7 @@ int main(int argc, char *argv[]) {
       "Repair XMB Channels",
       "Network Settings",
       "Install Installer as XMB Channel",
+      "Delete Installer XMB Channel",
       "Diagnostics",
       "Exit",
   };
@@ -79,7 +80,8 @@ int main(int argc, char *argv[]) {
       flow_auto_install();
     }
     enum {
-      M_BROWSE, M_USB, M_BATCH, M_INSTALLED, M_REMOVE, M_REPAIR, M_NET, M_SELF, M_DIAG, M_EXIT,
+      M_BROWSE, M_USB, M_BATCH, M_INSTALLED, M_REMOVE, M_REPAIR, M_NET, M_SELF, M_DEL_SELF,
+      M_DIAG, M_EXIT,
       M_COUNT
     };
     /* Returns early when the network state changes, to redraw it. */
@@ -91,7 +93,7 @@ int main(int argc, char *argv[]) {
     user_acted = 1;
     int needs_games = c == M_BROWSE || c == M_USB || c == M_BATCH || c == M_INSTALLED || c == M_REMOVE ||
                       c == M_REPAIR;
-    if (!hdd_ok && (needs_games || c == M_SELF)) {
+    if (!hdd_ok && (needs_games || c == M_SELF || c == M_DEL_SELF)) {
       ui_message("HDD unavailable",
                  "The internal HDD is not usable or a required HDD module failed\n"
                  "to load. All HDD writes are disabled. See Diagnostics.");
@@ -129,6 +131,9 @@ int main(int argc, char *argv[]) {
       break;
     case M_SELF:
       flow_self_install();
+      break;
+    case M_DEL_SELF:
+      flow_delete_installer_channel();
       break;
     case M_DIAG:
       flow_diagnostics();

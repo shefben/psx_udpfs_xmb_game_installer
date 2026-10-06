@@ -1,6 +1,7 @@
 #include <malloc.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
@@ -8,6 +9,7 @@
 
 #include "apa_osd_header.h"
 #include "hdd_partitions.h"
+#include "opl_launcher_payload.h"
 #include "pfs_channel.h"
 #include "xmb_text.h"
 
@@ -18,6 +20,123 @@ static channel_result_t cres(inst_err_t e, int rc, const char *step) {
   return r;
 }
 
+static char g_iconsys[1024];
+
+static int osd_files(ppaa_files_t *f, const char *syscnf, const char *title0,
+                     const char *title1) {
+  const uint8_t *icon;
+  uint32_t icon_len;
+  size_t n = xmb_render_icon_sys(g_iconsys, sizeof(g_iconsys), title0, title1);
+  if (!n)
+    return -1;
+  payload_osd_icon(&icon, &icon_len);
+  *f = (ppaa_files_t){syscnf, strlen(syscnf), g_iconsys, n, icon, icon_len, 0, NULL, 0};
+  return 0;
+}
+
+inst_err_t osd_header_write(const char *partition, const char *syscnf, const char *title0,
+                            const char *title1, int *rc_out) {
+  ppaa_files_t f;
+  if (osd_files(&f, syscnf, title0, title1) < 0)
+    return ERR_XMB_HEADER_WRITE;
+  return ppaa_write_files(partition, &f, rc_out);
+}
+
+inst_err_t osd_header_verify(const char *partition, const char *syscnf, const char *title0,
+                             const char *title1, int *rc_out) {
+  ppaa_files_t f;
+  if (osd_files(&f, syscnf, title0, title1) < 0)
+    return ERR_XMB_VERIFY;
+  return ppaa_verify_partition_files(partition, &f, rc_out);
+}
+
+/* PS2 game header, PFS-BatchKit-Manager's layout: delete icon copied to
+ * 0x40000, OPL-Launcher as boot KELF (kelf NULL: left as it is). */
+static int game_files(ppaa_files_t *f, const char *title, const char *part_id, const void *kelf,
+                      uint32_t kelf_len) {
+  if (osd_files(f, XMB_PATINFO_SYSTEM_CNF, title, part_id) < 0)
+    return -1;
+  f->del_copy = 1;
+  f->kelf = kelf;
+  f->kelf_len = kelf ? kelf_len : 0;
+  return 0;
+}
+
+inst_err_t game_header_write(const char *part, const char *title, const char *part_id,
+                             const void *kelf, uint32_t kelf_len, int *rc_out) {
+  ppaa_files_t f;
+  if (game_files(&f, title, part_id, kelf, kelf_len) < 0)
+    return ERR_XMB_HEADER_WRITE;
+  return ppaa_write_files(part, &f, rc_out);
+}
+
+inst_err_t game_header_verify(const char *part, const char *title, const char *part_id,
+                              const void *kelf, uint32_t kelf_len, int *rc_out) {
+  ppaa_files_t f;
+  if (game_files(&f, title, part_id, kelf, kelf_len) < 0)
+    return ERR_XMB_VERIFY;
+  return ppaa_verify_partition_files(part, &f, rc_out);
+}
+
+inst_err_t game_header_check(const char *part) {
+  return ppaa_check_partition(part, XMB_PATINFO_SYSTEM_CNF, strlen(XMB_PATINFO_SYSTEM_CNF), 1,
+                              NULL);
+}
+
+int game_header_get_title(const char *part, char *out, size_t outsz) {
+  if (ppaa_partition_iconsys(part, g_iconsys, sizeof(g_iconsys)) < 0)
+    return -1;
+  return xmb_info_sys_get(g_iconsys, "title0", out, outsz);
+}
+
+int install_date(char out[9]) {
+  time_t now = time(NULL);
+  struct tm *tm = gmtime(&now);
+  out[0] = 0;
+  return tm ? xmb_date_str(tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, out) : -1;
+}
+
+static char g_man[2048];
+
+channel_result_t channel_write_res(const char *title, const char *info_sys, uint32_t info_len,
+                                   const jacket_pair_t *j) {
+  int r = fileXioMkdir(W "res", 0777);
+  if (r < 0 && r != -17 /* EEXIST */)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "mkdir res");
+  if ((r = file_write_all(W "res/info.sys", info_sys, info_len)) < 0)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "res/info.sys");
+  if ((r = file_write_all(W "res/jkt_001.png", j->large, j->large_size)) < 0)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_001.png");
+  if ((r = file_write_all(W "res/jkt_002.png", j->small, j->small_size)) < 0)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_002.png");
+  const uint8_t *cp;
+  uint32_t cp_len;
+  payload_copyright_strip(&cp, &cp_len);
+  if (file_size(W "res/jkt_cp.png") <= 0 &&
+      (r = file_write_all(W "res/jkt_cp.png", cp, cp_len)) < 0)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_cp.png");
+  /* A manual the channel already has is kept; otherwise the blank one. */
+  if (file_size(W "res/man.xml") > 0)
+    return cres(ERR_OK, 0, NULL);
+  size_t n = xmb_render_man_xml(g_man, sizeof(g_man), title);
+  if (!n)
+    return cres(ERR_XMB_RESOURCE_WRITE, 0, "res/man.xml");
+  const uint8_t *page;
+  uint32_t page_len;
+  payload_manual_page(&page, &page_len);
+  r = fileXioMkdir(W "res/image", 0777);
+  if (r < 0 && r != -17)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "mkdir res/image");
+  static const char *const PAGES[3] = {W "res/image/0.png", W "res/image/1.png",
+                                       W "res/image/2.png"};
+  for (int i = 0; i < 3; i++)
+    if (file_size(PAGES[i]) <= 0 && (r = file_write_all(PAGES[i], page, page_len)) < 0)
+      return cres(ERR_XMB_RESOURCE_WRITE, r, PAGES[i] + strlen(W));
+  if ((r = file_write_all(W "res/man.xml", g_man, (uint32_t)n)) < 0)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "res/man.xml");
+  return cres(ERR_OK, 0, NULL);
+}
+
 channel_result_t channel_populate(const char *partition,
                                   const channel_content_t *c) {
   int r = pfs_mount(W, partition, FIO_MT_RDWR);
@@ -25,36 +144,17 @@ channel_result_t channel_populate(const char *partition,
     return cres(ERR_PFS_MOUNT, r, "mount");
 
   channel_result_t out = cres(ERR_OK, 0, NULL);
-  r = fileXioMkdir(W "res", 0777);
-  if (r < 0 && r != -17 /* EEXIST */) {
-    out = cres(ERR_XMB_RESOURCE_WRITE, r, "mkdir res");
-    goto done;
-  }
-  if ((r = file_write_all(W "EXECUTE.KELF", c->kelf, c->kelf_size)) < 0) {
+  if ((r = file_write_all(W "EXECUTE.KELF", c->kelf, c->kelf_size)) < 0)
     out = cres(ERR_XMB_RESOURCE_WRITE, r, "EXECUTE.KELF");
-    goto done;
-  }
-  if ((r = file_write_all(W "res/info.sys", c->info_sys, c->info_sys_len)) < 0) {
-    out = cres(ERR_XMB_RESOURCE_WRITE, r, "res/info.sys");
-    goto done;
-  }
-  if ((r = file_write_all(W "res/jkt_001.png", c->jacket, c->jacket_size)) < 0) {
-    out = cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_001.png");
-    goto done;
-  }
-  if ((r = file_write_all(W "res/jkt_002.png", c->jacket, c->jacket_size)) < 0) {
-    out = cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_002.png");
-    goto done;
-  }
-done:
+  else
+    out = channel_write_res(c->osd_title0, c->info_sys, c->info_sys_len, &c->jkt);
   pfs_umount(W);
   if (out.err)
     return out;
 
-  inst_err_t e = ppaa_write_partition(partition, XMB_SYSTEM_CNF,
-                                      strlen(XMB_SYSTEM_CNF), &r);
+  inst_err_t e = osd_header_write(partition, XMB_SYSTEM_CNF, c->osd_title0, c->osd_title1, &r);
   if (e)
-    return cres(e, r, "PPAA/system.cnf header");
+    return cres(e, r, "OSD header (system.cnf, icon.sys, icon)");
   return out;
 }
 
@@ -77,23 +177,24 @@ channel_result_t channel_verify(const char *partition,
     out = cres(ERR_XMB_VERIFY, 0, "EXECUTE.KELF");
   else if (!file_matches(W "res/info.sys", c->info_sys, c->info_sys_len))
     out = cres(ERR_XMB_VERIFY, 0, "res/info.sys");
-  else if (!file_matches(W "res/jkt_001.png", c->jacket, c->jacket_size))
+  else if (!file_matches(W "res/jkt_001.png", c->jkt.large, c->jkt.large_size))
     out = cres(ERR_XMB_VERIFY, 0, "res/jkt_001.png");
-  else if (!file_matches(W "res/jkt_002.png", c->jacket, c->jacket_size))
+  else if (!file_matches(W "res/jkt_002.png", c->jkt.small, c->jkt.small_size))
     out = cres(ERR_XMB_VERIFY, 0, "res/jkt_002.png");
+  else if (file_size(W "res/man.xml") <= 0 || file_size(W "res/image/0.png") <= 0)
+    out = cres(ERR_XMB_VERIFY, 0, "res/man.xml");
+  else if (file_size(W "res/jkt_cp.png") <= 0)
+    out = cres(ERR_XMB_VERIFY, 0, "res/jkt_cp.png");
   pfs_umount(W);
   if (out.err)
     return out;
 
-  /* ppaa_verify compares the exact system.cnf, which contains
-   * "BOOT2 = pfs:/EXECUTE.KELF". */
-  inst_err_t e = ppaa_verify_partition(partition, XMB_SYSTEM_CNF,
-                                       strlen(XMB_SYSTEM_CNF), &r);
+  /* The exact system.cnf ("BOOT2 = pfs:/EXECUTE.KELF"), icon.sys and icon. */
+  inst_err_t e = osd_header_verify(partition, XMB_SYSTEM_CNF, c->osd_title0, c->osd_title1, &r);
   if (e)
-    return cres(e, r, "PPAA/system.cnf header");
+    return cres(e, r, "OSD header (system.cnf, icon.sys, icon)");
   return out;
 }
-
 inst_err_t channel_quick_check(const char *partition) {
   if (pfs_mount(W, partition, FIO_MT_RDONLY) < 0)
     return ERR_XMB_VERIFY;
@@ -102,8 +203,7 @@ inst_err_t channel_quick_check(const char *partition) {
   pfs_umount(W);
   if (!ok)
     return ERR_XMB_VERIFY;
-  return ppaa_verify_partition(partition, XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF),
-                               NULL);
+  return ppaa_check_partition(partition, XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF), 0, NULL);
 }
 
 #define INFO_SYS_MAX 2048

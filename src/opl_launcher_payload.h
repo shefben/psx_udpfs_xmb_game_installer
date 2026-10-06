@@ -45,8 +45,31 @@ const char *payload_build_variant(void);
 int payload_opl_launcher_embedded(void);
 int payload_installer_embedded(void);
 
+/* res/jkt_001.png (large, 140x200) and res/jkt_002.png (XMB list cover,
+ * 74x108), the sizes PSX-XMB-Manager writes for PS2 game channels. */
+#define JKT_LARGE_W 140
+#define JKT_LARGE_H 200
+#define JKT_SMALL_W 74
+#define JKT_SMALL_H 108
+typedef struct {
+  const void *large;
+  uint32_t large_size;
+  const void *small;
+  uint32_t small_size;
+} jacket_pair_t;
+
 /* Embedded PNGs (always present). */
-void payload_default_jacket(const uint8_t **data, uint32_t *size);
-void payload_installer_jacket(const uint8_t **data, uint32_t *size);
+void payload_default_jackets(jacket_pair_t *j);
+void payload_installer_jackets(jacket_pair_t *j);
+
+/* Blank 640x350 page for the default res/man.xml (image/0..2.png). */
+void payload_manual_page(const uint8_t **data, uint32_t *size);
+
+/* Blank 290x46 res/jkt_cp.png (copyright strip; BatchKit always has one). */
+void payload_copyright_strip(const uint8_t **data, uint32_t *size);
+
+/* HDLGameInstaller's default OSD icon (res/icon.ico), written as the
+ * list and delete icon of every partition header we create. */
+void payload_osd_icon(const uint8_t **data, uint32_t *size);
 
 #endif

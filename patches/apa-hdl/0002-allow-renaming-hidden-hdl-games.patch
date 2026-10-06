@@ -1,0 +1,26 @@
+--- a/apa-hdl/src/hdd_fio.c
++++ b/apa-hdl/src/hdd_fio.c
+@@ -480,8 +480,9 @@
+ 		}
+ 	}
+ 
+-	// Do not allow system partitions (__*) to be renamed.
+-	if(oldParams->id[0]=='_' && oldParams->id[1]=='_')
++	// Do not allow system partitions (__*) to be renamed; a hidden HDL game
++	// ("__." + type HDL, remove_policy.h) may be, so it can be made visible.
++	if(!apaRemoveNameAllowed(oldParams->id))
+ 		return -EACCES;
+ 
+ 	// find :)
+@@ -490,6 +491,11 @@
+ 		SignalSema(fioSema);
+ 		return rv;
+ 	}
++	if(!apaRemoveTypeAllowed(oldParams->id, clink->header->type))
++	{
++		apaCacheFree(clink);
++		return -EACCES;
++	}
+ 
+ 	// Check for access rights.
+ 	if(apaPassCmp(clink->header->fpwd, oldParams->fpwd) != 0)

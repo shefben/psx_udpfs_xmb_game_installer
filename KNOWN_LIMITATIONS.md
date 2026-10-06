@@ -4,18 +4,21 @@ Status vocabulary: see `docs/HARDWARE_TEST_CHECKLIST.md`. Nothing is
 yet DESR-verified; everything below "works" only at the PC VERIFIED
 level unless stated otherwise.
 
-* **No DESR results yet.** XMB behaviour of the generated channels, the
-  jacket PNGs, CRLF `info.sys`, OPL-Launcher hand-off, the patched HDD
-  driver and the KELF format accepted by the DESR are all unobserved.
-* **Signing is external.** `kelftool` and `PS2KEYS.dat` are build
-  prerequisites, never shipped. The first signed build used
-  xfwcfw/kelftool, which only supports `KELF_MODE=none` (PSX/DESR
-  header). Whether the DESR XMB accepts that KELF from
-  `pfs:/EXECUTE.KELF` is the first thing D1/D2 prove; no `mbr`-mode
-  build exists yet.
-* **KELF sizes.** The app KELF embeds the OPL-Launcher KELF, so it is
-  roughly app + 1.6 MB. No size limit of the DESR loader is known to be
-  exceeded, but none has been tested.
+* **DESR results (v2.0 test builds, fixed in v3.0):** installs and deletes work from
+  the bootstrap ELF. With two or more of our PFS channels the XMB froze
+  while loading; two PFS-BatchKit-Manager games load fine. PS2 games are
+  now installed in BatchKit's layout (one visible HDL partition with a
+  PATINFO boot header, no PFS channel); D47 confirms it on hardware. The
+  installer channel is still a PFS channel: whether one PFS channel next
+  to several such games loads is part of D47.
+* **128 GiB limit:** games and data (all non-system partitions) never
+  pass 128 GiB in total, and a partition the driver placed beyond the
+  128 GiB mark is removed again; a bigger drive or game area is not
+  used past that point.
+* **Signing is external.** `kelftool` (ps2homebrew/kelftool) and
+  `PS2KEYS.dat` are build prerequisites, never shipped.
+* **KELF sizes.** The app KELF embeds the OPL-Launcher KELF (~0.3 MB,
+  debug-stripped); the app KELF is about 1 MB.
 * **DHCP is a simple client** (added to ministack): one lease at start-up,
   no renewal (an installer session is far shorter than a lease), no
   gateway (udpfsd must be on the same network). Without an answer within
@@ -34,9 +37,14 @@ level unless stated otherwise.
   tools, or for a same-named partition recreated by another tool, the
   data shows as UNKNOWN/UNVERIFIED (delete or reinstall; no channel is
   ever created on it).
-* **hdl-dump visible installs** (`PP.` partitions of type HDL) are not
-  managed: they are neither listed nor removable by this installer, and
-  a same-named one blocks a new install (partition already exists).
+* **Games installed by other tools** (hdl-dump / PFS-BatchKit-Manager:
+  visible `PP.` HDL partitions) are listed, as not verified by this
+  installer: they can be hidden, deleted or backed up; a same-named one
+  blocks a new install (partition already exists).
+* **XMB info for PS2 games:** the XMB shows the title from the game's
+  boot header, but no cover (that needs a PFS partition: *Add XMB cover*,
+  experimental). Covers, release date, developer and genre
+  (`info.sys`, `gamedb`) only apply to PFS channels (PS1 games, installer).
 * **Game IDs and titles.** A game without a `XXXX_NNN.NN` BOOT2 entry is
   rejected. Titles that sanitize to the same partition name are a
   conflict (shown as an existing installation), never silently renamed.
@@ -67,9 +75,9 @@ level unless stated otherwise.
   screens handle up to 128 game pairs.
 * **Disc type** comes from the server folder (`CD/`, `DVD/`), else UDF
   presence or size.
-* **Jacket art** prepared by the patched udpfsd is scaled to 74x108 on
-  the server; other art (`udpfs:/ART/<ID>.png`, `<image>.png`) is copied
-  as-is. An invalid PNG falls back to the built-in jacket.
+* **Jacket art** is made by the patched udpfsd only (140x200 and 74x108,
+  256 colours, the sizes PSX-XMB-Manager uses). A cover of another
+  size, or from an older udpfsd, is not used: the built-in jacket is.
 * **No controller:** the installer only backs out of menus; it never
   starts an install or accepts a prompt without a pad.
 * **Transfer tuning** has not been done; the stream buffer is 1 MiB.
@@ -84,11 +92,10 @@ level unless stated otherwise.
 
 * **PS1 games (POPStarter), first version.** Only .VCD images (convert
   BIN/CUE with cue2pops); multi-disc games (DISCS.TXT) are not set up;
-  PS1 games are not part of Install All / auto-install. POPStarter and
-  Sony's POPS.ELF / IOPRP252.IMG are not included and must be supplied.
-  Whether the DESR XMB boots krHACKen's POPSTARTER.KELF as distributed
-  is untested; `POPSTARTER_ELF=/path/POPSTARTER.ELF make dist` signs one
-  the same way as the other KELFs (checklist D35).
+  PS1 games are not part of Install All / auto-install. POPStarter
+  rev13 Beta is included as distributed (another one, signed like the
+  other KELFs: `POPSTARTER_ELF=/path/POPSTARTER.ELF make dist`); Sony's POPS.ELF /
+  IOPRP252.IMG are not included and must be supplied (checklist D35).
 * **USB installs** read FAT32/exFAT drives on the first USB device
   (`mass0:`). Covers and OPL settings still come from udpfsd when it is
   running; without it the default cover is used.

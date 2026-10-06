@@ -70,15 +70,15 @@ TEST(batch_toggle_only_eligible) {
   CHECK_EQ_INT(e[1].selected, 0);
 }
 
-TEST(batch_space_counts_selected_plus_channel) {
+TEST(batch_space_counts_selected_data_only) {
   batch_entry_t e[3];
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);
   e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_NONE, 1024);
   e[2] = ent("C.iso", ERR_OK, "__.SLUS-20314..C", PAIR_NONE, 512);
   batch_classify(e, 3);
-  CHECK_EQ_U64(batch_needed_mb(e, 3), 4096 + 1024 + 512 + 3 * 128);
+  CHECK_EQ_U64(batch_needed_mb(e, 3), 4096 + 1024 + 512);
   batch_toggle(&e[1]);
-  CHECK_EQ_U64(batch_needed_mb(e, 3), 4096 + 512 + 2 * 128);
+  CHECK_EQ_U64(batch_needed_mb(e, 3), 4096 + 512);
 }
 
 TEST(batch_rows_and_summary) {
@@ -94,6 +94,9 @@ TEST(batch_rows_and_summary) {
   batch_format_row(&e[2], row, sizeof(row));
   CHECK(strstr(row, "[ ]") == row);
   CHECK(strstr(row, batch_status_label(BATCH_EXISTS)) != NULL);
+  batch_entry_t z = ent("Z.zso.iso", ERR_OK, "__.SLUS-20315..Z", PAIR_NONE, 512);
+  batch_format_row(&z, row, sizeof(row));
+  CHECK(strstr(row, "Z.zso ") != NULL && strstr(row, "zso.iso") == NULL);
 
   e[0].result = BATCH_DONE;
   e[1].result = BATCH_FAILED;
@@ -162,13 +165,13 @@ TEST(batch_resumable_copy_is_selected_and_needs_only_the_channel) {
   CHECK_EQ_INT(e[1].status, BATCH_EXISTS);
   CHECK(e[0].selected && !e[1].selected && e[2].selected);
   CHECK_STR(batch_status_label(BATCH_RESUME), "resume copy");
-  /* data partitions already exist: only the 128 MiB channel is new */
-  CHECK_EQ_U64(batch_needed_mb(e, 3), 128 + 1024 + 128);
+  /* a resume's data partitions already exist: it needs no space */
+  CHECK_EQ_U64(batch_needed_mb(e, 3), 1024);
   CHECK_EQ_INT(batch_toggle(&e[0]), 0);
   CHECK_EQ_INT(batch_toggle(&e[0]), 1);
-  CHECK_EQ_INT(batch_auto_select(e, 3, 128 + 1152), 2);
+  CHECK_EQ_INT(batch_auto_select(e, 3, 1024), 2);
   CHECK(e[0].selected && e[2].selected);
-  CHECK_EQ_INT(batch_auto_select(e, 3, 128), 1); /* only the resume fits */
+  CHECK_EQ_INT(batch_auto_select(e, 3, 1023), 1); /* only the resume fits */
   CHECK(e[0].selected && !e[2].selected);
 }
 
@@ -234,8 +237,8 @@ TEST(batch_auto_select_fits_free_space_in_order) {
   e[2] = ent("C.iso", ERR_OK, "__.SLUS-20314..C", PAIR_NONE, 512);
   e[3] = ent("D.iso", ERR_OK, "__.SLUS-20315..D", PAIR_COMPLETE, 512);
   batch_classify(e, 4);
-  /* 4096+128 fits, next 4224 does not, 512+128 still fits */
-  CHECK_EQ_INT(batch_auto_select(e, 4, 4224 + 640), 2);
+  /* 4096 fits, the next 4096 does not, 512 still fits */
+  CHECK_EQ_INT(batch_auto_select(e, 4, 4096 + 512), 2);
   CHECK(e[0].selected && !e[1].selected && e[2].selected && !e[3].selected);
   CHECK_EQ_INT(e[1].status, BATCH_NO_SPACE);
   CHECK_EQ_INT(e[3].status, BATCH_EXISTS);

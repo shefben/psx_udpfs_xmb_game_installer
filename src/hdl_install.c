@@ -38,6 +38,10 @@ hdl_result_t hdl_create_and_format(const char *hidden, const hdl_alloc_t *alloc,
   int ex = hdd_exists(hidden);
   if (ex != 0)
     return res(ex > 0 ? ERR_PARTITION_EXISTS : ERR_HDL_CREATE, ex);
+  /* 128 GiB limit for games and data, before anything is created. */
+  inst_err_t lim = hdd_space_check(alloc->total_mb);
+  if (lim)
+    return res(lim, 0);
 
   /* FIO_O_* (IOP flag values), not newlib O_*: apa-hdl's HIOCADDSUB
    * checks `mode & FIO_O_WRONLY` (ps2-usbhdl fix). */
@@ -55,6 +59,10 @@ hdl_result_t hdl_create_and_format(const char *hidden, const hdl_alloc_t *alloc,
   }
   fileXioClose(fd);
 
+  /* Every segment must end within 128 GiB; else it is removed again. */
+  int grc = 0;
+  if ((lim = hdd_space_guard_new(hidden, &grc)))
+    return res(lim, grc);
   int r = fileXioFormat("hdl0:", dev, (const char *)args, sizeof(*args));
   if (r < 0) {
     hdd_remove_exact(hidden, NULL);

@@ -69,6 +69,9 @@ int kelf_looks_valid(const void *data, uint32_t size);
  * total size limit; enough to reject non-PNG and absurd files. */
 int png_basic_valid(const void *data, uint32_t size);
 
+/* png_basic_valid() and exactly w x h pixels. */
+int png_is_size(const void *data, uint32_t size, uint32_t w, uint32_t h);
+
 /* ---- display title ---- */
 
 /* Default display title: the PVD volume id unless it is empty or just

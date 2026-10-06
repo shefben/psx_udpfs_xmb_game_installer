@@ -45,8 +45,15 @@ the `__` test with two checks from `tools/driver/remove_policy.h`:
 Names not starting with `__` behave exactly as before. Rename
 protection of `__` names is unchanged.
 
-Result: `df6bea5a03d42e4a9babde9b068d0df562db56e9a11cc800b75eeef872baf8d3`
-(31609 bytes), pinned in `driver.env`. The build checks this hash
+`patches/apa-hdl/0002-allow-renaming-hidden-hdl-games.patch` applies the
+same two checks to `apaRename()` (old name), which upstream refuses for
+every `__` name. The installer shows a verified game in the XMB by
+renaming its HDL partition `__.X` to `PP.X` (PFS-BatchKit-Manager's
+layout), and hides it again with the reverse rename. System partitions
+stay protected exactly as for removal.
+
+Result: `f14fed88d134145f33f8d61ffe339c3b037f4c9da1118b0064126691c7ee3d0b`
+(31657 bytes), pinned in `driver.env`. The build checks this hash
 (`make driver-check`, run before every installer build).
 
 The installer applies a stricter rule on top
