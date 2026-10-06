@@ -615,11 +615,13 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   /* 7. free space: the data partitions (a resume already holds them).
    * The XMB entry is the game partition itself: no extra partition. */
   uint32_t total_mb, free_mb, max_mb;
-  if (hdd_space_mb(&total_mb, &free_mb, &max_mb) < 0 ||
-      (uint64_t)(p->resume ? 0 : p->alloc.total_mb) > free_mb) {
-    rep->err = ERR_NO_SPACE;
+  if (hdd_space_mb(&total_mb, &free_mb, &max_mb) < 0) {
+    rep->err = ERR_HDD_MISSING;
     goto out_src;
   }
+  /* HDD free space and the 128 GiB limit for games and data. */
+  if (!p->resume && (rep->err = hdd_space_check(p->alloc.total_mb)))
+    goto out_src;
   hdl_alloc_t check;
   if (hdl_plan_alloc((uint64_t)p->iso.sectors * ISO_SECTOR, max_mb, &check) ||
       check.total_mb != p->alloc.total_mb) {
@@ -941,11 +943,8 @@ void game_add_cover(const char *hidden, const install_ui_t *ui, install_report_t
     rep->detail = "OPL-Launcher EXECUTE.KELF";
     goto out;
   }
-  uint32_t free_mb = 0;
-  if (hdd_space_mb(NULL, &free_mb, NULL) < 0 || free_mb < CHANNEL_SIZE_MB) {
-    rep->err = ERR_NO_SPACE;
+  if ((rep->err = hdd_space_check(CHANNEL_SIZE_MB))) /* incl. the 128 GiB limit */
     goto out;
-  }
   char info[1024], today[9];
   xmb_game_info_t gi;
   int have_gi = game_load_info(h.startup, &gi);

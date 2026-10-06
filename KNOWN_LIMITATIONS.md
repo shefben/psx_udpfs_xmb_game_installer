@@ -11,6 +11,10 @@ level unless stated otherwise.
   PATINFO boot header, no PFS channel); D47 confirms it on hardware. The
   installer channel is still a PFS channel: whether one PFS channel next
   to several such games loads is part of D47.
+* **128 GiB limit:** games and data (all non-system partitions) never
+  pass 128 GiB in total, and a partition the driver placed beyond the
+  128 GiB mark is removed again; a bigger drive or game area is not
+  used past that point.
 * **Signing is external.** `kelftool` (ps2homebrew/kelftool) and
   `PS2KEYS.dat` are build prerequisites, never shipped.
 * **KELF sizes.** The app KELF embeds the OPL-Launcher KELF (~0.3 MB,

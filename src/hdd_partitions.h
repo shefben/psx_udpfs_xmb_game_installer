@@ -5,6 +5,7 @@
 
 #include "errors.h"
 #include "partname.h"
+#include "space.h"
 
 /* APA partition helpers on the internal HDD (PS2 only). */
 
@@ -23,8 +24,27 @@ typedef struct {
 /* ERR_OK, ERR_HDD_MISSING or ERR_HDD_NOT_FORMATTED. */
 inst_err_t hdd_status(void);
 
-/* Fresh (uncached) totals in MB, using libhdd's dread summation. */
+/* Fresh (uncached) totals in MB, using libhdd's dread summation.
+ * free_mb is the space usable for new games and data: the HDD's free
+ * space, but never more than the 128 GiB limit leaves (space.h). */
 int hdd_space_mb(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb);
+
+/* The same without the limit: what the drive itself has free. */
+int hdd_space_raw(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb);
+
+#define SPACE_MAX_PARTS 512
+/* The APA list as space_part_t (valid until the next call). Count or <0. */
+int hdd_space_list(const space_part_t **out);
+
+/* Games / games+data / system usage, and the drive's own free MiB. */
+int hdd_usage(space_usage_t *u, uint32_t *hdd_free_mb);
+
+/* Room for add_mb more: ERR_OK, ERR_NO_SPACE, ERR_DATA_LIMIT. */
+inst_err_t hdd_space_check(uint32_t add_mb);
+
+/* After creating `name`: if any of its segments ends beyond 128 GiB it is
+ * removed again and ERR_DATA_LIMIT returned; else ERR_OK. */
+inst_err_t hdd_space_guard_new(const char *name, int *rc_out);
 
 /* Enumerate main partitions. Returns count (<= max) or <0. */
 int hdd_list(hdd_part_t *out, int max);

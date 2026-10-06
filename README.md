@@ -47,6 +47,9 @@ contains the installer ELF, the ready-to-run server folder,
     PFS-BatchKit-Manager's `PS2DB.xml` (`gamedb`).
 - **Sort and search:** in every game list, L2 changes the order and R2
   searches by name.
+- **128 GiB limit:** games and data together never pass 128 GiB, and no
+  partition is ever placed beyond the 128 GiB mark of the disk. The space
+  used by games and data is shown in the game lists and Diagnostics.
 
 ### Safe copies
 - **Verified copies:** every game is read back from the HDD and its

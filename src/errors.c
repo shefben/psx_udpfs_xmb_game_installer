@@ -44,6 +44,8 @@ static const struct {
     [ERR_PAUSED] = {"ERR_PAUSED", "copy paused (Resume copy continues it)"},
     [ERR_PARTITION_RENAME] = {"ERR_PARTITION_RENAME",
                               "partition rename failed (game shown/hidden in the XMB)"},
+    [ERR_DATA_LIMIT] = {"ERR_DATA_LIMIT",
+                        "the 128 GiB limit for games and data would be passed"},
 };
 
 const char *err_name(inst_err_t err) {

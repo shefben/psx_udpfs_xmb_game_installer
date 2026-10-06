@@ -48,6 +48,17 @@ check.
 - **Details screen.** Each installed game has a Details screen that
   explains its state, e.g. why it shows UNKNOWN/UNVERIFIED.
 
+- **128 GiB limit for games and data.** Games and all other data
+  together (every partition except the APA system ones) can never pass
+  128 GiB, whatever the drive or its game area allows. Every partition
+  this installer creates is checked before it is created
+  (`ERR_DATA_LIMIT`), and one the HDD driver placed beyond the 128 GiB
+  mark of the disk is removed again at once. Install All only offers
+  what fits.
+- **Space used.** Installed Games, Repair XMB Channels, Remove Games,
+  the install screen and Diagnostics show the space used by games, by
+  games and data out of 128 GiB, and what the HDD has free.
+
 ### Faster
 
 - **Fast copy.** A new I/O-processor module writes to the HDD while the

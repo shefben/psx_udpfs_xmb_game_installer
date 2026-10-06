@@ -59,6 +59,18 @@ static void draw_install_static(const game_plan_t *p, const char *title) {
   ui_at(7, " Visible     %s", p->visible);
 }
 
+/* "Games 4.3 GiB, games+data 4.5 of 128 GiB, HDD free 5.0 GiB" */
+static const char *space_line(void) {
+  static char line[96];
+  space_usage_t u;
+  uint32_t hdd_free = 0;
+  if (hdd_usage(&u, &hdd_free) < 0)
+    str_copy(line, "HDD usage unavailable", sizeof(line));
+  else
+    space_format(&u, hdd_free, line, sizeof(line));
+  return line;
+}
+
 static void cb_stage(void *ctx, install_stage_t s) {
   progress_ctx_t *c = ctx;
   c->stage = s;
@@ -480,7 +492,7 @@ void flow_batch_install(void) {
     uint32_t free_mb = 0;
     hdd_space_mb(NULL, &free_mb, NULL);
     char status[96];
-    snprintf(status, sizeof(status), "%d/%d selected, need %lu MiB, free %lu",
+    snprintf(status, sizeof(status), "%d/%d selected, need %lu MiB, may use %lu",
              batch_count_selected(batch, n), n, (unsigned long)batch_needed_mb(batch, n),
              (unsigned long)free_mb);
     int key = 0;
@@ -499,7 +511,9 @@ void flow_batch_install(void) {
     }
     if (batch_needed_mb(batch, n) > free_mb) {
       ui_message("Install All Games",
-                 "Not enough free space for the selected games.\nDeselect some with Square.");
+                 "The selected games do not fit: the HDD is too full, or they\n"
+                 "would pass the 128 GiB limit for games and data.\n"
+                 "Deselect some with Square.");
       continue;
     }
     break;
@@ -731,6 +745,7 @@ void flow_install_game(game_plan_t *p) {
     ui_at(11, " Allocation  %s main + %d sub partition(s), %u MiB total",
           p->alloc.main_size_str, p->alloc.subs, (unsigned)p->alloc.total_mb);
     ui_at(12, " Validation  ISO9660 PVD ok, SYSTEM.CNF ok, BOOT2 %.40s", p->iso.boot2);
+    ui_at(14, " Space       %.66s", space_line());
     ui_at(13, " Region      %s     Install state: %s", region_label(p->iso.boot_id),
           pair_state_label(st));
     ui_at(15, " The game is copied to the hidden __. partition, read back in full and");
@@ -1282,8 +1297,8 @@ static void pair_list(const char *title, int only_problems) {
       n = m;
     }
     char status[96];
-    snprintf(status, sizeof(status), "%d game%s%s", n, n == 1 ? "" : "s",
-             only_problems ? " to repair or give a cover" : "");
+    snprintf(status, sizeof(status), "%d game%s  %s%s", n, n == 1 ? "" : "s", space_line(),
+             only_problems ? " (repair/cover)" : "");
     for (int i = 0; i < n; i++) {
       pair_items[i].name = pairs[i].visible + 3; /* "SLUS-20312..TITLE" */
       pair_items[i].size = 0;
@@ -1332,7 +1347,7 @@ void flow_remove_games(void) {
     uint32_t free_mb = 0;
     hdd_space_mb(NULL, &free_mb, NULL);
     char status[96];
-    snprintf(status, sizeof(status), "%d of %d selected, free %lu MiB",
+    snprintf(status, sizeof(status), "%d of %d selected, may use %lu MiB",
              remove_count_selected(rm, n), n, (unsigned long)free_mb);
     int key = 0;
     for (int i = 0; i < n; i++) {
@@ -1402,8 +1417,8 @@ void flow_remove_games(void) {
   size_t len = remove_summary(rm, n, summary, sizeof(summary));
   uint32_t free_mb = 0;
   hdd_space_mb(NULL, &free_mb, NULL);
-  snprintf(summary + len, sizeof(summary) - len, "\nFree space now: %lu MiB\n",
-           (unsigned long)free_mb);
+  snprintf(summary + len, sizeof(summary) - len, "\n%s\nUsable for new games now: %lu MiB\n",
+           space_line(), (unsigned long)free_mb);
   ui_text_view("Remove Games - summary", summary);
 }
 

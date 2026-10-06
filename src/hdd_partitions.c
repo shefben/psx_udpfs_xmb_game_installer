@@ -24,7 +24,82 @@ inst_err_t hdd_status(void) {
   return ERR_OK;
 }
 
+/* The whole APA list (main partitions, sub-partitions, free space) with
+ * start sectors (the driver is an APA_OSD_VER build: private_5 = start). */
+static char g_space_names[SPACE_MAX_PARTS][APA_NAME_MAX + 1];
+static space_part_t g_space_parts[SPACE_MAX_PARTS];
+
+int hdd_space_list(const space_part_t **out) {
+  int dd = fileXioDopen("hdd0:");
+  if (dd < 0)
+    return dd;
+  iox_dirent_t de;
+  int n = 0;
+  while (n < SPACE_MAX_PARTS && fileXioDread(dd, &de) > 0) {
+    memcpy(g_space_names[n], de.name, APA_NAME_MAX);
+    g_space_names[n][APA_NAME_MAX] = 0;
+    g_space_parts[n] = (space_part_t){g_space_names[n], de.stat.mode, de.stat.attr,
+                                      de.stat.private_5, de.stat.size};
+    n++;
+  }
+  fileXioDclose(dd);
+  *out = g_space_parts;
+  return n;
+}
+
+int hdd_usage(space_usage_t *u, uint32_t *hdd_free_mb) {
+  const space_part_t *p;
+  int n = hdd_space_list(&p);
+  if (n < 0)
+    return n;
+  space_tally(p, n, u);
+  uint32_t total = 0, free_mb = 0;
+  int r = hdd_space_raw(&total, &free_mb, NULL);
+  if (hdd_free_mb)
+    *hdd_free_mb = r < 0 ? 0 : free_mb;
+  return r < 0 ? r : 0;
+}
+
+inst_err_t hdd_space_check(uint32_t add_mb) {
+  space_usage_t u;
+  uint32_t free_mb = 0;
+  if (hdd_usage(&u, &free_mb) < 0)
+    return ERR_HDD_MISSING;
+  return space_check(&u, add_mb, free_mb);
+}
+
+inst_err_t hdd_space_guard_new(const char *name, int *rc_out) {
+  const space_part_t *p;
+  int n = hdd_space_list(&p);
+  if (n < 0 || !space_name_beyond(p, n, name))
+    return ERR_OK;
+  /* The driver placed it past 128 GiB: it must not stay. */
+  hdd_remove_exact(name, rc_out);
+  return ERR_DATA_LIMIT;
+}
+
 int hdd_space_mb(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb) {
+  uint32_t total = 0, hdd_free = 0;
+  int r = hdd_space_raw(&total, &hdd_free, max_part_mb);
+  if (r < 0)
+    return r;
+  if (total_mb)
+    *total_mb = total;
+  if (free_mb) {
+    /* Never more than the 128 GiB limit for games and data leaves. */
+    space_usage_t u;
+    const space_part_t *p;
+    int n = hdd_space_list(&p);
+    if (n < 0)
+      return n;
+    space_tally(p, n, &u);
+    *free_mb = (uint32_t)space_usable_mb(&u, hdd_free);
+  }
+  return 0;
+}
+
+/* Raw drive figures: total, free (total - all partitions), max bucket. */
+int hdd_space_raw(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb) {
   /* Driver errors are negative; never let one turn into a huge size
    * (the planner would then assume the 4 GiB maximum). */
   int ts = fileXioDevctl("hdd0:", HDIOC_TOTALSECTOR, NULL, 0, NULL, 0);
@@ -203,6 +278,15 @@ inst_err_t pfs_create_partition(const char *name, const char *size_str,
   if (ex != 0)
     return ex > 0 ? ERR_PARTITION_EXISTS : ERR_PFS_CREATE;
 
+  /* 128 GiB limit for games and data, before anything is created. */
+  uint32_t want_mb = 0;
+  for (const char *s = size_str; *s >= '0' && *s <= '9'; s++)
+    want_mb = want_mb * 10 + (uint32_t)(*s - '0');
+  if (strchr(size_str, 'G'))
+    want_mb *= 1024;
+  inst_err_t lim = hdd_space_check(want_mb ? want_mb : 1);
+  if (lim)
+    return lim;
   char create[64], dev[48];
   snprintf(create, sizeof(create), "hdd0:%s,,,%s,PFS", name, size_str);
   snprintf(dev, sizeof(dev), "hdd0:%s", name);
@@ -220,7 +304,7 @@ inst_err_t pfs_create_partition(const char *name, const char *size_str,
     hdd_remove_exact(name, NULL); /* typed whitelist applies here too */
     return ERR_PFS_FORMAT;
   }
-  return ERR_OK;
+  return hdd_space_guard_new(name, rc_out);
 }
 
 int pfs_mount(const char *mountpoint, const char *partition, int mode) {

@@ -73,10 +73,20 @@ static void check_hdd(void) {
   line(st == ERR_HDD_MISSING ? "FAIL" : "PASS", "HDD present");
   line(st == ERR_OK ? "PASS" : "FAIL", "HDD APA formatted");
   uint32_t tot, fr, mx;
-  if (st == ERR_OK && hdd_space_mb(&tot, &fr, &mx) == 0) {
+  if (st == ERR_OK && hdd_space_raw(&tot, &fr, &mx) == 0) {
     line("INFO", "HDD %lu MiB total, %lu MiB free",
          (unsigned long)tot, (unsigned long)fr);
     line(mx >= 128 ? "PASS" : "FAIL", "max APA partition size %lu MiB", (unsigned long)mx);
+  }
+  space_usage_t u;
+  uint32_t hfree = 0;
+  if (st == ERR_OK && hdd_usage(&u, &hfree) == 0) {
+    line("INFO", "games %lu MiB, games+data %lu of %lu MiB (128 GiB limit), system %lu MiB",
+         (unsigned long)u.games_mb, (unsigned long)u.data_mb, (unsigned long)SPACE_LIMIT_MB,
+         (unsigned long)u.system_mb);
+    line(u.limit_left_mb > 0 ? "PASS" : "WARN", "%lu MiB left for new games and data",
+         (unsigned long)space_usable_mb(&u, hfree));
+    line(u.beyond_limit ? "WARN" : "PASS", "no partition ends beyond 128 GiB");
   }
 }
 

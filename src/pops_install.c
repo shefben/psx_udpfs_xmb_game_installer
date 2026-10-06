@@ -251,11 +251,8 @@ void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep)
     rep->err = ERR_PARTITION_EXISTS;
     goto out;
   }
-  uint32_t free_mb = 0;
-  if (hdd_space_mb(NULL, &free_mb, NULL) < 0 || (uint32_t)p->size_mb > free_mb) {
-    rep->err = ERR_NO_SPACE;
+  if ((rep->err = hdd_space_check((uint32_t)p->size_mb))) /* incl. the 128 GiB limit */
     goto out;
-  }
   /* Everything that can be missing is checked before the partition. */
   char kpath[SOURCE_PATH_MAX + 16];
   int klen = -1;
