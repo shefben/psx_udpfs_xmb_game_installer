@@ -518,6 +518,7 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
         cr = (channel_result_t){ERR_PARTITION_EXISTS, t, "a PP. partition of another kind"};
       }
     }
+    fileXioUmount("hdl0:"); /* an open game partition cannot be renamed (-EBUSY) */
     if (!cr.err && (e = hdd_rename_game(data, j->visible_partition, &rc)))
       cr = (channel_result_t){e, rc, "show in the XMB (rename __. to PP.)"};
     if (!cr.err)
@@ -891,6 +892,7 @@ inst_err_t game_remove_channel(const char *visible, int *rc_out) {
     /* The game itself is shown: hide it again (PP.X -> __.X). */
     char hidden[APA_NAME_MAX + 1];
     partition_partner(visible, hidden);
+    fileXioUmount("hdl0:");
     return hdd_rename_game(visible, hidden, rc_out);
   }
   pfs_umount(PFS_WORK); /* a mounted channel cannot be removed (-EBUSY) */
