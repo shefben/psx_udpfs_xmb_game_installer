@@ -39,28 +39,28 @@ TEST(info_sys_game_template) {
             "title_id = SLUS-20312\r\n"
             "title_sub_id = 0\r\n"
             "release_date =\r\n"
-            "developer_id =\r\n"
-            "publisher_id =\r\n"
-            "note =\r\n"
-            "content_web =\r\n"
+            "developer_id = Unknown\r\n"
+            "publisher_id = Unknown\r\n"
+            "note = Installed with UDPFS Game Installer\r\n"
+            "content_web = https://github.com/shefben/psx_udpfs_xmb_game_installer\r\n"
             "image_topviewflag = 0\r\n"
             "image_type = 0\r\n"
             "image_count = 1\r\n"
             "image_viewsec = 600\r\n"
             "copyright_viewflag = 0\r\n"
             "copyright_imgcount = 1\r\n"
-            "genre =\r\n"
+            "genre = Unknown\r\n"
             "parental_lock = 1\r\n"
             "effective_date = 0\r\n"
             "expire_date = 0\r\n"
             "area = U\r\n"
             "violence_flag = 0\r\n"
             "content_type = 255\r\n"
-            "content_subtype = 0\r\n");
+            "content_subtype = 0"); /* no final line break, as BatchKit */
 }
 
 TEST(info_sys_matches_crlf_fixture) {
-  /* Byte fixture: CRLF line endings, as PSX-XMB-Manager writes info.sys. */
+  /* Byte fixture: CRLF line endings, no final line break (BatchKit template). */
   char buf[2048];
   uint8_t fx[2048];
   size_t n = xmb_game_info_sys(buf, sizeof(buf), "Gran Turismo 4", "SLUS_203.12");

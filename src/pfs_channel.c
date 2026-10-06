@@ -70,6 +70,12 @@ channel_result_t channel_write_res(const char *title, const char *info_sys, uint
     return cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_001.png");
   if ((r = file_write_all(W "res/jkt_002.png", j->small, j->small_size)) < 0)
     return cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_002.png");
+  const uint8_t *cp;
+  uint32_t cp_len;
+  payload_copyright_strip(&cp, &cp_len);
+  if (file_size(W "res/jkt_cp.png") <= 0 &&
+      (r = file_write_all(W "res/jkt_cp.png", cp, cp_len)) < 0)
+    return cres(ERR_XMB_RESOURCE_WRITE, r, "res/jkt_cp.png");
   /* A manual the channel already has is kept; otherwise the blank one. */
   if (file_size(W "res/man.xml") > 0)
     return cres(ERR_OK, 0, NULL);
@@ -138,6 +144,8 @@ channel_result_t channel_verify(const char *partition,
     out = cres(ERR_XMB_VERIFY, 0, "res/jkt_002.png");
   else if (file_size(W "res/man.xml") <= 0 || file_size(W "res/image/0.png") <= 0)
     out = cres(ERR_XMB_VERIFY, 0, "res/man.xml");
+  else if (file_size(W "res/jkt_cp.png") <= 0)
+    out = cres(ERR_XMB_VERIFY, 0, "res/jkt_cp.png");
   pfs_umount(W);
   if (out.err)
     return out;

@@ -59,8 +59,9 @@ names.
 
 **Cover order:** the ART folder, then an image next to the game with the
 same name (`Game.iso` + `Game.png`), then a download. Each cover is
-resized to the two sizes the DESR XMB uses: 140x200 (`jkt_001`) and
-74x108 (`jkt_002`), kept in `udpfsd-cache/served/jkt/`. If the console reports "cover not
+resized to the two sizes PFS-BatchKit-Manager uses for the DESR XMB:
+256x256 (`jkt_001`) and
+76x108 (`jkt_002`), 256 colours, kept in `udpfsd-cache/served/jkt/`. If the console reports "cover not
 found on server", restart the server so it rebuilds them.
 
 ### Files the DESR receives

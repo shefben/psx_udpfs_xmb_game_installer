@@ -71,9 +71,9 @@ level unless stated otherwise.
   screens handle up to 128 game pairs.
 * **Disc type** comes from the server folder (`CD/`, `DVD/`), else UDF
   presence or size.
-* **Jacket art** prepared by the patched udpfsd is scaled to 74x108 on
-  the server; other art (`udpfs:/ART/<ID>.png`, `<image>.png`) is copied
-  as-is. An invalid PNG falls back to the built-in jacket.
+* **Jacket art** is made by the patched udpfsd only (256x256 and 76x108,
+  256 colours, the sizes PFS-BatchKit-Manager uses). A cover of another
+  size, or from an older udpfsd, is not used: the built-in jacket is.
 * **No controller:** the installer only backs out of menus; it never
   starts an install or accepts a prompt without a pad.
 * **Transfer tuning** has not been done; the stream buffer is 1 MiB.

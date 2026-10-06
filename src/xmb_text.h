@@ -19,6 +19,11 @@
  * spaces are trimmed. Bytes >= 0x80 (UTF-8) are kept. */
 void xmb_sanitize_value(const char *in, char *out, size_t outsz);
 
+/* info.sys values used where nothing is known (never left empty). */
+#define XMB_UNKNOWN "Unknown"
+#define XMB_NOTE "Installed with UDPFS Game Installer"
+#define XMB_WEB "https://github.com/shefben/psx_udpfs_xmb_game_installer"
+
 /* Render res/info.sys from the plan template with CRLF line endings.
  * `title` and `title_id` are sanitized. Returns the byte length, or 0
  * if `outsz` is too small. */

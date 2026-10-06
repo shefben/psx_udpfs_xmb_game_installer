@@ -46,6 +46,7 @@ BLOBS := $(foreach m,$(SDK_IRX),$(m)_irx=$(PS2SDK)/iop/irx/$(m).irx) \
          installer_jkt1_png=assets/installer/jkt_001.png \
          installer_jkt2_png=assets/installer/jkt_002.png \
          manual_blank_png=assets/manual/blank.png \
+         jkt_cp_png=assets/manual/jkt_cp.png \
          osd_icon_ico=reference/HDLGameInstaller/res/icon.ico \
          $(EMBED_KELFS)
 

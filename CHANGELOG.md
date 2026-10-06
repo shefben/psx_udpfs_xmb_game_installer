@@ -85,11 +85,14 @@ check.
   header now has all three (the icon is HDLGameInstaller's default).
   `info.sys` now matches those tools too: `title_id = SLUS-20312`
   without the region, `area` from the game ID, `copyright_imgcount = 1`.
-  Each channel also gets the files those tools give it: covers at both
-  DESR sizes (`jkt_001.png` 140x200, `jkt_002.png` 74x108; udpfsd now
-  makes both), a default manual page (`res/man.xml` with blank pages)
-  when the channel has none, and a release date in every `info.sys`
-  (the install date when the game database has none). The console no
+  Each channel also gets the files PFS-BatchKit-Manager's channels have
+  (those are confirmed to load together on a DESR): covers at its sizes
+  (`jkt_001.png` 256x256, `jkt_002.png` 76x108, 256 colours; udpfsd now
+  makes both), a blank `jkt_cp.png`, a default manual page (`res/man.xml`
+  with blank pages) when the channel has none, and an `info.sys` with no
+  empty field (the install date as release date when the game database
+  has none, "Unknown" developer/publisher/genre, a note and web address)
+  and no line break after its last line, like BatchKit's template. The console no
   longer copies unresized `ART\<ID>.png` / `<game>.png` images itself;
   udpfsd resizes those.
   Channels made by an earlier build show as needing repair: choose
@@ -107,9 +110,9 @@ check.
   - `gamedb` (XMB game info)
   - `power_off_after_install`
 - The `udpfsd.cfg` in the release now has these keys.
-- Covers are prepared at both XMB sizes (`jkt/<ID>.png` 74x108 and
-  `jkt/<ID>_L.png` 140x200). Restart the server once after updating so
-  it adds the large covers to its cache.
+- Covers are prepared at both XMB sizes, as 256-colour PNGs
+  (`jkt/<ID>.png` 76x108 and `jkt/<ID>_L.png` 256x256). Restart the
+  server once after updating; covers of another size are made again.
 
 ### Upgrading from 1.0
 

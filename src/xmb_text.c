@@ -56,6 +56,14 @@ static size_t render(char *out, size_t outsz, const char *title, const char *tit
   /* No release date known: the install date (YYYYMMDD) instead. */
   if (!rd[0] && today && strlen(today) == 8 && strspn(today, "0123456789") == 8)
     memcpy(rd, today, 9);
+  /* Like PFS-BatchKit-Manager's template (whose channels work on a
+   * DESR): no field is left empty. */
+  if (!dev[0])
+    strcpy(dev, XMB_UNKNOWN);
+  if (!pub[0])
+    strcpy(pub, XMB_UNKNOWN);
+  if (!gen[0])
+    strcpy(gen, XMB_UNKNOWN);
   /* "key = value", or "key =" when empty (the template's form). */
 #define KV(v) (v)[0] ? " " : "", (v)
   int n = snprintf(out, outsz,
@@ -65,8 +73,8 @@ static size_t render(char *out, size_t outsz, const char *title, const char *tit
                    "release_date =%s%s\r\n"
                    "developer_id =%s%s\r\n"
                    "publisher_id =%s%s\r\n"
-                   "note =\r\n"
-                   "content_web =\r\n"
+                   "note = " XMB_NOTE "\r\n"
+                   "content_web = " XMB_WEB "\r\n"
                    "image_topviewflag = 0\r\n"
                    "image_type = 0\r\n"
                    "image_count = 1\r\n"
@@ -80,7 +88,7 @@ static size_t render(char *out, size_t outsz, const char *title, const char *tit
                    "area = %c\r\n"
                    "violence_flag = 0\r\n"
                    "content_type = 255\r\n"
-                   "content_subtype = 0\r\n",
+                   "content_subtype = 0", /* no final line break, as BatchKit */
                    t, id, KV(rd), KV(dev), KV(pub), KV(gen), area);
 #undef KV
   if (n < 0 || (size_t)n >= outsz) {

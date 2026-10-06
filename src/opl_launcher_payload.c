@@ -23,8 +23,8 @@ extern unsigned char default_jkt1_png[], default_jkt2_png[];
 extern unsigned int size_default_jkt1_png, size_default_jkt2_png;
 extern unsigned char installer_jkt1_png[], installer_jkt2_png[];
 extern unsigned int size_installer_jkt1_png, size_installer_jkt2_png;
-extern unsigned char manual_blank_png[];
-extern unsigned int size_manual_blank_png;
+extern unsigned char manual_blank_png[], jkt_cp_png[];
+extern unsigned int size_manual_blank_png, size_jkt_cp_png;
 extern unsigned char osd_icon_ico[];
 extern unsigned int size_osd_icon_ico;
 
@@ -150,6 +150,11 @@ void payload_default_jackets(jacket_pair_t *j) {
 void payload_manual_page(const uint8_t **data, uint32_t *size) {
   *data = manual_blank_png;
   *size = size_manual_blank_png;
+}
+
+void payload_copyright_strip(const uint8_t **data, uint32_t *size) {
+  *data = jkt_cp_png;
+  *size = size_jkt_cp_png;
 }
 
 void payload_osd_icon(const uint8_t **data, uint32_t *size) {
