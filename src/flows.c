@@ -1407,6 +1407,55 @@ void flow_remove_games(void) {
   ui_text_view("Remove Games - summary", summary);
 }
 
+/* Repair XMB Channels starts here: every installed game shown without a
+ * cover can get its PFS cover partition in one go. */
+static void add_covers_to_all(void) {
+  int n = collect_pairs();
+  int want = 0;
+  for (int i = 0; i < n; i++)
+    want += pairs[i].can_cover;
+  if (want <= 0)
+    return;
+  char txt[700];
+  snprintf(txt, sizeof(txt),
+           "%d installed game%s ha%s no cover in the XMB.\n\n"
+           "Add a cover to %s now? (EXPERIMENTAL)\n"
+           "  - each game is hidden again (PP. renamed to __., not copied)\n"
+           "  - a 128 MiB PFS partition PP. gets the cover, title, game ID\n"
+           "    and OPL-Launcher (PFS-BatchKit-Manager's resource partition)\n\n"
+           "If the XMB freezes afterwards: start this installer from\n"
+           "wLaunchELF, Installed Games > game > Remove cover.\n\n"
+           "[X] add covers   [O] no, show the list",
+           want, want == 1 ? "" : "s", want == 1 ? "s" : "ve", want == 1 ? "it" : "all of them");
+  if (!ui_confirm("Add XMB covers", txt))
+    return;
+  static char done[2048];
+  int off = 0, ok = 0, bad = 0;
+  done[0] = 0;
+  progress_ctx_t ctx = {NULL, STAGE_CREATING_CHANNEL, 1, 0, 0};
+  install_ui_t ui = {cb_stage, NULL, NULL, &ctx, NULL, NULL};
+  for (int i = 0; i < n; i++) {
+    if (!pairs[i].can_cover)
+      continue;
+    install_report_t rep;
+    ui_header("Add XMB covers", pairs[i].visible);
+    game_add_cover(pairs[i].hidden, &ui, &rep);
+    if (rep.err)
+      bad++;
+    else
+      ok++;
+    if (off < (int)sizeof(done) - 120)
+      off += snprintf(done + off, sizeof(done) - off, "%s %.40s%s%s\n",
+                      rep.err ? "FAIL" : "OK  ", pairs[i].visible + 3,
+                      rep.err ? "  " : "", rep.err ? err_name(rep.err) : "");
+  }
+  if (off < (int)sizeof(done) - 80)
+    snprintf(done + off, sizeof(done) - off,
+             "\n%d cover%s added, %d failed. Return to the XMB (or reboot).", ok,
+             ok == 1 ? "" : "s", bad);
+  ui_text_view("Add XMB covers", done);
+}
+
 void flow_repair(void) {
   if (g_app.app_mounted) {
     static tx_journal_t txs[16];
@@ -1423,6 +1472,7 @@ void flow_repair(void) {
       ui_message("Repair XMB Channels", msg);
     }
   }
+  add_covers_to_all();
   pair_list("Repair XMB Channels", 1);
 }
 
