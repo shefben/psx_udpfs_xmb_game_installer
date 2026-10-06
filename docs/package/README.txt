@@ -1,4 +1,4 @@
-UDPFS Game Installer for the PSX DESR - v3.0
+UDPFS Game Installer for the PSX DESR - v3.1 hotfix
 ============================================
 
 Installs PS2 games (.iso / .zso) from your PC onto the PSX DESR's
@@ -128,6 +128,19 @@ DESR SIDE
 
    In every game list: L2 changes the order (name A-Z, Z-A, size),
    R2 searches (shows only names containing the text you enter).
+
+APPS (HOMEBREW AS XMB CHANNELS)
+-------------------------------
+
+   Put homebrew apps in PC\udpfsd\APPS (or APPS\ on a USB drive), one
+   folder per app, e.g. APPS\wLaunchELF\BOOT.ELF plus the files it
+   needs. On the DESR choose Apps > Install App from UDPFS (or USB),
+   pick the .ELF, choose "The whole folder" or "Only the ELF", and
+   enter the XMB title. The app gets its own XMB channel with an "APP"
+   icon. Apps > Installed Apps deletes app channels.
+   The channel starts the app through a small launcher; apps that look
+   for their own files next to themselves (from where they were started)
+   may not find them and use their defaults.
 
 PS1 GAMES (POPSTARTER)
 ----------------------

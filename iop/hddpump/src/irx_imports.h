@@ -2,6 +2,7 @@
 #define IOP_IRX_IMPORTS_H
 
 #include <irx.h>
+#include <atad.h>
 
 /* Please keep in alphabetical order! */
 #include <intrman.h>

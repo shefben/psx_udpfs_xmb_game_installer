@@ -31,15 +31,11 @@ void space_tally(const space_part_t *p, int n, space_usage_t *u) {
 }
 
 inst_err_t space_check(const space_usage_t *u, uint32_t add_mb, uint32_t hdd_free_mb) {
-  if ((uint64_t)add_mb > u->limit_left_mb)
-    return ERR_DATA_LIMIT;
   if (add_mb > hdd_free_mb)
     return ERR_NO_SPACE;
+  if ((uint64_t)add_mb > u->limit_left_mb)
+    return ERR_DATA_LIMIT;
   return ERR_OK;
-}
-
-uint64_t space_usable_mb(const space_usage_t *u, uint32_t hdd_free_mb) {
-  return (uint64_t)hdd_free_mb < u->limit_left_mb ? hdd_free_mb : u->limit_left_mb;
 }
 
 int space_segment_beyond(uint32_t start, uint32_t size) {
@@ -53,10 +49,49 @@ int space_name_beyond(const space_part_t *p, int n, const char *name) {
   return 0;
 }
 
+int space_gate_allow(space_gate_t *g, int (*prompt)(void *ctx), void *ctx) {
+  if (g->accepted)
+    return 1;
+  if (!prompt || !prompt(ctx))
+    return 0;
+  g->accepted = 1;
+  return 1;
+}
+
+int space_lba48_signature(const uint16_t identify[256]) {
+  return identify[121] == 0x4456 && identify[122] == 0x524c && identify[123] == 0x4241 &&
+         identify[124] == 0x3438;
+}
+
 /* MiB as GiB with one decimal, rounded half up (integer only). */
 static void gib(uint64_t mb, char *out, size_t outsz) {
   uint64_t t = (mb * 10 + 512) / 1024;
   snprintf(out, outsz, "%llu.%llu", (unsigned long long)(t / 10), (unsigned long long)(t % 10));
+}
+
+void space_warning_text(const space_usage_t *u, uint32_t add_mb, space_lba48_t lba48, char *out,
+                        size_t outsz) {
+  char after[24];
+  gib(u->data_mb + add_mb, after, sizeof(after));
+  const char *fw = lba48 == SPACE_LBA48_YES  ? "detected"
+                   : lba48 == SPACE_LBA48_NO ? "NOT detected"
+                                             : "unknown";
+  snprintf(out, outsz,
+           "WARNING: this takes games and data past 128 GiB\n"
+           "(games+data afterwards: %s GiB).\n"
+           "\n"
+           "The DESR addresses its PS2 area with 28-bit LBA, which ends\n"
+           "at 128 GiB. Past it, anything that still uses 28-bit commands\n"
+           "(older installers and tools, OPL, the XMB on some versions)\n"
+           "can read the wrong data or WRITE OVER THE START OF THE HDD:\n"
+           "other games, XMB data, the partition table.\n"
+           "It is only meant for a DESR with dvrpwned custom DVRP\n"
+           "firmware (LBA48) and a PS2 area enlarged with psxrepart.\n"
+           "Even then, games stored past 128 GiB may not start.\n"
+           "\n"
+           "LBA48 DVRP firmware: %s\n"
+           "Back up first. Asked once until the installer restarts.",
+           after, fw);
 }
 
 void space_format(const space_usage_t *u, uint32_t hdd_free_mb, char *out, size_t outsz) {
@@ -64,6 +99,10 @@ void space_format(const space_usage_t *u, uint32_t hdd_free_mb, char *out, size_
   gib(u->games_mb, g, sizeof(g));
   gib(u->data_mb, d, sizeof(d));
   gib(hdd_free_mb, f, sizeof(f));
-  snprintf(out, outsz, "Games %s GiB, games+data %s of %llu GiB, HDD free %s GiB", g, d,
-           (unsigned long long)(SPACE_LIMIT_MB / 1024), f);
+  if (u->data_mb > SPACE_LIMIT_MB)
+    snprintf(out, outsz, "Games %s GiB, games+data %s GiB (OVER %llu), HDD free %s GiB", g, d,
+             (unsigned long long)(SPACE_LIMIT_MB / 1024), f);
+  else
+    snprintf(out, outsz, "Games %s GiB, games+data %s of %llu GiB, HDD free %s GiB", g, d,
+             (unsigned long long)(SPACE_LIMIT_MB / 1024), f);
 }

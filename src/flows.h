@@ -33,6 +33,15 @@ void flow_installed_games(void);
 void flow_install_ps1(const char *path);
 /* Rename / delete an installed PS1 game partition. */
 void flow_ps1_actions(const char *partition);
+/* Once at start-up: hooks the UI into the HDD layer (128 GiB warning). */
+void flows_init(void);
+
+/* Install a homebrew .ELF (udpfs: or USB) as an XMB app channel. */
+void flow_install_app(const char *elf_path);
+
+/* Apps submenu: install from UDPFS / USB, installed apps (delete). */
+void flow_apps(void);
+
 /* Select several installed games and delete both partitions of each. */
 void flow_remove_games(void);
 void flow_repair(void);

@@ -13,7 +13,10 @@
  *   PUMP_SUBMIT queue slot `slot` (len bytes); return a free slot
  *   PUMP_FLUSH  wait until every queued slot is written
  *   PUMP_END    flush, close, free the slots
+ *   PUMP_ATAINFO ATA device 0: atad devinfo, IDENTIFY words 121-124
  */
+#include <atad.h>
+#include <atahw.h>
 #include <errno.h>
 #include <intrman.h>
 #include <iomanX.h>
@@ -189,6 +192,30 @@ static void do_submit(const pump_submit_t *s)
     reply.rc = err;
 }
 
+/* ATA device 0 for the EE's 128 GiB warning: atad's view of it and the
+ * IDENTIFY words where LBA48-aware DVRP firmware (dvrpwned) puts its
+ * "PS2LBA48" signature. atad serialises commands, as for its own
+ * IDENTIFY at start-up. */
+static u16 ata_ident[256] __attribute__((aligned(64)));
+
+static void do_atainfo(void)
+{
+    ata_devinfo_t *d = sceAtaInit(0);
+    if (d != NULL && d->exists) {
+        reply.ata_exists = 1;
+        reply.ata_lba48 = d->lba48;
+        reply.ata_sectors = d->total_sectors;
+    }
+    if (!reply.ata_exists)
+        return;
+    memset(ata_ident, 0, sizeof(ata_ident));
+    if (sceAtaExecCmd(ata_ident, 1, 0, 0, 0, 0, 0, 0, ATA_C_IDENTIFY_DEVICE) == 0 &&
+        sceAtaWaitResult() == 0) {
+        reply.ata_identify = 1;
+        memcpy(reply.ata_sig, &ata_ident[121], sizeof(reply.ata_sig));
+    }
+}
+
 static void *rpc_handler(int fno, void *buf, int size)
 {
     (void)size;
@@ -209,6 +236,9 @@ static void *rpc_handler(int fno, void *buf, int size)
             reply.rc = err;
             reply.written = written;
             release();
+            break;
+        case PUMP_ATAINFO:
+            do_atainfo();
             break;
         default:
             reply.rc = -EINVAL;

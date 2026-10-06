@@ -27,13 +27,15 @@ OPL_ELF := $(BUILD)/opl-launcher/OPL-Launcher.elf
 OPL_KELF := $(BUILD)/kelf/opl-launcher-EXECUTE.KELF
 APP_ELF := $(BUILD)/app/desr-udpfs-installer-app.elf
 APP_KELF := $(BUILD)/kelf/installer-EXECUTE.KELF
+LAUNCHER_ELF := $(BUILD)/launcher/app-launcher.elf
+LAUNCHER_KELF := $(BUILD)/kelf/app-launcher-EXECUTE.KELF
 BOOT_ELF := $(BUILD)/bootstrap/desr-udpfs-installer-bootstrap.elf
 DEV_ELF := $(BUILD)/dev/desr-udpfs-installer-dev.elf
 DRIVER := vendor/irx/ps2hdd-hdl.irx
 
 NEUTRINO_IRX := $(BUILD)/irx/smap.irx $(BUILD)/irx/ministack.irx $(BUILD)/irx/udpfs_ioman.irx \
                 $(BUILD)/irx/hddpump.irx
-EE_DEPS := $(NEUTRINO_IRX) $(BUILD)/.driver-ok $(BUILD)/.refs-ok $(BUILD)/.gitid
+EE_DEPS := $(NEUTRINO_IRX) $(BUILD)/.driver-ok $(BUILD)/.refs-ok $(BUILD)/.gitid $(BUILD)/.sdk-ok
 
 # KELF_MODE is part of every KELF's identity: switching it re-signs and
 # re-embeds. dnasload (default; the header PSX XMB channels start), mbr
@@ -60,7 +62,19 @@ $(BUILD)/.refs-ok: reference/REVISIONS.txt FORCE
 	@bash tools/fetch-references.sh --check
 	$(call UPDATE_STAMP,$@,$(shell cat reference/REVISIONS.txt))
 
-.PHONY: all dev kelfs dist package test test-graph test-udpfsd udpfsd references irx driver driver-check clean distclean FORCE
+# PS2SDK: the pinned build (tools/ps2sdk.env, `make ps2sdk`). Its
+# ps2atad.irx must address the PS2 area of a DESR with LBA48-aware DVRP
+# firmware (dvrpwned) with LBA48; the stamp records which SDK built it.
+$(BUILD)/.sdk-ok: tools/ps2sdk.env FORCE
+	@. tools/ps2sdk.env; grep -q "$$PS2SDK_ATAD_LBA48_MARK" "$(PS2SDK)/iop/irx/ps2atad.irx" || { \
+	  echo "ERROR: $(PS2SDK)/iop/irx/ps2atad.irx has no LBA48 DVRP support."; \
+	  echo "       Run 'make ps2sdk', then source tools/ps2env.sh again."; exit 1; }
+	$(call UPDATE_STAMP,$@,$(PS2SDK) $(shell cat $(PS2SDK)/.psx-installer-rev 2>/dev/null))
+
+ps2sdk:
+	bash tools/build-ps2sdk.sh
+
+.PHONY: all dev kelfs dist package test test-graph test-udpfsd udpfsd references irx driver driver-check ps2sdk clean distclean FORCE
 
 all: test dev
 
@@ -118,7 +132,7 @@ $(BUILD)/.driver-ok: $(DRIVER) reference/HDLGameInstaller/irx/hdlfs.irx tools/dr
 irx: $(NEUTRINO_IRX)
 
 $(BUILD)/neutrino/.patched: $(wildcard patches/neutrino/*.patch) $(BUILD)/.refs-ok \
-                             src/dhcp_proto.c src/dhcp_proto.h
+                             src/dhcp_proto.c src/dhcp_proto.h $(BUILD)/.sdk-ok
 	@test -d $(REF)/neutrino || { echo "reference/neutrino missing: run 'make references'"; exit 1; }
 	rm -rf $(BUILD)/neutrino
 	mkdir -p $(BUILD)/neutrino
@@ -139,7 +153,7 @@ $(BUILD)/irx/ministack.irx: $(BUILD)/neutrino/.patched
 	@mkdir -p $(@D) && cp $(BUILD)/neutrino/iop/ministack/irx/ministack.irx $@
 
 # Our own IOP module (overlapped installs), built in a scratch copy.
-$(BUILD)/irx/hddpump.irx: $(wildcard iop/hddpump/src/*) iop/hddpump/Makefile
+$(BUILD)/irx/hddpump.irx: $(wildcard iop/hddpump/src/*) iop/hddpump/Makefile $(BUILD)/.sdk-ok
 	rm -rf $(BUILD)/hddpump && mkdir -p $(BUILD)/hddpump && cp -r iop/hddpump/. $(BUILD)/hddpump/
 	$(MAKE) -C $(BUILD)/hddpump
 	@mkdir -p $(@D) && cp $(BUILD)/hddpump/irx/hddpump.irx $@
@@ -156,7 +170,7 @@ $(BUILD)/irx/udpfs_ioman.irx: $(BUILD)/neutrino/.patched
 # small-data optimisation; code semantics are unchanged.
 OPL_LAUNCHER_CFLAGS := -D_EE -G0 -O2 -Wno-stringop-truncation
 
-$(OPL_ELF): $(BUILD)/.refs-ok tools/bin2s
+$(OPL_ELF): $(BUILD)/.refs-ok tools/bin2s $(BUILD)/.sdk-ok
 	@test -d $(REF)/OPL-Launcher || { echo "reference/OPL-Launcher missing: run 'make references'"; exit 1; }
 	rm -rf $(BUILD)/opl-launcher
 	mkdir -p $(BUILD)/opl-launcher
@@ -175,6 +189,15 @@ $(OPL_ELF_STRIPPED): $(OPL_ELF)
 $(OPL_KELF): $(OPL_ELF_STRIPPED) tools/kelf-sign.sh $(BUILD)/.kelf-mode
 	bash tools/kelf-sign.sh $(OPL_ELF_STRIPPED) $@
 
+# ---- 2b. app launcher (launcher/main.c), signed -----------------------
+# The EXECUTE.KELF of every app channel: runs the ELF its APP.CFG names.
+$(LAUNCHER_ELF): $(BUILD)/.sdk-ok FORCE
+	$(MAKE) -f Makefile.launcher BUILD=$(BUILD)/launcher EE_BIN=$(BUILD)/launcher/app-launcher-debug.elf
+	$(call STRIP_IF_CHANGED,$@,$(BUILD)/launcher/app-launcher-debug.elf)
+
+$(LAUNCHER_KELF): $(LAUNCHER_ELF) tools/kelf-sign.sh $(BUILD)/.kelf-mode
+	bash tools/kelf-sign.sh $(LAUNCHER_ELF) $@
+
 # ---- 3. app ELF (embeds 2) ---------------------------------------------
 # The sub-make is always entered (FORCE) but only relinks when an input
 # changed. The release ELF is the debug-stripped link output and is only
@@ -185,10 +208,10 @@ define STRIP_IF_CHANGED
 	if cmp -s $(1).new $(1); then rm -f $(1).new; else mv -f $(1).new $(1); fi
 endef
 
-$(APP_ELF): $(OPL_KELF) $(EE_DEPS) FORCE
+$(APP_ELF): $(OPL_KELF) $(LAUNCHER_KELF) $(EE_DEPS) FORCE
 	$(MAKE) -f Makefile.ee VARIANT=app BUILD=$(BUILD)/app EE_BIN=$(BUILD)/app/app-debug.elf \
 	  IRX_DIR=$(BUILD)/irx GITID_STAMP=$(BUILD)/.gitid \
-	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF)"
+	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) app_launcher_kelf=$(LAUNCHER_KELF)"
 	$(call STRIP_IF_CHANGED,$@,$(BUILD)/app/app-debug.elf)
 
 # ---- 4. signed app -----------------------------------------------------
@@ -196,11 +219,11 @@ $(APP_KELF): $(APP_ELF) tools/kelf-sign.sh $(BUILD)/.kelf-mode
 	bash tools/kelf-sign.sh $(APP_ELF) $@
 
 # ---- 5. bootstrap ELF (embeds 2 and 4) --------------------------------
-$(BOOT_ELF): $(OPL_KELF) $(APP_KELF) $(EE_DEPS) FORCE
+$(BOOT_ELF): $(OPL_KELF) $(LAUNCHER_KELF) $(APP_KELF) $(EE_DEPS) FORCE
 	$(MAKE) -f Makefile.ee VARIANT=bootstrap BUILD=$(BUILD)/bootstrap \
 	  EE_BIN=$(BUILD)/bootstrap/bootstrap-debug.elf IRX_DIR=$(BUILD)/irx \
 	  GITID_STAMP=$(BUILD)/.gitid \
-	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) installer_kelf=$(APP_KELF)"
+	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) installer_kelf=$(APP_KELF) app_launcher_kelf=$(LAUNCHER_KELF)"
 	$(call STRIP_IF_CHANGED,$@,$(BUILD)/bootstrap/bootstrap-debug.elf)
 
 # ---- POPStarter for PS1 games, shipped in udpfsd/POPS/: the pinned
@@ -219,7 +242,7 @@ $(POPS_KELF): tools/popstarter.env tools/fetch-popstarter.sh $(POPSTARTER_PIN)
 endif
 DIST_POPS := $(POPS_KELF)
 
-kelfs: $(OPL_KELF) $(APP_KELF)
+kelfs: $(OPL_KELF) $(LAUNCHER_KELF) $(APP_KELF)
 
 # ---- dev (unsigned, nothing embedded) --------------------------------
 dev: $(EE_DEPS) FORCE
@@ -258,7 +281,7 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF) $(BUILD)/.kelf-mode
 
 # ---- 7. end-user zip (README, PS2 bootstrap ELF, PC/udpfsd folder) -----
-VERSION := 3.0
+VERSION := 3.1
 PACKAGE := $(ROOT)/PSX-UDPFS-Installer_V$(VERSION).zip
 package: dist
 	bash tools/make-package.sh $(DIST) $(PACKAGE)

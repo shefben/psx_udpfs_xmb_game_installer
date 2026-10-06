@@ -45,7 +45,7 @@ static const struct {
     [ERR_PARTITION_RENAME] = {"ERR_PARTITION_RENAME",
                               "partition rename failed (game shown/hidden in the XMB)"},
     [ERR_DATA_LIMIT] = {"ERR_DATA_LIMIT",
-                        "the 128 GiB limit for games and data would be passed"},
+                        "past the 128 GiB safe limit for games and data; the warning was declined"},
 };
 
 const char *err_name(inst_err_t err) {

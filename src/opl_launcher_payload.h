@@ -38,6 +38,10 @@ inst_err_t payload_opl_launcher(payload_t *out, int udpfs_ok);
  * udpfs:/PAYLOAD/installer-EXECUTE.KELF. */
 inst_err_t payload_installer(payload_t *out, int app_mounted, int udpfs_ok);
 
+/* App launcher KELF (launcher/main.c), the EXECUTE.KELF of every app
+ * channel: embedded in release builds only (dev: ERR_KELF_MISSING). */
+inst_err_t payload_app_launcher(payload_t *out);
+
 void payload_release(payload_t *p);
 
 /* "app", "bootstrap" or "dev". */
@@ -61,6 +65,7 @@ typedef struct {
 /* Embedded PNGs (always present). */
 void payload_default_jackets(jacket_pair_t *j);
 void payload_installer_jackets(jacket_pair_t *j);
+void payload_app_jackets(jacket_pair_t *j);
 
 /* Blank 640x350 page for the default res/man.xml (image/0..2.png). */
 void payload_manual_page(const uint8_t **data, uint32_t *size);

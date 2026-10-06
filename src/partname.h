@@ -57,6 +57,11 @@ int partition_is_game_channel(const char *name);
 /* 1 if `name` looks like a hidden ("__.XXXX-NNNNN..") game partition. */
 int partition_is_hidden_game(const char *name);
 
+/* A homebrew app channel: "PP.APPS-NNNNN..TITLE" (this installer,
+ * PSX-XMB-Manager, PFS-BatchKit-Manager's catalogue) or "PP.UAPP-..."
+ * (PFS-BatchKit-Manager's custom apps). Never a game. */
+int partition_is_app(const char *name);
+
 /* Swap the two-character prefix: "PP.x" <-> "__.x". Returns 0, or -1 if
  * `name` has neither prefix. */
 int partition_partner(const char *name, char out[APA_NAME_MAX + 1]);
@@ -91,8 +96,8 @@ installer_name_action_t installer_name_action(int current_exists, int legacy_exi
 
 /* Whether the installer may remove partition `name` whose APA type is
  * `apa_type`: a hidden game partition of type HDL, a visible game
- * channel of type PFS, or the installer's own PFS partitions
- * (both installer names, PP.UDPFS-TEST). Nothing else -- in particular no
+ * channel of type PFS, an app channel of type PFS, or the installer's
+ * own PFS partitions (both installer names, PP.UDPFS-TEST). Nothing else -- in particular no
  * system "__xxx" partition and no name containing ',' (the APA driver
  * would parse the rest as a password and act on another partition). */
 int partition_remove_allowed(const char *name, unsigned apa_type);

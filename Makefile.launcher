@@ -1,0 +1,43 @@
+# EE build of the app launcher (launcher/main.c), the EXECUTE.KELF of
+# app channels. Invoked by the top-level Makefile; do not call directly.
+#
+#   BUILD   object directory
+#   EE_BIN  output ELF
+
+BUILD ?= build/launcher
+EE_BIN ?= $(BUILD)/app-launcher-debug.elf
+
+SRCS := launcher/main.c src/app_cfg.c
+# The HDD modules OPL-Launcher loads, from the pinned PS2SDK (its atad
+# addresses the PS2 area of LBA48-aware DVRP firmware with LBA48).
+SDK_IRX := ps2dev9 iomanX fileXio ps2atad ps2hdd ps2fs
+
+EE_OBJS := $(addprefix $(BUILD)/,$(notdir $(SRCS:.c=.o))) \
+           $(addprefix $(BUILD)/blob_,$(addsuffix _irx.o,$(SDK_IRX)))
+
+EE_LIBS = -lfileXio -lpatches -lelf-loader-nocolour
+EE_CFLAGS += -std=gnu11 -Wextra -Werror -Wno-unused-parameter -D_EE
+EE_INCS += -Isrc
+
+all: $(EE_BIN)
+
+$(BUILD)/main.o: launcher/main.c src/app_cfg.h
+	@mkdir -p $(@D)
+	$(EE_CC) $(EE_CFLAGS) $(EE_INCS) -c $< -o $@
+
+$(BUILD)/app_cfg.o: src/app_cfg.c src/app_cfg.h
+	@mkdir -p $(@D)
+	$(EE_CC) $(EE_CFLAGS) $(EE_INCS) -c $< -o $@
+
+$(BUILD)/blob_%_irx.c: $(PS2SDK)/iop/irx/%.irx
+	@mkdir -p $(@D)
+	bin2c $< $@ $*_irx
+
+$(BUILD)/blob_%.o: $(BUILD)/blob_%.c
+	$(EE_CC) $(EE_CFLAGS) -c $< -o $@
+
+.PHONY: all
+.SECONDARY:
+
+include $(PS2SDK)/samples/Makefile.pref
+include $(PS2SDK)/samples/Makefile.eeglobal

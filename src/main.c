@@ -54,14 +54,16 @@ int main(int argc, char *argv[]) {
   ui_init();
   memset(&g_app, 0, sizeof(g_app));
   app_boot(); /* the network keeps starting in the background */
+  flows_init();
   startup_notices();
 
-  static char rows[11][UI_ROW_LEN] = {
+  static char rows[12][UI_ROW_LEN] = {
       "Install Games from UDPFS",
       "Install Games from USB",
       "Install All Games from the server",
       "Installed Games",
       "Remove Games",
+      "Apps (homebrew XMB channels)",
       "Repair XMB Channels",
       "Network Settings",
       "Install Installer as XMB Channel",
@@ -80,7 +82,7 @@ int main(int argc, char *argv[]) {
       flow_auto_install();
     }
     enum {
-      M_BROWSE, M_USB, M_BATCH, M_INSTALLED, M_REMOVE, M_REPAIR, M_NET, M_SELF, M_DEL_SELF,
+      M_BROWSE, M_USB, M_BATCH, M_INSTALLED, M_REMOVE, M_APPS, M_REPAIR, M_NET, M_SELF, M_DEL_SELF,
       M_DIAG, M_EXIT,
       M_COUNT
     };
@@ -93,7 +95,7 @@ int main(int argc, char *argv[]) {
     user_acted = 1;
     int needs_games = c == M_BROWSE || c == M_USB || c == M_BATCH || c == M_INSTALLED || c == M_REMOVE ||
                       c == M_REPAIR;
-    if (!hdd_ok && (needs_games || c == M_SELF || c == M_DEL_SELF)) {
+    if (!hdd_ok && (needs_games || c == M_APPS || c == M_SELF || c == M_DEL_SELF)) {
       ui_message("HDD unavailable",
                  "The internal HDD is not usable or a required HDD module failed\n"
                  "to load. All HDD writes are disabled. See Diagnostics.");
@@ -122,6 +124,9 @@ int main(int argc, char *argv[]) {
       break;
     case M_REMOVE:
       flow_remove_games();
+      break;
+    case M_APPS:
+      flow_apps();
       break;
     case M_REPAIR:
       flow_repair();

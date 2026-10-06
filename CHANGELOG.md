@@ -1,5 +1,58 @@
 # Changelog
 
+## 3.1 hotfix (from 3.0)
+
+### Fixed
+
+- **PS1 installs said POPSTARTER.KELF was missing** although it was in
+  the server's `POPS` folder. The installer looked for it with a status
+  query that udpfsd only answers for files already open; it now opens the
+  file to check. The same applies to `POPS.ELF` and `IOPRP252.IMG`.
+
+### New
+
+- **POPStarter included.** `PC\udpfsd\POPS\POPSTARTER.KELF` is
+  POPStarter rev13 Beta (krHACKen; the last public release), unchanged:
+  the same KELF PFS-BatchKit-Manager and PSX-XMB-Manager use on the PSX.
+  Sony's `POPS.ELF` and `IOPRP252.IMG` are still not included: add your
+  own next to it.
+- **Apps: homebrew as XMB channels.** New *Apps* menu: install any
+  `.ELF` (wLaunchELF, OPL, ...) from the server's new `APPS` folder
+  (`apps = APPS` in udpfsd.cfg) or a USB drive's `APPS` folder, with
+  the files in its folder if wanted. Each app becomes a PFS channel
+  `PP.APPS-NNNNN..TITLE` like the installer's own (app icon, your title).
+  Its `EXECUTE.KELF` is a small signed app launcher, the same for every
+  app (the console cannot sign the app's ELF): it mounts the channel and
+  starts the ELF named in `APP.CFG`, the way OPL-Launcher starts OPL.
+  Every file is read back by CRC-32; a failed install leaves nothing.
+  *Installed Apps* lists app channels (also PSX-XMB-Manager's and
+  PFS-BatchKit-Manager's `PP.APPS-`/`PP.UAPP-`) and deletes them. The
+  game browsers show `.ELF` files as `[APP]` too.
+- **PS1 `.VCD` games in the `CD` folder** too. The POPStarter files are
+  then taken from `POPS`, which still works as before.
+- **More than 128 GiB on LBA48 consoles.** Built against PS2SDK master
+  (2026-10-06): its ATA driver recognises LBA48-aware custom DVRP
+  firmware (dvrpwned, signature `PS2LBA48`) and then addresses the whole
+  PS2 area with 48-bit LBA, so a PS2 area enlarged past 137 GB with
+  psxrepart can be used. Diagnostics shows whether that firmware was
+  detected and the PS2 area's size.
+
+### Server (udpfsd)
+
+- `apps = APPS`: a new folder served as `/APPS` (patch 0006). Replace the
+  `PC\udpfsd` folder (or add the line and an `APPS` folder).
+
+### Changed
+
+- App channels (`PP.APPS-`, `PP.UAPP-`) are no longer listed as games.
+- **The 128 GiB limit is now a firm warning instead of a hard stop.**
+  Going past 128 GiB of games and data, or a partition placed past the
+  128 GiB mark of the disk, shows what can go wrong (software that still
+  uses 28-bit commands can write over the start of the HDD), whether LBA48
+  DVRP firmware was detected, and needs **R1 held + X** to go on (asked
+  once until the installer restarts; O cancels, and without a controller
+  the answer is no). Free space shown is now the HDD's own.
+
 ## 3.0 (from 2.0)
 
 Tested on a DESR: games install, show in the XMB and start; the XMB
@@ -23,12 +76,6 @@ lists what is still to check.
   OPL-Launcher and POPStarter KELFs that run from PSX XMB channels
   (`KELF_MODE=dnasload`), and OPL-Launcher is signed without its debug
   data (1.5 MB to 0.3 MB).
-- **PS1 installs said POPSTARTER.KELF was missing** although it was in
-  the server's `POPS` folder. The installer looked for it with a status
-  query that udpfsd only answers for files already open; it now opens the
-  file to check. The same applies to `POPS.ELF` and `IOPRP252.IMG`.
-  `.VCD` games can also be kept in the `CD` folder; the POPStarter files
-  are then taken from `POPS`.
 - **Delete/repair of games from other tools.** Installed Games and
   Remove Games now also list games PFS-BatchKit-Manager or hdl-dump
   installed (visible `PP.` HDL partitions): they can be hidden, deleted
@@ -54,10 +101,6 @@ lists what is still to check.
 - **Diagnostics > Dump XMB channels to USB.** Copies every `PP.`
   partition's header, files and PFS superblock to `mass0:/xmb-dump/`
   (read-only on the HDD), to compare channels with other tools'.
-- **POPStarter included.** `PC\udpfsd\POPS\POPSTARTER.KELF` is
-  POPStarter rev13 Beta (krHACKen; the last public release), unchanged:
-  the same KELF PFS-BatchKit-Manager and PSX-XMB-Manager use on the PSX. Sony's `POPS.ELF` and `IOPRP252.IMG` are still not
-  included: add your own next to it.
 - **Every partition header is complete:** `system.cnf`, `icon.sys` and an
   icon, as hdl_dump / PFS-BatchKit-Manager write them.
 

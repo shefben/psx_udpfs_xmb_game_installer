@@ -11,10 +11,23 @@ level unless stated otherwise.
   PATINFO boot header, no PFS channel); D47 confirms it on hardware. The
   installer channel is still a PFS channel: whether one PFS channel next
   to several such games loads is part of D47.
-* **128 GiB limit:** games and data (all non-system partitions) never
-  pass 128 GiB in total, and a partition the driver placed beyond the
-  128 GiB mark is removed again; a bigger drive or game area is not
-  used past that point.
+* **128 GiB safe limit:** passing 128 GiB of games and data (all
+  non-system partitions), or a partition the driver placed beyond the
+  128 GiB mark (LBA 2^28), needs the warning confirmed (R1 + X, once per
+  session); declined, nothing is created (a misplaced partition is
+  removed again). The installer itself uses 48-bit LBA on a DESR with
+  dvrpwned firmware, but whether OPL (its in-game driver), the XMB (1.31
+  / 2.11), OPL-Launcher builds of other tools, or other PC/PS2 tools
+  read or write data past the mark correctly is not tested: software
+  that uses 28-bit commands there can corrupt the start of the HDD.
+  Detection of the firmware (hddpump: ATA IDENTIFY words 121-124) is not
+  yet tested on hardware.
+* **Apps (homebrew channels), first version.** Up to 2 GiB and 256
+  files per app (folders 4 levels deep). The app starts with argv[0] =
+  `pfs0:<ELF>` and after an IOP reset, so apps that read files from
+  their own folder may not find them. No argument editing on the console
+  (`arg =` lines in `APP.CFG` work). The launcher and app channels are
+  not yet tested on a DESR (checklist D52-D53).
 * **Signing is external.** `kelftool` (ps2homebrew/kelftool) and
   `PS2KEYS.dat` are build prerequisites, never shipped.
 * **KELF sizes.** The app KELF embeds the OPL-Launcher KELF (~0.3 MB,

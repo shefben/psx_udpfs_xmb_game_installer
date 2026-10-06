@@ -26,4 +26,14 @@ int pump_flush(void);
 /* Flush, close and free; *written = bytes written since pump_begin. */
 int pump_end(uint64_t *written);
 
+/* ATA device 0 as atad sees it, plus IDENTIFY words 121-124. */
+typedef struct {
+  int exists, lba48, identify;
+  uint32_t sectors;
+  uint16_t sig[4];
+} pump_atainfo_t;
+
+/* 0, or <0 when the pump module is not running. */
+int pump_atainfo(pump_atainfo_t *out);
+
 #endif

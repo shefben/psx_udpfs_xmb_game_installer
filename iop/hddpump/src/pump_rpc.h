@@ -7,7 +7,7 @@
 #define PUMP_RPC_ID 0x50534850 /* "PSHP" */
 #define PUMP_MAX_SLOTS 8
 
-enum { PUMP_BEGIN = 1, PUMP_SUBMIT, PUMP_FLUSH, PUMP_END };
+enum { PUMP_BEGIN = 1, PUMP_SUBMIT, PUMP_FLUSH, PUMP_END, PUMP_ATAINFO };
 
 typedef struct {
   char path[48];          /* e.g. "hdl0:" (mounted by the EE) */
@@ -31,6 +31,12 @@ typedef struct {
   unsigned int slot_size;
   unsigned long long written; /* bytes written since PUMP_BEGIN */
   unsigned int slot_addr[PUMP_MAX_SLOTS]; /* IOP addresses (PUMP_BEGIN) */
+  /* PUMP_ATAINFO: ATA device 0 (on the DESR: the DVRP's PS2 area) */
+  unsigned int ata_exists;     /* atad probed it */
+  unsigned int ata_lba48;      /* it reports the LBA48 command set */
+  unsigned int ata_sectors;    /* atad's total_sectors (the PS2 area) */
+  unsigned int ata_identify;   /* 1: IDENTIFY DEVICE read, ata_sig valid */
+  unsigned short ata_sig[4];   /* IDENTIFY words 121-124 */
   unsigned int pad[2];
 } pump_reply_t;
 

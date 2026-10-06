@@ -24,7 +24,7 @@ check make_dist_succeeds $rc
 
 # Order: encrypt(OPL) < link(app) < encrypt(app) < link(bootstrap)
 L=$W/make1.log
-n_opl=$(grep -n "kelf-sign.sh .*OPL-Launcher.elf" "$L" | head -1 | cut -d: -f1)
+n_opl=$(grep -n "kelf-sign.sh .*OPL-Launcher-stripped.elf" "$L" | head -1 | cut -d: -f1)
 n_app=$(grep -n -- "-o $B/app/app-debug.elf" "$L" | head -1 | cut -d: -f1)
 n_appk=$(grep -n "kelf-sign.sh .*desr-udpfs-installer-app.elf" "$L" | head -1 | cut -d: -f1)
 n_boot=$(grep -n -- "-o $B/bootstrap/bootstrap-debug.elf" "$L" | head -1 | cut -d: -f1)
@@ -36,6 +36,8 @@ contains() { python3 -c "import sys; sys.exit(0 if open(sys.argv[2],'rb').read()
 contains "$B/app/desr-udpfs-installer-app.elf" "$B/kelf/opl-launcher-EXECUTE.KELF"; check app_embeds_opl_kelf $?
 ! contains "$B/app/desr-udpfs-installer-app.elf" "$B/kelf/installer-EXECUTE.KELF"; check app_has_no_own_kelf $?
 contains "$B/bootstrap/desr-udpfs-installer-bootstrap.elf" "$B/kelf/opl-launcher-EXECUTE.KELF"; check bootstrap_embeds_opl_kelf $?
+contains "$B/app/desr-udpfs-installer-app.elf" "$B/kelf/app-launcher-EXECUTE.KELF"; check app_embeds_app_launcher_kelf $?
+contains "$B/bootstrap/desr-udpfs-installer-bootstrap.elf" "$B/kelf/app-launcher-EXECUTE.KELF"; check bootstrap_embeds_app_launcher_kelf $?
 contains "$B/bootstrap/desr-udpfs-installer-bootstrap.elf" "$B/kelf/installer-EXECUTE.KELF"; check bootstrap_embeds_app_kelf $?
 contains "$B/bootstrap/desr-udpfs-installer-bootstrap.elf" "$ROOT/vendor/irx/ps2hdd-hdl.irx"; check bootstrap_embeds_shipped_driver $?
 ! contains "$B/bootstrap/desr-udpfs-installer-bootstrap.elf" "$ROOT/reference/HDLGameInstaller/irx/ps2hdd-hdl.irx"; check bootstrap_not_upstream_driver $?
@@ -61,13 +63,14 @@ make -C "$ROOT" dist BUILD="$B" DIST="$D" > "$W/make2.log" 2>&1; rc=$?
 [ -s "$D/udpfsd/udpfsd-cache/served/jkt/SLUS_200.66.png" ] && [ ! -e "$D/stale-file.txt" ]
 check dist_keeps_server_cache $?
 
-# Switching KELF_MODE re-signs both KELFs, re-embeds, and the manifest
+# Switching KELF_MODE re-signs all three KELFs (OPL-Launcher, app
+# launcher, installer), re-embeds, and the manifest
 # reports the mode actually used.
 : > "$W/kelf.log"
 make -C "$ROOT" dist BUILD="$B" DIST="$D" KELF_MODE=none > "$W/make3.log" 2>&1; rc=$?
 n_enc=$(grep -c "^encrypt $B" "$W/kelf.log")
 n_mbr=$(grep -c "^encrypt mbr $B" "$W/kelf.log")
-[ $rc -eq 0 ] && [ "$n_enc" -eq 2 ] && [ "$n_mbr" -eq 0 ] && \
+[ $rc -eq 0 ] && [ "$n_enc" -eq 3 ] && [ "$n_mbr" -eq 0 ] && \
   grep -q "KELF_MODE (used to sign the KELFs below): none" "$D/BUILD-MANIFEST.txt"
 r=$?; [ $r -eq 0 ] || { echo "  rc=$rc encrypt=$n_enc mbr=$n_mbr"; tail -5 "$W/make3.log"; }
 check kelf_mode_switch_resigns $r

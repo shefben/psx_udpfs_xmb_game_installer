@@ -71,6 +71,16 @@ static const char *space_line(void) {
   return line;
 }
 
+/* The firm warning before passing the 128 GiB safe limit: HOLD R1 + X,
+ * asked once until the installer restarts; no pad means no. */
+static int limit_warning(const space_usage_t *u, uint32_t add_mb) {
+  static char text[1200];
+  space_warning_text(u, add_mb, hdd_lba48_status(NULL), text, sizeof(text));
+  return ui_confirm_destructive("Past the 128 GiB safe limit", text);
+}
+
+void flows_init(void) { hdd_set_limit_prompt(limit_warning); }
+
 static void cb_stage(void *ctx, install_stage_t s) {
   progress_ctx_t *c = ctx;
   c->stage = s;

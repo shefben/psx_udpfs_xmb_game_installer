@@ -40,6 +40,22 @@ int pump_init(void) {
   return -19; /* module not running */
 }
 
+int pump_atainfo(pump_atainfo_t *out) {
+  memset(out, 0, sizeof(*out));
+  if (pump_init() < 0)
+    return -19;
+  memset(&req, 0, sizeof(req));
+  int r = call(PUMP_ATAINFO, 16);
+  if (r < 0)
+    return r;
+  out->exists = (int)rep.ata_exists;
+  out->lba48 = (int)rep.ata_lba48;
+  out->sectors = rep.ata_sectors;
+  out->identify = (int)rep.ata_identify;
+  memcpy(out->sig, rep.ata_sig, sizeof(out->sig));
+  return 0;
+}
+
 int pump_begin(const char *path, uint32_t start_sector, uint32_t slot_size, int nslots,
                uint32_t *slot_size_out) {
   if (pump_init() < 0)

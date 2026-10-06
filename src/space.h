@@ -6,14 +6,15 @@
 
 #include "errors.h"
 
-/* Hard limit for games and data on the DESR HDD: 128 GiB. Never more,
- * whatever the drive or its game area offers.
+/* Safe limit for games and data on the DESR HDD: 128 GiB, the end of
+ * 28-bit LBA addressing (LBA 2^28). Passing it is allowed only after a
+ * firm warning the user confirms (space_gate_allow): past it, software
+ * that still uses 28-bit commands on the DVRP reads the wrong sectors or
+ * writes over the start of the HDD. Only a DESR with LBA48-aware custom
+ * DVRP firmware (dvrpwned) and an enlarged PS2 area can use more.
  *  - in total: all partitions except the APA system ones (__mbr, __net,
- *    __system, __sysconf, __common, ...) count; a new partition must fit
- *    in what is left;
- *  - by position: no partition segment may end beyond 128 GiB (LBA
- *    2^28, the end of 28-bit addressing); a partition the driver placed
- *    beyond it is removed again.
+ *    __system, __sysconf, __common, ...) count;
+ *  - by position: a partition segment ending beyond LBA 2^28.
  * Pure: host-tested. */
 
 #define SPACE_LIMIT_MB (128ull * 1024ull)
@@ -35,23 +36,41 @@ typedef struct {
   int beyond_limit;       /* some segment already ends beyond 128 GiB */
 } space_usage_t;
 
+/* LBA48-aware DVRP firmware on this console (space_lba48_signature). */
+typedef enum { SPACE_LBA48_UNKNOWN = 0, SPACE_LBA48_NO, SPACE_LBA48_YES } space_lba48_t;
+
+/* The user's answer to the warning, kept until the installer restarts. */
+typedef struct {
+  int accepted;
+} space_gate_t;
+
 /* An APA system partition: "__" not followed by '.'. */
 int space_is_system(const char *name);
 
 void space_tally(const space_part_t *p, int n, space_usage_t *u);
 
 /* Room for `add_mb` more: ERR_OK, ERR_NO_SPACE (the HDD has less than
- * that free) or ERR_DATA_LIMIT (it would pass 128 GiB of games/data). */
+ * that free; checked first) or ERR_DATA_LIMIT (it would pass 128 GiB of
+ * games/data: allowed only through space_gate_allow). */
 inst_err_t space_check(const space_usage_t *u, uint32_t add_mb, uint32_t hdd_free_mb);
-
-/* Space usable for new games: min(HDD free, what the limit leaves). */
-uint64_t space_usable_mb(const space_usage_t *u, uint32_t hdd_free_mb);
 
 /* A segment [start, start + size) ends beyond 128 GiB. */
 int space_segment_beyond(uint32_t start, uint32_t size);
 
 /* Any segment (main or sub) of partition `name` ends beyond 128 GiB. */
 int space_name_beyond(const space_part_t *p, int n, const char *name);
+
+/* Past the limit? 1 if the user accepted the warning this session or
+ * accepts it now (prompt returns non-zero); 0 if declined or there is
+ * no prompt (no UI: never past the limit). */
+int space_gate_allow(space_gate_t *g, int (*prompt)(void *ctx), void *ctx);
+
+/* The warning: the risk, games+data after adding `add_mb`, firmware. */
+void space_warning_text(const space_usage_t *u, uint32_t add_mb, space_lba48_t lba48, char *out,
+                        size_t outsz);
+
+/* dvrpwned's "PS2LBA48" signature in ATA IDENTIFY words 121-124. */
+int space_lba48_signature(const uint16_t identify[256]);
 
 /* "Games 4.3 GiB, games+data 4.5 of 128 GiB, HDD free 5.0 GiB" */
 void space_format(const space_usage_t *u, uint32_t hdd_free_mb, char *out, size_t outsz);

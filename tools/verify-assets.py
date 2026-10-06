@@ -51,6 +51,10 @@ def main(argv):
                       ("assets/game/default_jkt_002.png", "74x108"),
                       ("assets/installer/jkt_001.png", "140x200"),
                       ("assets/installer/jkt_002.png", "74x108"),
+                      ("assets/app/jkt_001.png", "140x200"),
+                      ("assets/app/jkt_002.png", "74x108"),
+                      ("assets/app/jkt_001.png", "140x200"),
+                      ("assets/app/jkt_002.png", "74x108"),
                       ("assets/manual/blank.png", "640x350"),
                       ("assets/manual/jkt_cp.png", "290x46")):
         info = check_png(os.path.join(ROOT, rel))

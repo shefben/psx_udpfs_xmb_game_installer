@@ -1,0 +1,71 @@
+diff --git a/cmd/udpfsd/main.go b/cmd/udpfsd/main.go
+index 150685e..accdd6a 100644
+--- a/cmd/udpfsd/main.go
++++ b/cmd/udpfsd/main.go
+@@ -91,6 +91,9 @@ func main() {
+ 	if cfg.POPS != "" {
+ 		fsopts = append(fsopts, fs.WithMount("POPS", cfg.POPS))
+ 	}
++	if cfg.APPS != "" {
++		fsopts = append(fsopts, fs.WithMount("APPS", cfg.APPS))
++	}
+ 	if cfg.CFG != "" {
+ 		fsopts = append(fsopts, fs.WithMount("CFG", cfg.CFG))
+ 	}
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 930b5f2..a8a8e15 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -16,6 +16,7 @@ type Config struct {
+ 	Gamelist, Cache, OPLLauncher, FSRoot  string
+ 	OPLElf                                string // OPL runtime offered to consoles without OPL
+ 	POPS                                  string // PS1 games (.VCD) + POPStarter files, served as /POPS
++	APPS                                  string // homebrew apps (.ELF + their files), served as /APPS
+ 	GameDB                                string // PS2DB.xml (PFS-BatchKit-Manager): XMB game info
+ 	PowerOff                              bool   // power_off_after_install
+ 	DownloadCovers, AutoInstall, ReadOnly bool
+@@ -27,7 +28,7 @@ type Config struct {
+ }
+ 
+ // Keys lists every accepted key.
+-var Keys = []string{"dvd", "cd", "games", "install", "cfg", "art", "pops", "gamedb", "power_off_after_install", "gamelist", "cache",
++var Keys = []string{"dvd", "cd", "games", "install", "cfg", "art", "pops", "apps", "gamedb", "power_off_after_install", "gamelist", "cache",
+ 	"download_covers", "opl_launcher", "opl_elf", "auto_install", "fsroot", "read_only", "port", "bind"}
+ 
+ // Defaults returns the built-in defaults (relative paths not yet resolved).
+@@ -91,6 +92,8 @@ func (c *Config) Set(key, value, baseDir string) error {
+ 		return dir(&c.ART)
+ 	case "pops":
+ 		return dir(&c.POPS)
++	case "apps":
++		return dir(&c.APPS)
+ 	case "gamedb":
+ 		c.GameDB = resolve(v, baseDir)
+ 		if c.GameDB != "" {
+diff --git a/internal/config/config_test.go b/internal/config/config_test.go
+index ddce4f1..6728bb6 100644
+--- a/internal/config/config_test.go
++++ b/internal/config/config_test.go
+@@ -167,3 +167,22 @@ func TestGameDBAndPowerOffKeys(t *testing.T) {
+ 		t.Fatal("missing gamedb accepted")
+ 	}
+ }
++
++func TestAPPSFolderKey(t *testing.T) {
++	base := t.TempDir()
++	if err := os.Mkdir(filepath.Join(base, "APPS"), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	p := write(t, base, "udpfsd.cfg", "apps = APPS\n")
++	c, err := Load(p, base)
++	if err != nil || c.APPS != filepath.Join(base, "APPS") {
++		t.Fatalf("%v %q", err, c.APPS)
++	}
++	if c.HasGameFolders() != false {
++		t.Fatal("an APPS folder alone is not a PS2 game folder")
++	}
++	p = write(t, base, "udpfsd.cfg", "apps = nothere\n")
++	if _, err := Load(p, base); err == nil {
++		t.Fatal("missing apps folder accepted")
++	}
++}

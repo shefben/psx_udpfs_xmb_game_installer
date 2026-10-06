@@ -39,12 +39,24 @@ int hdd_space_list(const space_part_t **out);
 /* Games / games+data / system usage, and the drive's own free MiB. */
 int hdd_usage(space_usage_t *u, uint32_t *hdd_free_mb);
 
-/* Room for add_mb more: ERR_OK, ERR_NO_SPACE, ERR_DATA_LIMIT. */
+/* Asks the user to go past the 128 GiB safe limit (the firm warning);
+ * non-zero = go on. Set by the UI; without it the limit is never passed. */
+typedef int (*hdd_limit_prompt_t)(const space_usage_t *u, uint32_t add_mb);
+void hdd_set_limit_prompt(hdd_limit_prompt_t fn);
+
+/* Room for add_mb more: ERR_OK, ERR_NO_SPACE, or ERR_DATA_LIMIT when it
+ * passes 128 GiB of games and data and the user declined the warning
+ * (asked once per session; see space_gate_allow). */
 inst_err_t hdd_space_check(uint32_t add_mb);
 
-/* After creating `name`: if any of its segments ends beyond 128 GiB it is
- * removed again and ERR_DATA_LIMIT returned; else ERR_OK. */
+/* After creating `name`: if any of its segments ends beyond 128 GiB the
+ * user is warned; declined: removed again and ERR_DATA_LIMIT; else ERR_OK. */
 inst_err_t hdd_space_guard_new(const char *name, int *rc_out);
+
+/* LBA48-aware DVRP firmware (dvrpwned) on this console, from the ATA
+ * IDENTIFY data (hddpump); *ps2_area_mb (may be NULL) = atad's size.
+ * Read once, then cached. */
+space_lba48_t hdd_lba48_status(uint32_t *ps2_area_mb);
 
 /* Enumerate main partitions. Returns count (<= max) or <0. */
 int hdd_list(hdd_part_t *out, int max);

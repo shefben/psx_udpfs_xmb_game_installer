@@ -1,4 +1,4 @@
-# PSX DESR UDPFS XMB Game Installer (v3.0)
+# PSX DESR UDPFS XMB Game Installer (v3.1)
 
 An installer for the PSX DESR that runs on the console as its own XMB
 channel. It installs PS2 and PS1 games to the internal HDD from a PC over
@@ -21,7 +21,7 @@ tests). Testing on a DESR is in progress; see the
 [hardware checklist](docs/HARDWARE_TEST_CHECKLIST.md). Back up the HDD
 before the first run.
 
-**Download:** `PSX-UDPFS-Installer_V3.0.zip` (from `make package`)
+**Download:** `PSX-UDPFS-Installer_V3.1.zip` (from `make package`)
 contains the installer ELF, the ready-to-run server folder,
 `README.txt`, `CHANGELOG.txt` and `SERVER-MANUAL.txt`.
 
@@ -47,9 +47,14 @@ contains the installer ELF, the ready-to-run server folder,
     PFS-BatchKit-Manager's `PS2DB.xml` (`gamedb`).
 - **Sort and search:** in every game list, L2 changes the order and R2
   searches by name.
-- **128 GiB limit:** games and data together never pass 128 GiB, and no
-  partition is ever placed beyond the 128 GiB mark of the disk. The space
-  used by games and data is shown in the game lists and Diagnostics.
+- **128 GiB safe limit:** going past 128 GiB of games and data, or
+  placing a partition beyond the 128 GiB mark of the disk, needs a firm
+  warning to be confirmed (hold R1 + X). Past that mark only a DESR with
+  LBA48-aware custom DVRP firmware (dvrpwned) and a PS2 area enlarged
+  with psxrepart is safe; the installer's ATA driver (PS2SDK 2026-10-06)
+  then uses 48-bit LBA, and Diagnostics shows whether that firmware was
+  detected. The space used by games and data is shown in the game lists
+  and Diagnostics.
 
 ### Safe copies
 - **Verified copies:** every game is read back from the HDD and its
@@ -87,6 +92,14 @@ contains the installer ELF, the ready-to-run server folder,
 - **Remove Games:** delete several games at once (Square toggles, Start
   selects all, hold R1 + X to confirm).
 - **Repair XMB Channels:** lists only the games that need attention.
+
+### Apps
+- **Homebrew as XMB channels:** *Apps* installs any `.ELF` from the
+  server's `APPS` folder or a USB drive's `APPS` folder (with the files
+  in its folder if wanted) as its own channel `PP.APPS-NNNNN..TITLE`.
+  The channel's `EXECUTE.KELF` is a small signed launcher
+  (`launcher/main.c`), the same for every app: it mounts the channel and
+  starts the ELF named in `APP.CFG`. *Installed Apps* deletes them.
 
 ### Console app
 - **Starts instantly:** the menu appears at once and the server is

@@ -1,3 +1,9 @@
+atad_IMPORTS_start
+I_sceAtaInit
+I_sceAtaExecCmd
+I_sceAtaWaitResult
+atad_IMPORTS_end
+
 intrman_IMPORTS_start
 I_CpuSuspendIntr
 I_CpuResumeIntr

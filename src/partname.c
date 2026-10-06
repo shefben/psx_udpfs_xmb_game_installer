@@ -94,8 +94,13 @@ int build_game_partition_pair(const char *startup_id, const char *display_title,
   return 0;
 }
 
+/* App ids of PSX-XMB-Manager / PFS-BatchKit-Manager / this installer. */
+static int is_app_id(const char *name) {
+  return !strncmp(name + 3, "APPS-", 5) || !strncmp(name + 3, "UAPP-", 5);
+}
+
 /* Shape check shared by both prefixes: "xx.AAAA-NNNNN.." then title. */
-static int has_game_shape(const char *name) {
+static int has_id_shape(const char *name) {
   size_t n = strlen(name);
   if (n < 15 || n > APA_NAME_MAX || name[2] != '.' || name[7] != '-' ||
       name[13] != '.' || name[14] != '.')
@@ -111,9 +116,18 @@ static int has_game_shape(const char *name) {
   for (size_t i = 15; i < n; i++)
     if (!is_upper(name[i]) && !is_digit(name[i]) && name[i] != '_')
       return 0;
-  /* The installer's channel is game-shaped for the XMB but is no game
-   * (nor is a "__." partner of it). */
-  return strcmp(name + 2, INSTALLER_PARTITION_NAME + 2) != 0;
+  return 1;
+}
+
+static int has_game_shape(const char *name) {
+  /* The installer's channel and app channels are game-shaped for the
+   * XMB but are no games (nor is a "__." partner of them). */
+  return has_id_shape(name) && strcmp(name + 2, INSTALLER_PARTITION_NAME + 2) != 0 &&
+         !is_app_id(name);
+}
+
+int partition_is_app(const char *name) {
+  return name && name[0] == 'P' && name[1] == 'P' && has_id_shape(name) && is_app_id(name);
 }
 
 int partition_is_installer(const char *name) {
@@ -179,7 +193,8 @@ int partition_remove_allowed(const char *name, unsigned apa_type) {
     return apa_type == APA_TYPE_HDL_ID;
   if (partition_is_game_channel(name)) /* old PFS channel, or a visible HDL game */
     return apa_type == APA_TYPE_PFS_ID || apa_type == APA_TYPE_HDL_ID;
-  if (partition_is_installer(name) || !strcmp(name, TEST_PARTITION_NAME))
+  if (partition_is_installer(name) || !strcmp(name, TEST_PARTITION_NAME) ||
+      partition_is_app(name))
     return apa_type == APA_TYPE_PFS_ID;
   return 0;
 }

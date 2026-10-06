@@ -8,6 +8,7 @@
 #include <io_common.h>
 
 #include "hdd_partitions.h"
+#include "pump.h"
 #include "util.h"
 
 /* Same argument as libhdd's pfsFormatArg (PFS_ZONE_SIZE, no -f). */
@@ -60,12 +61,35 @@ int hdd_usage(space_usage_t *u, uint32_t *hdd_free_mb) {
   return r < 0 ? r : 0;
 }
 
+static hdd_limit_prompt_t g_limit_prompt;
+static space_gate_t g_limit_gate; /* the answer, until the installer restarts */
+
+void hdd_set_limit_prompt(hdd_limit_prompt_t fn) { g_limit_prompt = fn; }
+
+typedef struct {
+  const space_usage_t *u;
+  uint32_t add_mb;
+} limit_ctx_t;
+
+static int limit_prompt(void *ctx) {
+  const limit_ctx_t *c = ctx;
+  return g_limit_prompt && g_limit_prompt(c->u, c->add_mb);
+}
+
+static int limit_allowed(const space_usage_t *u, uint32_t add_mb) {
+  limit_ctx_t c = {u, add_mb};
+  return space_gate_allow(&g_limit_gate, g_limit_prompt ? limit_prompt : NULL, &c);
+}
+
 inst_err_t hdd_space_check(uint32_t add_mb) {
   space_usage_t u;
   uint32_t free_mb = 0;
   if (hdd_usage(&u, &free_mb) < 0)
     return ERR_HDD_MISSING;
-  return space_check(&u, add_mb, free_mb);
+  inst_err_t r = space_check(&u, add_mb, free_mb);
+  if (r == ERR_DATA_LIMIT && limit_allowed(&u, add_mb))
+    return ERR_OK;
+  return r;
 }
 
 inst_err_t hdd_space_guard_new(const char *name, int *rc_out) {
@@ -73,9 +97,35 @@ inst_err_t hdd_space_guard_new(const char *name, int *rc_out) {
   int n = hdd_space_list(&p);
   if (n < 0 || !space_name_beyond(p, n, name))
     return ERR_OK;
-  /* The driver placed it past 128 GiB: it must not stay. */
+  /* The driver placed it past 128 GiB: only kept if the user says so. */
+  space_usage_t u;
+  space_tally(p, n, &u);
+  if (limit_allowed(&u, 0))
+    return ERR_OK;
   hdd_remove_exact(name, rc_out);
   return ERR_DATA_LIMIT;
+}
+
+space_lba48_t hdd_lba48_status(uint32_t *ps2_area_mb) {
+  static int done;
+  static space_lba48_t st = SPACE_LBA48_UNKNOWN;
+  static uint32_t area_mb;
+  if (!done) {
+    pump_atainfo_t a;
+    if (pump_atainfo(&a) == 0 && a.exists) {
+      area_mb = a.sectors / 2048;
+      if (a.identify) {
+        uint16_t id[256];
+        memset(id, 0, sizeof(id));
+        memcpy(&id[121], a.sig, sizeof(a.sig));
+        st = space_lba48_signature(id) ? SPACE_LBA48_YES : SPACE_LBA48_NO;
+      }
+      done = 1;
+    }
+  }
+  if (ps2_area_mb)
+    *ps2_area_mb = area_mb;
+  return st;
 }
 
 int hdd_space_mb(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb) {
@@ -85,16 +135,10 @@ int hdd_space_mb(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb) {
     return r;
   if (total_mb)
     *total_mb = total;
-  if (free_mb) {
-    /* Never more than the 128 GiB limit for games and data leaves. */
-    space_usage_t u;
-    const space_part_t *p;
-    int n = hdd_space_list(&p);
-    if (n < 0)
-      return n;
-    space_tally(p, n, &u);
-    *free_mb = (uint32_t)space_usable_mb(&u, hdd_free);
-  }
+  /* The drive's own free space: passing the 128 GiB limit is decided
+   * by the warning in hdd_space_check, not by hiding space here. */
+  if (free_mb)
+    *free_mb = hdd_free;
   return 0;
 }
 

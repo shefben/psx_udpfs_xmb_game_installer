@@ -77,11 +77,17 @@ def main():
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
     game = ((20, 40, 110), (5, 10, 40), ["PS2", "GAME"])
     inst = ((10, 90, 60), (5, 25, 20), ["UDPFS", "INST"])
+    app = ((110, 45, 15), (40, 12, 5), ["PS2", "APP"])
+    app = ((110, 45, 15), (40, 12, 5), ["PS2", "APP"])
     out = {
         "game/default_jkt_001.png": render(*game, W=140, H=200, scale=4),
         "game/default_jkt_002.png": render(*game),
         "installer/jkt_001.png": render(*inst, W=140, H=200, scale=4),
         "installer/jkt_002.png": render(*inst),
+        "app/jkt_001.png": render(*app, W=140, H=200, scale=4),
+        "app/jkt_002.png": render(*app),
+        "app/jkt_001.png": render(*app, W=140, H=200, scale=4),
+        "app/jkt_002.png": render(*app),
         "manual/blank.png": png([bytes([16, 16, 24] * 640)] * 350, 640, 350),
         "manual/jkt_cp.png": png([bytes([0, 0, 0] * 290)] * 46, 290, 46),
     }

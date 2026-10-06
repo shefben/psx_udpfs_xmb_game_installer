@@ -81,12 +81,19 @@ static void check_hdd(void) {
   space_usage_t u;
   uint32_t hfree = 0;
   if (st == ERR_OK && hdd_usage(&u, &hfree) == 0) {
-    line("INFO", "games %lu MiB, games+data %lu of %lu MiB (128 GiB limit), system %lu MiB",
+    line("INFO", "games %lu MiB, games+data %lu of %lu MiB (128 GiB safe limit), system %lu MiB",
          (unsigned long)u.games_mb, (unsigned long)u.data_mb, (unsigned long)SPACE_LIMIT_MB,
          (unsigned long)u.system_mb);
-    line(u.limit_left_mb > 0 ? "PASS" : "WARN", "%lu MiB left for new games and data",
-         (unsigned long)space_usable_mb(&u, hfree));
+    line(u.data_mb <= SPACE_LIMIT_MB ? "PASS" : "WARN", "%lu MiB left under the 128 GiB safe limit",
+         (unsigned long)u.limit_left_mb);
     line(u.beyond_limit ? "WARN" : "PASS", "no partition ends beyond 128 GiB");
+  }
+  if (st == ERR_OK) {
+    uint32_t area = 0;
+    space_lba48_t fw = hdd_lba48_status(&area);
+    line(fw == SPACE_LBA48_YES ? "PASS" : "INFO", "LBA48 DVRP firmware (dvrpwned): %s, PS2 area %lu MiB",
+         fw == SPACE_LBA48_YES ? "detected" : fw == SPACE_LBA48_NO ? "not detected" : "unknown",
+         (unsigned long)area);
   }
 }
 

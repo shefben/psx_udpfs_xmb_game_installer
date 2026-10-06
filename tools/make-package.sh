@@ -32,13 +32,16 @@ chmod +x "$P/PC/udpfsd/udpfsd-linux-amd64"
 # POPStarter (pinned rev13 Beta KELF, unchanged).
 mkdir -p "$P/PC/udpfsd/POPS"
 [ -f "$DIST/udpfsd/POPS/POPSTARTER.KELF" ] && cp "$DIST/udpfsd/POPS/POPSTARTER.KELF" "$P/PC/udpfsd/POPS/"
-for d in DVD CD CFG ART; do
+for d in DVD CD CFG ART APPS; do
   mkdir -p "$P/PC/udpfsd/$d"
 done
 echo "Put DVD game images (.iso / .zso) in this folder." > "$P/PC/udpfsd/DVD/_put_DVD_games_here.txt"
 echo "Put CD game images (.iso / .zso) in this folder." > "$P/PC/udpfsd/CD/_put_CD_games_here.txt"
 echo "Optional: OPL per-game settings named <GAME-ID>.cfg, e.g. SLUS_203.12.cfg." > "$P/PC/udpfsd/CFG/_optional_OPL_settings_here.txt"
 echo "Optional: covers named <GAME-ID>_COV.png or .jpg, e.g. SLUS_203.12_COV.jpg." > "$P/PC/udpfsd/ART/_optional_covers_here.txt"
+printf '%s\n' "Homebrew apps (.ELF) to install as XMB channels (Apps menu on the DESR)." "" \
+  "One app per folder, e.g. APPS\wLaunchELF\BOOT.ELF with the files it needs;" \
+  "the installer offers to copy the whole folder. A lone .ELF works too." > "$P/PC/udpfsd/APPS/_put_apps_here.txt"
 printf '%s\n' "PS1 games: put .VCD files here (convert BIN/CUE with cue2pops)." "" \
   "POPSTARTER.KELF (POPStarter rev13 Beta) is already here." "" \
   "Also needed here, NOT included (Sony's POPS emulator, supply your own):" \
