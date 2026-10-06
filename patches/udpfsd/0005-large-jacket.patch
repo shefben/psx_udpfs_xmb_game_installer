@@ -1,5 +1,5 @@
 diff --git a/internal/prep/art.go b/internal/prep/art.go
-index c8497e0..fdbf3bd 100644
+index c8497e0..ea1a472 100644
 --- a/internal/prep/art.go
 +++ b/internal/prep/art.go
 @@ -3,6 +3,8 @@ package prep
@@ -16,17 +16,17 @@ index c8497e0..fdbf3bd 100644
  )
  
 -// JacketW/JacketH is the DESR XMB jacket size (as PSX-XMB-Manager writes).
-+// DESR XMB jacket sizes, as PFS-BatchKit-Manager writes them (its
-+// channels are known to work on a DESR): res/jkt_002.png (the XMB list
-+// cover) is JacketW x JacketH, res/jkt_001.png (the large cover) is
-+// LargeJacketW x LargeJacketH. Both are 256-colour PNGs ("-colors 256").
++// DESR XMB jacket sizes, as PSX-XMB-Manager writes them for PS2 game
++// channels: res/jkt_002.png (the XMB list cover) is JacketW x JacketH,
++// res/jkt_001.png (the large cover) is LargeJacketW x LargeJacketH. Both
++// are reduced to 256 colours, as its nQuant step does.
  const (
 -	JacketW = 74
 -	JacketH = 108
-+	JacketW      = 76
++	JacketW      = 74
 +	JacketH      = 108
-+	LargeJacketW = 256
-+	LargeJacketH = 256
++	LargeJacketW = 140
++	LargeJacketH = 200
  )
  
 +// LargeJacketPath is where MakeJacket writes the large cover for dst:
@@ -45,7 +45,7 @@ index c8497e0..fdbf3bd 100644
 -// MakeJacket decodes src (PNG/JPEG/GIF), box-filters it to 74x108 and
 -// writes an opaque, non-interlaced PNG to dst (temp file + rename).
 +// MakeJacket decodes src (PNG/JPEG/GIF) and writes it box-filtered as
-+// opaque, non-interlaced 256-colour PNGs: 76x108 to dst and 256x256 to
++// opaque, non-interlaced 256-colour PNGs: 74x108 to dst and 140x200 to
 +// LargeJacketPath(dst) (each temp file + rename).
  func MakeJacket(src, dst string) error {
  	f, err := os.Open(src)
@@ -111,7 +111,7 @@ index c8497e0..fdbf3bd 100644
  		os.Remove(tmp)
  		return err
 diff --git a/internal/prep/art_test.go b/internal/prep/art_test.go
-index 143855a..e196ef1 100644
+index 143855a..74db972 100644
 --- a/internal/prep/art_test.go
 +++ b/internal/prep/art_test.go
 @@ -68,14 +68,19 @@ func TestMakeJacket(t *testing.T) {
@@ -152,10 +152,10 @@ index 143855a..e196ef1 100644
 +	if !bothJackets(filepath.Join(dir, "jkt", "out.png")) {
 +		t.Fatal("fresh jackets not recognised")
 +	}
-+	writeImg(t, filepath.Join(dir, "jkt", "old.png"), 74, 108, false) // an older release's size
++	writeImg(t, filepath.Join(dir, "jkt", "old.png"), 76, 108, false) // an older build's size
 +	os.Rename(filepath.Join(dir, "jkt", "old.png"), filepath.Join(dir, "jkt", "out.png"))
 +	if bothJackets(filepath.Join(dir, "jkt", "out.png")) {
-+		t.Fatal("74x108 cache accepted")
++		t.Fatal("76x108 cache accepted")
 +	}
 +	if got := LargeJacketPath("jkt/SLUS_203.12.png"); got != "jkt/SLUS_203.12_L.png" {
 +		t.Fatal(got)

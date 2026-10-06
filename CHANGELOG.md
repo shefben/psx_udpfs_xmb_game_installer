@@ -115,7 +115,8 @@ check.
   - `power_off_after_install`
 - The `udpfsd.cfg` in the release now has these keys.
 - Covers are prepared at both XMB sizes, as 256-colour PNGs
-  (`jkt/<ID>.png` 76x108 and `jkt/<ID>_L.png` 256x256). Restart the
+  (`jkt/<ID>.png` 74x108 and `jkt/<ID>_L.png` 140x200, PSX-XMB-Manager's
+  sizes). Restart the
   server once after updating; covers of another size are made again.
 
 ### Upgrading from 1.0

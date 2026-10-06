@@ -45,12 +45,11 @@ const char *payload_build_variant(void);
 int payload_opl_launcher_embedded(void);
 int payload_installer_embedded(void);
 
-/* res/jkt_001.png (large, 256x256) and res/jkt_002.png (XMB list cover,
- * 76x108), the sizes PFS-BatchKit-Manager writes (its channels are known
- * to work on a DESR). */
-#define JKT_LARGE_W 256
-#define JKT_LARGE_H 256
-#define JKT_SMALL_W 76
+/* res/jkt_001.png (large, 140x200) and res/jkt_002.png (XMB list cover,
+ * 74x108), the sizes PSX-XMB-Manager writes for PS2 game channels. */
+#define JKT_LARGE_W 140
+#define JKT_LARGE_H 200
+#define JKT_SMALL_W 74
 #define JKT_SMALL_H 108
 typedef struct {
   const void *large;

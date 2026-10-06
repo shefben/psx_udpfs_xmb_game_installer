@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Generate the embedded jacket PNGs (8-bit RGB, no interlace).
 
-Sizes as PFS-BatchKit-Manager writes them for DESR channels (its channels
-are known to work on a DESR): res/jkt_001.png 256x256 (large cover),
-res/jkt_002.png 76x108 (XMB list cover), res/jkt_cp.png 290x46 (copyright
-strip, blank). Also the blank 640x350 page the default res/man.xml uses.
+Sizes as PSX-XMB-Manager writes them for PS2 game channels:
+res/jkt_001.png 140x200 (large cover), res/jkt_002.png 74x108 (XMB list
+cover); res/jkt_cp.png 290x46 (copyright strip, blank). Also the blank 640x350 page the default res/man.xml uses.
 The images are deterministic so rebuilding never changes their bytes.
 Only the standard library is used (zlib + struct).
 """
@@ -79,10 +78,10 @@ def main():
     game = ((20, 40, 110), (5, 10, 40), ["PS2", "GAME"])
     inst = ((10, 90, 60), (5, 25, 20), ["UDPFS", "INST"])
     out = {
-        "game/default_jkt_001.png": render(*game, W=256, H=256, scale=5),
-        "game/default_jkt_002.png": render(*game, W=76),
-        "installer/jkt_001.png": render(*inst, W=256, H=256, scale=5),
-        "installer/jkt_002.png": render(*inst, W=76),
+        "game/default_jkt_001.png": render(*game, W=140, H=200, scale=4),
+        "game/default_jkt_002.png": render(*game),
+        "installer/jkt_001.png": render(*inst, W=140, H=200, scale=4),
+        "installer/jkt_002.png": render(*inst),
         "manual/blank.png": png([bytes([16, 16, 24] * 640)] * 350, 640, 350),
         "manual/jkt_cp.png": png([bytes([0, 0, 0] * 290)] * 46, 290, 46),
     }

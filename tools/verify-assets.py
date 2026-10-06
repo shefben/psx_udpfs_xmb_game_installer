@@ -47,10 +47,10 @@ def main(argv):
     if len(argv) == 3 and argv[1] == "--kelf":
         print("kelf ok:", argv[2], check_kelf(argv[2]))
         return 0
-    for rel, size in (("assets/game/default_jkt_001.png", "256x256"),
-                      ("assets/game/default_jkt_002.png", "76x108"),
-                      ("assets/installer/jkt_001.png", "256x256"),
-                      ("assets/installer/jkt_002.png", "76x108"),
+    for rel, size in (("assets/game/default_jkt_001.png", "140x200"),
+                      ("assets/game/default_jkt_002.png", "74x108"),
+                      ("assets/installer/jkt_001.png", "140x200"),
+                      ("assets/installer/jkt_002.png", "74x108"),
                       ("assets/manual/blank.png", "640x350"),
                       ("assets/manual/jkt_cp.png", "290x46")):
         info = check_png(os.path.join(ROOT, rel))

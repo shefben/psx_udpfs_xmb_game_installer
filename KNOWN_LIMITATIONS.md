@@ -71,8 +71,8 @@ level unless stated otherwise.
   screens handle up to 128 game pairs.
 * **Disc type** comes from the server folder (`CD/`, `DVD/`), else UDF
   presence or size.
-* **Jacket art** is made by the patched udpfsd only (256x256 and 76x108,
-  256 colours, the sizes PFS-BatchKit-Manager uses). A cover of another
+* **Jacket art** is made by the patched udpfsd only (140x200 and 74x108,
+  256 colours, the sizes PSX-XMB-Manager uses). A cover of another
   size, or from an older udpfsd, is not used: the built-in jacket is.
 * **No controller:** the installer only backs out of menus; it never
   starts an install or accepts a prompt without a pad.
