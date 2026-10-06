@@ -1,4 +1,4 @@
-UDPFS Game Installer for the PSX DESR - v2.0
+UDPFS Game Installer for the PSX DESR - v3.0
 ============================================
 
 Installs PS2 games (.iso / .zso) from your PC onto the PSX DESR's
@@ -170,7 +170,7 @@ IF SOMETHING GOES WRONG
                            be at the same place); Install All resumes it too.
                            The last copied part is read back first; a part
                            that did not reach the disk is copied again.
-  Installer channel shows  Made by an earlier v2.0 zip. Start this zip's
+  Installer channel shows  Made by v2.0 (or an earlier zip). Start this zip's
   a black screen, or the   bootstrap ELF from wLaunchELF and choose
   XMB freezes while        Install Installer as XMB Channel. Replace the
   loading                  PC\udpfsd folder with this zip's, then

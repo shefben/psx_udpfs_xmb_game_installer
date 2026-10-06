@@ -4,7 +4,7 @@ Status vocabulary: see `docs/HARDWARE_TEST_CHECKLIST.md`. Nothing is
 yet DESR-verified; everything below "works" only at the PC VERIFIED
 level unless stated otherwise.
 
-* **First DESR results (v2.0 builds):** installs and deletes work from
+* **DESR results (v2.0 test builds, fixed in v3.0):** installs and deletes work from
   the bootstrap ELF. With two or more of our PFS channels the XMB froze
   while loading; two PFS-BatchKit-Manager games load fine. PS2 games are
   now installed in BatchKit's layout (one visible HDL partition with a

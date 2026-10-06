@@ -1,10 +1,94 @@
 # Changelog
 
+## 3.0 (from 2.0)
+
+Tested on a DESR: games install, show in the XMB and start; the XMB
+loads with the installer and several games. Back up anything important
+on the hard disk first. `docs/HARDWARE_TEST_CHECKLIST.md` (D43-D49)
+lists what is still to check.
+
+### Fixed
+
+- **XMB froze while loading with two or more channels.** With the
+  installer and a game, or two games, the DESR XMB stopped at its loading
+  screen. PS2 games are now installed the way PFS-BatchKit-Manager does
+  it, which a dump of a working DESR confirmed: each game is one
+  partition, `PP.<ID>..<TITLE>`, booted from its own header
+  (`BOOT2 = PATINFO`, `icon.sys`, an icon and OPL-Launcher). It is copied
+  and verified as the hidden `__.<ID>..<TITLE>` first and renamed to
+  `PP.` only after the full read-back matches. No separate 128 MiB
+  channel partition per game any more.
+- **Installer channel showed a black screen.** The KELFs were signed
+  with a PSX `xosdmain` header. They now carry the header of the
+  OPL-Launcher and POPStarter KELFs that run from PSX XMB channels
+  (`KELF_MODE=dnasload`), and OPL-Launcher is signed without its debug
+  data (1.5 MB to 0.3 MB).
+- **Delete/repair of games from other tools.** Installed Games and
+  Remove Games now also list games PFS-BatchKit-Manager or hdl-dump
+  installed (visible `PP.` HDL partitions): they can be hidden, deleted
+  or backed up.
+
+### New
+
+- **XMB covers (experimental).** The XMB shows a picture and game ID
+  only from a PFS partition's `res/`. *Add XMB cover* gives a game
+  PFS-BatchKit-Manager's / PSX-XMB-Manager's resource partition: a PFS
+  `PP.` partition with covers, title, game ID and OPL-Launcher, the game
+  kept as `__.`. *Repair XMB Channels* offers it for all games at once;
+  *Remove cover* turns a game back into one partition.
+- **Space used and a 128 GiB limit.** The game lists, the install
+  screen and Diagnostics show the space used by games, by games and data
+  out of 128 GiB, and the HDD's free space. Games and data together can
+  never pass 128 GiB: every partition is checked before it is created,
+  and one the driver placed beyond the 128 GiB mark of the disk is
+  removed again.
+- **Hide from the XMB.** Takes a game out of the XMB without deleting it
+  (renamed to `__.`); *Create XMB channel* shows it again.
+- **Delete Installer XMB Channel** in the main menu.
+- **Diagnostics > Dump XMB channels to USB.** Copies every `PP.`
+  partition's header, files and PFS superblock to `mass0:/xmb-dump/`
+  (read-only on the HDD), to compare channels with other tools'.
+- **Every partition header is complete:** `system.cnf`, `icon.sys` and an
+  icon, as hdl_dump / PFS-BatchKit-Manager write them.
+
+### Changed
+
+- `info.sys` like the other tools: `title_id = SLUS-20312` (no region
+  suffix), `area` from the game ID, no empty field (install date as
+  release date when the game database has none, "Unknown" developer,
+  publisher and genre), no line break after the last line. A default
+  manual page (`res/man.xml`, blank pages) and a blank `jkt_cp.png` are
+  added to PFS channels.
+- Covers at PSX-XMB-Manager's sizes: `jkt_001.png` 140x200 and
+  `jkt_002.png` 74x108, 256 colours. udpfsd makes both; covers it cached
+  at other sizes are made again.
+- Games show as `Game.zso` instead of udpfsd's `Game.zso.iso`.
+- Install All and auto-install no longer reserve 128 MiB per game.
+
+### HDD driver
+
+- `patches/apa-hdl/0002`: the driver may rename hidden `__.` HDL games
+  (same rule as for removing them; system partitions stay protected).
+  Rebuilt reproducibly; new pinned hash.
+
+### Server (udpfsd)
+
+- Covers in two sizes (`jkt/<ID>.png` 74x108, `jkt/<ID>_L.png` 140x200),
+  256 colours. Restart the server once after updating.
+
+### Upgrading from 2.0
+
+1. Replace both the `PC\udpfsd` folder and the installer.
+2. Start the new bootstrap ELF from wLaunchELF and choose *Install
+   Installer as XMB Channel*.
+3. Games installed by 2.0: *Repair XMB Channels*, then *Rebuild XMB
+   channel* on each (converted without copying them again).
+4. Restart the DESR.
+
 ## 2.0 (from 1.0)
 
-Only partly tested on a DESR: back up anything important on the hard
-disk first. `docs/HARDWARE_TEST_CHECKLIST.md` (D28-D47) lists what to
-check.
+Not yet tested on a DESR: back up anything important on the hard disk
+first. `docs/HARDWARE_TEST_CHECKLIST.md` (D28-D42) lists what to check.
 
 ### New
 
@@ -48,17 +132,6 @@ check.
 - **Details screen.** Each installed game has a Details screen that
   explains its state, e.g. why it shows UNKNOWN/UNVERIFIED.
 
-- **128 GiB limit for games and data.** Games and all other data
-  together (every partition except the APA system ones) can never pass
-  128 GiB, whatever the drive or its game area allows. Every partition
-  this installer creates is checked before it is created
-  (`ERR_DATA_LIMIT`), and one the HDD driver placed beyond the 128 GiB
-  mark of the disk is removed again at once. Install All only offers
-  what fits.
-- **Space used.** Installed Games, Repair XMB Channels, Remove Games,
-  the install screen and Diagnostics show the space used by games, by
-  games and data out of 128 GiB, and what the HDD has free.
-
 ### Faster
 
 - **Fast copy.** A new I/O-processor module writes to the HDD while the
@@ -80,39 +153,6 @@ check.
 
 ### Fixed
 
-- **Channels did not start from the XMB.** The installer and game KELFs
-  were signed with a PSX `xosdmain` header (the DESR's own XMB type),
-  and the installer channel stayed on a black screen. KELFs now carry
-  the header of the OPL-Launcher and POPStarter KELFs that run from PSX
-  XMB channels, and OPL-Launcher is signed without its debug data
-  (1.5 MB to 0.3 MB). Start the new bootstrap ELF once and choose
-  *Install Installer as XMB Channel* to replace the installer's KELF,
-  and use the new `udpfsd` folder.
-- **XMB froze while loading with two or more of our channels** (the
-  installer and a game, or two games; any one alone was fine). A dump of
-  a DESR where PFS-BatchKit-Manager's games load showed why it works
-  there: a PS2 game is ONE partition, the HDL game partition itself under
-  the name `PP.<ID>..<TITLE>`. Its header holds `system.cnf`
-  (`BOOT2 = PATINFO`), `icon.sys`, an icon and OPL-Launcher as boot KELF;
-  there is no separate PFS channel. Games are now installed exactly like
-  that: copied and verified as hidden `__.<ID>..<TITLE>`, then given that
-  header and renamed to `PP.` (the HDD driver now allows that rename for
-  `__.` HDL games only; system partitions stay protected). Each game
-  saves the 128 MiB a channel partition took. Rename changes the header's
-  title; "Hide from the XMB" renames back to `__.` without deleting.
-  Games installed by an earlier v2.0 build are listed under *Repair XMB
-  Channels*: *Rebuild XMB channel* converts each one without copying it
-  again. PFS-BatchKit-Manager's games are now listed too (as not verified
-  by this installer: they can be hidden, deleted or backed up).
-  The installer's own channel and PS1 games stay PFS channels.
-- **XMB covers for PS2 games (experimental).** A game shown as one HDL
-  partition has no picture: the XMB reads covers only from a PFS
-  partition's `res/`. *Installed Games > game > Add XMB cover* uses
-  PFS-BatchKit-Manager's resource-partition layout: the game partition is
-  hidden again (`__.`, not copied) and a 128 MiB PFS `PP.` partition gets
-  the covers, title and OPL-Launcher, which starts the game from `__.`.
-  *Remove cover* turns it back into one partition. Two of our PFS
-  partitions froze the XMB in earlier tests, so this is opt-in, per game.
 - **Broken USB backups.** Backing up a game whose copy never finished
   is refused, so a broken `.iso` can no longer pass its own check.
 - **Game info memory bug.** Loading the game info no longer writes
@@ -125,10 +165,6 @@ check.
   - `gamedb` (XMB game info)
   - `power_off_after_install`
 - The `udpfsd.cfg` in the release now has these keys.
-- Covers are prepared at both XMB sizes, as 256-colour PNGs
-  (`jkt/<ID>.png` 74x108 and `jkt/<ID>_L.png` 140x200, PSX-XMB-Manager's
-  sizes). Restart the
-  server once after updating; covers of another size are made again.
 
 ### Upgrading from 1.0
 

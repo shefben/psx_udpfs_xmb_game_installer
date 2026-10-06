@@ -1,4 +1,4 @@
-# udpfsd Server Manual (v2.0)
+# udpfsd Server Manual (v3.0)
 
 udpfsd is the PC side of the UDPFS Game Installer. It serves your game
 folders to the PSX DESR over the network (read-only), prepares titles,

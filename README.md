@@ -1,4 +1,4 @@
-# PSX DESR UDPFS XMB Game Installer (v2.0)
+# PSX DESR UDPFS XMB Game Installer (v3.0)
 
 An installer for the PSX DESR that runs on the console as its own XMB
 channel. It installs PS2 and PS1 games to the internal HDD from a PC over
@@ -21,7 +21,7 @@ tests). Testing on a DESR is in progress; see the
 [hardware checklist](docs/HARDWARE_TEST_CHECKLIST.md). Back up the HDD
 before the first run.
 
-**Download:** `PSX-UDPFS-Installer_V2.0.zip` (from `make package`)
+**Download:** `PSX-UDPFS-Installer_V3.0.zip` (from `make package`)
 contains the installer ELF, the ready-to-run server folder,
 `README.txt`, `CHANGELOG.txt` and `SERVER-MANUAL.txt`.
 
