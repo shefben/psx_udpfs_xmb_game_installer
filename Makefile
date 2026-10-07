@@ -92,7 +92,8 @@ test-graph:
 	bash test/host/test_build_graph.sh
 
 # ---- udpfsd server (pinned upstream + patches/udpfsd: udpfsd.cfg, mounts, game prep)
-# Needs Go >= 1.25 or Docker. `make test-udpfsd` runs only its Go tests.
+# Needs a native Go >= 1.25 and the apt packages in tools/build-udpfsd.sh (no
+# Docker). `make test-udpfsd` runs only its Go tests.
 UDPFSD_BIN := $(BUILD)/udpfsd/udpfsd-windows-amd64.exe $(BUILD)/udpfsd/udpfsd-linux-amd64
 
 udpfsd: $(UDPFSD_BIN)
@@ -281,7 +282,7 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF) $(BUILD)/.kelf-mode
 
 # ---- 7. end-user zip (README, PS2 bootstrap ELF, PC/udpfsd folder) -----
-VERSION := 3.1
+VERSION := 4.0
 PACKAGE := $(ROOT)/PSX-UDPFS-Installer_V$(VERSION).zip
 package: dist
 	bash tools/make-package.sh $(DIST) $(PACKAGE)

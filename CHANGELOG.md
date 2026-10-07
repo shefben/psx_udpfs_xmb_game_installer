@@ -1,5 +1,72 @@
 # Changelog
 
+## 4.0 (from 3.1)
+
+### New
+
+- **Install Game from Disc.** Copies a PS2 CD or DVD (DVD-9 included)
+  from the DESR's own drive to the HDD, with the same CRC check, journal,
+  resume and XMB channel as a network install. PS1 and video discs are
+  refused with a message. The tray opens on request afterwards.
+- **Game extras: saves, cheats, settings and art go where they belong.**
+  New server folders `VMC` and `CHT` next to `CFG` and `ART`. With every
+  install, and later for all or one game from *Saves, Cheats & Game
+  Extras*:
+  - PS2 (OPL partition): `CFG/<ID>.cfg`; `CHT/<ID>.cht` with cheats
+    switched on for that game (`$CheatsSource=1`, `$EnableCheat=1`,
+    `$CheatMode=0`: all codes when started from the XMB);
+    `VMC/<ID>_0.bin` / `_1.bin` assigned as `$VMC_0` / `$VMC_1` (PCSX2
+    `.ps2` cards are converted to OPL's raw format); art as
+    `ART/<ID>_COV.png`, `_COV2`, `_ICO`, `_LAB`, `_LGO`, `_BG`, `_SCR`,
+    `_SCR2` (JPEG and `_BG_00` / `_SCR_00` / `_SCR_01` names converted).
+  - PS1 (POPStarter, `__common/POPS/<game>/`): `SLOT0.VMC` / `SLOT1.VMC`
+    from raw, DexDrive `.gme`, PSP `.vmp` or `.mem` cards; single `.mcs`
+    saves added to the game's card (a new card is formatted if needed);
+    `<ID>.txt` as `CHEATS.TXT`.
+  - `.psu` saves are copied onto a real memory card in slot 1 or 2.
+  - Every file is written as `.tmp`, read back and only then put in place;
+    an OPL cfg already on the HDD is kept unless you choose to replace
+    it, and existing memory cards are only replaced after a firm
+    confirmation (R1 + X).
+- **HDD Health Check:** SMART status and attributes (reallocated, pending
+  and uncorrectable sectors, temperature, power-on hours) when the DVRP
+  passes them through, space used, the largest game that still fits (by
+  the same partition planner the install uses), and *Check all installed
+  games*: every game read back and compared with the CRC-32 recorded when
+  it was copied.
+- **PS1 multi-disc games:** "(Disc 1).VCD" ... "(Disc 4).VCD" install as
+  one game: `IMAGE0..3.VCD` in one partition plus `DISCS.TXT`, changed
+  in-game with Select+L2+R2 and Triangle / direction / Square.
+- **More image formats from the server:** `.cso`, `.chd` and split
+  `.iso.001`/`.002` sets are listed and installed like `.iso`; PS1
+  `BIN/CUE` appears as a `.VCD` (the same bytes cue2pops writes).
+
+### Faster
+
+- **Compressed transfers:** the patched udpfsd sends every image as LZ4
+  frames and the console unpacks them on the EE (older servers: plain
+  reads, as before).
+- **Read-ahead:** the next 512 KiB are fetched while the current block is
+  checked and handed to the HDD writer; 128 KiB per network request
+  instead of 64 KiB.
+- **Checking during the copy:** with Fast copy the HDD writer also reads
+  earlier, flushed parts of the game back while the network is busy, and
+  the EE checks them; after the copy only the last part is read. The
+  progress screen shows how much is already checked.
+
+### Server (udpfsd)
+
+- New folders `vmc = VMC` and `cht = CHT` (served as `/VMC`, `/CHT`).
+- Manifest flags `wire=lz4f` (LZ4 frames under `/.lz4f/...`) and
+  `extras=1` (OPL art as PNG under `/.oplart/...`).
+
+### Changed
+
+- The "OPL settings" line after an install is now "Game extras" and says
+  what was installed.
+- Diagnostics shows the server's transfer compression and extras support
+  and the free IOP memory.
+
 ## 3.1 hotfix (from 3.0)
 
 ### Fixed

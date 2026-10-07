@@ -1,4 +1,4 @@
-# PSX DESR UDPFS XMB Game Installer (v3.1)
+# PSX DESR UDPFS XMB Game Installer (v4.0)
 
 An installer for the PSX DESR that runs on the console as its own XMB
 channel. It installs PS2 and PS1 games to the internal HDD from a PC over
@@ -10,10 +10,12 @@ loads reliably on a DESR: one partition per game, booted from its own
 header.
 
 ```
-PC .iso/.zso/.vcd -> udpfsd -> UDPFS/UDPRDMA (DHCP or fixed IP) -> udpfs:/...
-USB .iso/.zso/.vcd -> mass0:/...
-  -> GameSource (ZSO unpacked on the EE) -> CRC-32 -> hddpump.irx -> hdl0:
-  -> hidden __.<ID>..<TITLE> -> full read-back -> boot header -> renamed PP.<ID>..<TITLE>
+PC .iso/.zso/.cso/.chd/.iso.001/.vcd/.cue -> udpfsd (LZ4 frames) -> UDPFS/UDPRDMA -> udpfs:/...
+USB .iso/.zso/.vcd -> mass0:/...      PS2 disc in the DESR -> cdrom0:
+  -> GameSource (read-ahead; LZ4/ZSO unpacked on the EE) -> CRC-32 -> hddpump.irx -> hdl0:
+     (hddpump reads earlier parts back during the copy)
+  -> hidden __.<ID>..<TITLE> -> check of the rest -> boot header -> renamed PP.<ID>..<TITLE>
+  -> game extras: OPL CFG/CHT/VMC/ART, POPStarter SLOT0/1.VMC + CHEATS.TXT
 ```
 
 Status: tested on the PC side (host tests, signed build, server smoke
@@ -21,7 +23,7 @@ tests). Testing on a DESR is in progress; see the
 [hardware checklist](docs/HARDWARE_TEST_CHECKLIST.md). Back up the HDD
 before the first run.
 
-**Download:** `PSX-UDPFS-Installer_V3.1.zip` (from `make package`)
+**Download:** `PSX-UDPFS-Installer_V4.0.zip` (from `make package`)
 contains the installer ELF, the ready-to-run server folder,
 `README.txt`, `CHANGELOG.txt` and `SERVER-MANUAL.txt`.
 
@@ -34,12 +36,34 @@ contains the installer ELF, the ready-to-run server folder,
   new game that fits, with no button presses.
 - **From USB:** `.iso` and `.zso` files on a FAT32 or exFAT drive; no PC
   needed.
+- **From the DESR's own disc drive:** *Install Game from Disc* copies a
+  PS2 CD or DVD (DVD-9 included) to the HDD, with the same checks,
+  journal and XMB channel as a network install.
+- **Any image format:** the server also offers `.cso`, `.chd` and split
+  `.iso.001`/`.002` sets as plain images, and PS1 `BIN/CUE` as `.VCD`
+  (cue2pops' format): no converter tools needed.
 - **PS1 games:** `.VCD` files through POPStarter. Each PS1 game gets its
   own XMB channel. POPStarter (rev13 Beta) is included in
   `PC\udpfsd\POPS`; you supply Sony's `POPS.ELF` and `IOPRP252.IMG`.
+  **Multi-disc games** (`... (Disc 1).VCD`, `(Disc 2)` ...) install as one
+  game: `IMAGE0..3.VCD` plus `DISCS.TXT`, discs changed in-game.
 - **OPL:** installed automatically if the DESR has none. An existing OPL
-  is never replaced. Per-game OPL settings (`CFG\<ID>.cfg`) are copied
-  over.
+  is never replaced.
+- **Game extras:** with every game, and later from *Saves, Cheats & Game
+  Extras*, the server's (or USB drive's) folders are installed where the
+  game's software reads them:
+  - `CFG\<ID>.cfg`: OPL per-game settings (kept if OPL already has some,
+    unless you choose to replace them).
+  - `CHT\<ID>.cht`: OPL cheats, switched on for that game;
+    `CHT\<ID>.txt` becomes a PS1 game's POPStarter `CHEATS.TXT`.
+  - `VMC\<ID>_0.bin` / `_1.bin`: OPL memory cards (PCSX2 `.ps2` cards
+    converted), assigned to the game's slots; PS1 cards (`.VMC`, `.mcr`,
+    `.mcd`, `.gme`, `.vmp`) and single saves (`.mcs`) become the game's
+    POPStarter `SLOT0/1.VMC`; `.psu` saves go onto a real memory card.
+  - `ART\<ID>_COV.jpg` etc.: OPL art, converted to the PNG names OPL
+    loads (COV, COV2, ICO, LAB, LGO, BG, SCR, SCR2).
+
+  Existing memory cards are never replaced without a firm confirmation.
 - **Titles, covers, game info:**
   - Titles come from your OPL CFG files, a game list or the file name.
   - Covers come from your ART folder or are downloaded automatically.
@@ -59,8 +83,11 @@ contains the installer ELF, the ready-to-run server folder,
 ### Safe copies
 - **Verified copies:** every game is read back from the HDD and its
   CRC-32 compared with the data received. Only then is the XMB channel
-  created, so a failed copy never leaves a visible channel. START skips
-  the read-back if you're in a hurry; *Verify game data* does it later.
+  created, so a failed copy never leaves a visible channel. Most of the
+  read-back now happens *during* the copy (the HDD is idle while the
+  network delivers), so only the last part is read afterwards. START
+  skips that last check if you're in a hurry; *Verify game data* does it
+  later.
 - **Pause and resume:** START pauses a copy. After a pause, a network
   error or a power cut, *Resume copy* continues where the copy stopped:
   - A checkpoint is saved every 64 MiB.
@@ -72,9 +99,15 @@ contains the installer ELF, the ready-to-run server folder,
 
 ### Speed
 - **Fast copy:** our own IOP module (`iop/hddpump`) writes to the HDD
-  while the next block is downloaded.
-- **ZSO games travel compressed:** the console unpacks them itself, so
-  less data crosses the network.
+  while the next block is downloaded, and reads finished parts back for
+  the check at the same time.
+- **Read-ahead:** the next 512 KiB are already being fetched while the
+  current block is checked and written, with 128 KiB per network request
+  (was 64 KiB).
+- **Compressed transfers:** the patched udpfsd compresses every image
+  with LZ4 for the network and the console unpacks it, so padding and
+  other compressible data cost almost nothing to send. ZSO games still
+  travel compressed too.
 - **Checksums:** slice-by-8 CRC-32, overlapped with the HDD writes and
   the read-back.
 - **Speed display:** the copy screen shows network, CRC and HDD speeds
@@ -92,6 +125,10 @@ contains the installer ELF, the ready-to-run server folder,
 - **Remove Games:** delete several games at once (Square toggles, Start
   selects all, hold R1 + X to confirm).
 - **Repair XMB Channels:** lists only the games that need attention.
+- **HDD Health Check:** SMART status and attributes (when the DVRP passes
+  them through), space used, the largest game that still fits, and
+  *Check all installed games* (reads every game back and compares it with
+  the CRC-32 recorded when it was copied).
 
 ### Apps
 - **Homebrew as XMB channels:** *Apps* installs any `.ELF` from the

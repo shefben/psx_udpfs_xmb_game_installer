@@ -40,9 +40,18 @@ level unless stated otherwise.
   used. Discovery runs once, when udpfs_ioman loads (5 s); restart the
   network if udpfsd starts later.
 * **Verification cost.** Every install reads the whole game back from
-  the HDD (CRC-32), adding roughly the HDD read time of the game.
-* **Formats.** Plain `.iso` and udpfsd's virtual `.zso.iso` only. CSO/CHD
-  virtual images are hidden; split `.iso.001` sets are not offered.
+  the HDD (CRC-32). With Fast copy most of it is read during the copy;
+  it only reads data at least 256 MiB behind the last 64 MiB checkpoint
+  (far beyond any drive cache, so it comes from the disk), and the last
+  320 MiB or so are read afterwards (all of a CD-sized game). The basic
+  copy engine and *Verify game data* read everything afterwards.
+* **Formats.** `.iso`, `.zso`, and from the patched udpfsd also `.cso`,
+  `.chd` (only if the server was built with CHD support) and split
+  `.iso.001`/`.002` sets, all decompressed by the server. USB: `.iso` and
+  `.zso`.
+* **Compressed transfers (LZ4 frames)** need the 4.0 udpfsd (manifest
+  `wire=lz4f`); with an older server the console reads plain bytes. The
+  server compresses on the fly with one CPU core per transfer.
 * **Trust is per installer partition.** Data is trusted only through a
   completed, CRC-verified journal in `PP.UDPF-00001..INSTALLER:/state/` that
   also matches the live partition's start sector, size and HDL-header
@@ -93,7 +102,11 @@ level unless stated otherwise.
   size, or from an older udpfsd, is not used: the built-in jacket is.
 * **No controller:** the installer only backs out of menus; it never
   starts an install or accepts a prompt without a pad.
-* **Transfer tuning** has not been done; the stream buffer is 1 MiB.
+* **Transfer tuning** has not been measured on hardware: 128 KiB per
+  UDPFS request (patches/neutrino/0003; udpfsd always accepted it), two
+  512 KiB read-ahead buffers, 4 hddpump slots of 128 KiB. If the IOP
+  cannot allocate the 128 KiB fileXio buffer, 64 KiB and then 16 KiB are
+  used (Diagnostics shows which).
 * **OPL from the server** is installed only where OPL-Launcher looks for
   it: the default `+OPL` is created (128 MiB PFS) when missing; if
   `__common/OPL/conf_hdd.cfg` names a partition that does not exist,
@@ -103,12 +116,38 @@ level unless stated otherwise.
   another tool. OPL itself creates its folders (CFG, ART, ...) on first
   start.
 
-* **PS1 games (POPStarter), first version.** Only .VCD images (convert
-  BIN/CUE with cue2pops); multi-disc games (DISCS.TXT) are not set up;
-  PS1 games are not part of Install All / auto-install. POPStarter
+* **PS1 games (POPStarter).** .VCD images, or BIN/CUE served as .VCD by
+  the 4.0 udpfsd (one BINARY file per cue, as cue2pops requires; its
+  optional game fixes / trainer / NTSC patch are not applied).
+  Multi-disc games: up to 4 discs, recognised by "(Disc N)" / "CD N" in
+  the file names, all in one partition (up to 4 GiB) with DISCS.TXT both
+  next to the VCDs and in `__common/POPS/<game>/` (the two places the
+  known tools use; which one POPStarter reads for HDD games is checklist
+  D59). PS1 games are not part of Install All / auto-install. POPStarter
   rev13 Beta is included as distributed (another one, signed like the
   other KELFs: `POPSTARTER_ELF=/path/POPSTARTER.ELF make dist`); Sony's POPS.ELF /
   IOPRP252.IMG are not included and must be supplied (checklist D35).
+* **Install from disc.** PS2 CDs and DVDs only. For a DVD the drive is
+  asked whether it has two layers and where layer 1 starts; layer 1's
+  PVD must sit right where layer 0's volume ends (as OPL expects). If
+  the drive does not answer or anything does not fit, the disc is
+  refused rather than copied as one layer. PS1 discs are refused
+  (copy them on a PC). Burned discs need a drive that reads them
+  (modchip / MechaPwn). Read errors are retried 16 times by the drive,
+  then the copy stops (Resume copy continues it with the disc in).
+* **Game extras.** Copied after the game is complete, best effort: a
+  failure is reported but never undoes the install. OPL reads art only
+  as PNG and only with "Cover art" enabled in its display settings;
+  VMCs must be raw images (PCSX2 .ps2 cards are converted) and, on the
+  HDD, not split into more than 10 PFS fragments (OPL's limit; an almost
+  full +OPL partition may cause that). POPStarter's folder for a PP. game
+  (`__common/POPS/<partition name without PP.>/`) is what PFS-BatchKit-
+  Manager uses; untested on a DESR (D63). `.psu` saves go to a real
+  memory card (not into a VMC); `.max`/`.cbs` saves are not read.
+* **HDD Health Check.** SMART goes through the DVRP, which may not pass
+  it on; then the status is "unknown". *Check all installed games* can
+  only check games this installer copied (it compares with the CRC-32 in
+  their journal); PS1 games and other tools' games are skipped.
 * **USB installs** read FAT32/exFAT drives on the first USB device
   (`mass0:`). Covers and OPL settings still come from udpfsd when it is
   running; without it the default cover is used.

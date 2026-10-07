@@ -1,0 +1,1198 @@
+diff --git a/cmd/udpfsd/main.go b/cmd/udpfsd/main.go
+index bdf5586..217a1d8 100644
+--- a/cmd/udpfsd/main.go
++++ b/cmd/udpfsd/main.go
+@@ -91,6 +91,8 @@ func main() {
+ 	if cfg.POPS != "" {
+ 		fsopts = append(fsopts, fs.WithMount("POPS", cfg.POPS))
+ 	}
++	// PS1 BIN/CUE as POPStarter VCDs, in the POPS and CD folders
++	fsopts = append(fsopts, fs.WithCueImages("POPS", "CD"))
+ 	if cfg.APPS != "" {
+ 		fsopts = append(fsopts, fs.WithMount("APPS", cfg.APPS))
+ 	}
+diff --git a/internal/fs/backend.go b/internal/fs/backend.go
+index dfba192..7735bc8 100644
+--- a/internal/fs/backend.go
++++ b/internal/fs/backend.go
+@@ -27,6 +27,7 @@ type Backend struct {
+ 	fsRoot               string
+ 	mounts               []mount         // read-only top-level mounts
+ 	splitMounts          map[string]bool // mounts with split images (Name.iso.001...)
++	cueMounts            map[string]bool // mounts with BIN/CUE served as Name.VCD
+ 	blockDevice          string
+ 	sectorSize           int
+ 	compressionCacheSize int
+diff --git a/internal/fs/mounts.go b/internal/fs/mounts.go
+index 0832988..6409965 100644
+--- a/internal/fs/mounts.go
++++ b/internal/fs/mounts.go
+@@ -82,6 +82,19 @@ func WithSplitImages(mounts ...string) func(s *Backend) {
+ 	}
+ }
+ 
++// WithCueImages serves each PS1 BIN/CUE, Name.cue + its BIN, as the
++// POPStarter image Name.VCD (as cue2pops makes it) in the named mounts.
++func WithCueImages(mounts ...string) func(s *Backend) {
++	return func(s *Backend) {
++		if s.cueMounts == nil {
++			s.cueMounts = map[string]bool{}
++		}
++		for _, m := range mounts {
++			s.cueMounts[m] = true
++		}
++	}
++}
++
+ // mountOf returns the mount a resolved host path lies in, or nil.
+ func (s *Backend) mountOf(resolved string) *mount {
+ 	for i := range s.mounts {
+diff --git a/internal/fs/vcd/vcd.go b/internal/fs/vcd/vcd.go
+new file mode 100644
+index 0000000..709acd9
+--- /dev/null
++++ b/internal/fs/vcd/vcd.go
+@@ -0,0 +1,628 @@
++// Package vcd serves a PS1 BIN/CUE as the POPStarter IMAGE0.VCD that
++// cue2pops v2.0 (2013/05/16) makes from it, without copying the BIN: the
++// 0x100000-byte POPS header followed by the BIN data with cue2pops' gap
++// handling, computed once and streamed on read.
++//
++// Build is a line-by-line port of cue2pops.c's main(): the same cue
++// parsing on the same mutated buffer, the same checks, header bytes,
++// +2 s index shifts (including its carry quirk: a minute ending in 9
++// gains 2: 09:58 -> 11:00), lead-out and sector count, and the same copy
++// loop with the CDRWIN fix (one PREGAP and no POSTGAP: 150 zero sectors
++// inserted at the first audio track's INDEX 00). Not ported: gap++/gap--,
++// vmode (NTSC patcher), trainer and the automatic GameFixer. Bytes that
++// cue2pops leaves uninitialised (malloc) are zeros here.
++package vcd
++
++import (
++	"errors"
++	"fmt"
++	"io"
++	"math"
++	"os"
++	"path/filepath"
++	"strings"
++	"time"
++
++	"github.com/pcm720/udpfsd/internal/fs/compression/common"
++)
++
++const (
++	HeaderSize = 0x100000 // POPS header; also cue2pops' copy chunk
++	SectorSize = 2352
++	gapSectors = 150 // 2 seconds
++)
++
++// ErrRejected wraps every reason cue2pops refuses a cue sheet.
++var ErrRejected = errors.New("cue2pops rejects the cue sheet")
++
++func reject(why string) error { return fmt.Errorf("%w: %s", ErrRejected, why) }
++
++// Segment kinds after the header.
++const (
++	segZero = iota
++	segBin
++)
++
++type segment struct {
++	kind int
++	src  int64 // BIN offset (segBin)
++	n    int64
++}
++
++// Layout is a VCD: Header, then segments of BIN bytes and zeros.
++type Layout struct {
++	Header  []byte // HeaderSize bytes
++	BinName string // as written in the cue's FILE line
++	Size    int64  // whole VCD
++	segs    []segment
++	start   []int64 // VCD offset of each segment
++}
++
++// cstrstr is C strstr on buf from start: the haystack ends at the first
++// NUL. -1 if not found.
++func cstrstr(buf []byte, start int, needle string) int {
++	end := start
++	for end < len(buf) && buf[end] != 0 {
++		end++
++	}
++	if start > end {
++		return -1
++	}
++	if i := strings.Index(string(buf[start:end]), needle); i >= 0 {
++		return start + i
++	}
++	return -1
++}
++
++// at reports whether buf holds s at i (cue2pops' byte-by-byte compares).
++func at(buf []byte, i int, s string) bool {
++	return i+len(s) <= len(buf) && string(buf[i:i+len(s)]) == s
++}
++
++// ch is a cue byte as C's (signed) char.
++func ch(buf []byte, i int) int { return int(int8(buf[i])) }
++
++// bcd is cue2pops' "two decimal digits -> BCD byte": (c0-48)*16 + (c1-48).
++func bcd(buf []byte, i int) byte { return byte((ch(buf, i)-48)*16 + ch(buf, i+1) - 48) }
++
++// sectors is cue2pops' MM:SS:FF at i+9 (INDEX line at i) in sectors.
++func sectors(buf []byte, i int) int32 {
++	d := func(j int) int32 { return int32(ch(buf, j) - 48) }
++	return (d(i+9)*10+d(i+10))*4500 + (d(i+12)*10+d(i+13))*75 + (d(i+15)*10 + d(i+16))
++}
++
++var (
++	plus8 = []byte{0x08, 0x09, 0x18, 0x19, 0x28, 0x29, 0x38, 0x39, 0x48, 0x49}
++	nines = []byte{0x09, 0x19, 0x29, 0x39, 0x49, 0x59, 0x69, 0x79, 0x89}
++)
++
++func in(set []byte, v byte) bool {
++	for _, x := range set {
++		if v == x {
++			return true
++		}
++	}
++	return false
++}
++
++// plus2 is cue2pops' "+ 2 SEC" on the BCD minute/second bytes h[m], h[s]
++// (the branch taken for tracks after the first).
++func plus2(h []byte, m, s int) {
++	switch {
++	case in(plus8, h[s]):
++		h[s] += 8 // 0x08 -> 0x10
++	case h[s] == 0x58 || h[s] == 0x59:
++		if h[s] == 0x58 {
++			h[s] = 0x00
++		}
++		if h[s] == 0x59 {
++			h[s] = 0x01
++		}
++		for _, x := range nines { // 0x09 -> 0x10, ... 0x89 -> 0x90
++			if h[m] == x {
++				h[m] = x + 7
++			}
++		}
++		if !in(nines, h[m]) { // always true by now: 0x09 ends up 0x11
++			h[m]++
++		}
++	default:
++		h[s] += 2
++	}
++}
++
++// BinName returns the BIN file name a cue sheet names, as cue2pops reads
++// it (the quoted name after the first "FILE "), or an error if cue2pops
++// rejects the sheet before that.
++func BinName(cue []byte) (string, error) {
++	buf, _, err := fileName(cue)
++	return buf, err
++}
++
++func fileName(cue []byte) (string, []byte, error) {
++	n := len(cue)
++	if n == 0 {
++		return "", nil, reject("empty cue sheet")
++	}
++	// cue_buf = malloc(cue_size * 2); here the rest is zeros, plus room for
++	// cue2pops' fixed-width look-ahead past the end.
++	buf := make([]byte, 2*n+64)
++	copy(buf, cue)
++
++	p := cstrstr(buf, 0, "INDEX 01 ")
++	if p < 0 {
++		return "", nil, reject("no INDEX 01") // cue2pops crashes
++	}
++	if p += 9; buf[p] != '0' || buf[p+1] != '0' {
++		return "", nil, reject("the first INDEX 01 is not at 00:xx:xx")
++	}
++	p = cstrstr(buf, 0, "FILE ")
++	if p < 0 {
++		return "", nil, reject("no FILE line") // cue2pops crashes
++	}
++	if p += 5; buf[p] != '"' {
++		return "", nil, reject("FILE name is not quoted")
++	}
++	for i := 0; i < n; i++ {
++		if buf[i] == '"' {
++			buf[i] = 0
++		}
++	}
++	p++
++	end := p
++	for buf[end] != 0 {
++		end++
++	}
++	return string(buf[p:end]), buf, nil
++}
++
++// Build computes the VCD cue2pops makes from a cue sheet. binSize returns
++// the size of the BIN the cue names (called once, after the cue checks,
++// where cue2pops opens it).
++func Build(cue []byte, binSize func(name string) (int64, error)) (*Layout, error) {
++	name, buf, err := fileName(cue)
++	if err != nil {
++		return nil, err
++	}
++	n := len(cue)
++	h := make([]byte, HeaderSize)
++	h[0] = 0x41  // 1st track type: data
++	h[2] = 0xA0  // A0: disc type
++	h[7] = 0x01  // first track number
++	h[8] = 0x20  // CD-XA001
++	h[12] = 0xA1 // A1: content
++	h[22] = 0xA2 // A2: lead-in/lead-out
++
++	i := 0
++	for ; i < n; i++ {
++		if at(buf, i, "TRACK 01") {
++			break
++		}
++	}
++	if cstrstr(buf, i, "TRACK 01 MODE2/2352") < 0 {
++		return nil, reject("not MODE2/2352")
++	}
++
++	var tracks, index1, binary, wave, pregaps, postgaps int
++	for i := 0; i < n; i++ {
++		if c := buf[i]; c == ':' || c == 0x0D || c == 0x0A {
++			buf[i] = 0
++		}
++		switch {
++		case at(buf, i, "TRACK "):
++			tracks++
++		case at(buf, i, "INDEX 01"):
++			index1++
++		case at(buf, i, "BINARY"):
++			binary++
++		case at(buf, i, "WAVE"):
++			wave++
++		case at(buf, i, "PREGAP"):
++			pregaps++
++		case at(buf, i, "POSTGAP"):
++			postgaps++
++		}
++	}
++	if binary == 0 {
++		return nil, reject("no BINARY file")
++	}
++	if tracks == 0 || tracks != index1 {
++		return nil, reject("TRACK and INDEX 01 counts differ")
++	}
++	if binary != 1 || wave != 0 {
++		return nil, reject("more than one file, or WAVE audio")
++	}
++	if 20+10*tracks+10 > 1024 {
++		return nil, reject("too many tracks") // their entries would run into 0x400
++	}
++	cdrwin := pregaps == 1 && postgaps == 0
++
++	hp := 20
++	gap := 0
++	var daTrack int32 // BIN offset of the first audio track (INDEX 00, else 01)
++	noCDDA := false
++	for t := 0; t < tracks; t++ {
++		hp += 10
++		for q := 0; q < n; q++ {
++			if !at(buf, q, "TRACK ") {
++				continue
++			}
++			clear(buf[q : q+6])
++			typ := byte(0x41) // data
++			if buf[q+13] == 'O' {
++				typ = 0x01 // AUDIO
++			}
++			h[10], h[20], h[hp] = typ, typ, typ
++			h[hp+2] = bcd(buf, q+6) // track number
++			h[17] = h[hp+2]         // last track number
++			break
++		}
++		for q := 0; q < n; q++ {
++			if at(buf, q, "INDEX 00") {
++				gap = q
++				clear(buf[q : q+8])
++			}
++			if !at(buf, q, "INDEX 01") {
++				continue
++			}
++			clear(buf[q : q+8])
++			m, s, f := bcd(buf, q+9), bcd(buf, q+12), bcd(buf, q+15)
++			switch {
++			case daTrack == 0 && h[10] == 0x01 && gap != 0:
++				daTrack = sectors(buf, gap) * SectorSize
++			case daTrack == 0 && h[10] == 0x01 && gap == 0:
++				daTrack = sectors(buf, q) * SectorSize
++			case daTrack == 0 && h[10] == 0x41 && t == tracks-1:
++				noCDDA = true
++			}
++			h[hp+3], h[hp+4], h[hp+5] = m, s, f // INDEX 00 (= INDEX 01 if none)
++			h[hp+7], h[hp+8], h[hp+9] = m, s, f // INDEX 01
++			if gap != 0 {
++				h[hp+3], h[hp+4], h[hp+5] = bcd(buf, gap+9), bcd(buf, gap+12), bcd(buf, gap+15)
++			}
++			// Unconditional +2 s: INDEX 00 after track 1, INDEX 01 always.
++			if t != 0 {
++				plus2(h, hp+3, hp+4)
++				plus2(h, hp+7, hp+8)
++			} else {
++				h[hp+8] += 2
++			}
++			if cdrwin && t != 0 { // the CDRWIN fix: +2 s more
++				plus2(h, hp+3, hp+4)
++				plus2(h, hp+7, hp+8)
++			}
++			gap = 0
++			break
++		}
++	}
++
++	size, err := binSize(name)
++	if err != nil {
++		return nil, err
++	}
++	// cue2pops keeps the size in an int and steps through it in 1 MiB.
++	if size < 0 || size > math.MaxInt32-HeaderSize {
++		return nil, reject("BIN larger than 2 GiB")
++	}
++	bs := int32(size)
++
++	// Lead-out MSF from the BIN size, via sprintf("%02d") into char[7].
++	sc := bs/SectorSize + gapSectors*int32(pregaps+postgaps) + gapSectors
++	lm := sc / 4500
++	ls := (sc - lm*4500) / 75
++	lf := sc - lm*4500 - ls*75
++	var lo [16]byte
++	for k, v := range []int32{lm, ls, lf} {
++		d := fmt.Sprintf("%02d", v)
++		copy(lo[2*k:], d)
++		lo[2*k+len(d)] = 0
++	}
++	for k := 0; k < 3; k++ {
++		h[27+k] = byte((int(int8(lo[2*k]))-'0')*16 + int(int8(lo[2*k+1])) - '0')
++	}
++	count := bs/SectorSize + gapSectors*int32(pregaps+postgaps)
++	if noCDDA {
++		daTrack = bs
++	}
++	for _, o := range []int{1032, 1036} { // sector count, little-endian
++		h[o], h[o+1], h[o+2], h[o+3] = byte(count), byte(count>>8), byte(count>>16), byte(count>>24)
++	}
++	h[1024], h[1025], h[1026], h[1027] = 'k', 'H', 'n', 0x20 // cue2pops v2.0 ident
++
++	l := &Layout{Header: h, BinName: name}
++	if err := l.copyLoop(bs, daTrack, cdrwin); err != nil {
++		return nil, err
++	}
++	l.Size = HeaderSize
++	for _, sg := range l.segs {
++		l.start = append(l.start, l.Size)
++		l.Size += sg.n
++	}
++	return l, nil
++}
++
++// run is a stretch of cue2pops' 1 MiB output buffer and what it holds.
++type run struct {
++	from, to int64 // buffer offsets
++	kind     int
++	src      int64 // BIN offset of buffer offset `from` (segBin)
++}
++
++// copyLoop replays cue2pops' fread/fwrite loop: which BIN bytes, zeros, and
++// stale buffer bytes (a short fread at the end of the BIN leaves the rest of
++// the buffer as it was) end up in the VCD after the header.
++func (l *Layout) copyLoop(bs, daTrack int32, cdrwin bool) error {
++	const chunk = HeaderSize
++	outbuf := []run{{0, chunk, segZero, 0}} // malloc'd: zeros here
++	var pos int64                           // BIN file position
++	fread := func(k int64) {
++		got := min(k, max(0, int64(bs)-pos))
++		if got == 0 {
++			return
++		}
++		next := []run{{0, got, segBin, pos}}
++		for _, r := range outbuf {
++			if r.to <= got {
++				continue
++			}
++			if r.from < got {
++				if r.kind == segBin {
++					r.src += got - r.from
++				}
++				r.from = got
++			}
++			next = append(next, r)
++		}
++		outbuf, pos = next, pos+got
++	}
++	fwrite := func(k int64) {
++		for _, r := range outbuf {
++			if r.from >= k {
++				break
++			}
++			l.add(segment{r.kind, r.src, min(r.to, k) - r.from})
++		}
++	}
++	for i := int32(0); i < bs; i += chunk {
++		if cdrwin && i+chunk >= daTrack {
++			first := int64(daTrack - i)
++			if first < 0 {
++				return reject("audio track before the BIN start")
++			}
++			fread(first)
++			fwrite(first)
++			l.add(segment{segZero, 0, gapSectors * SectorSize}) // the inserted pregap
++			fread(chunk - first)
++			fwrite(chunk - first)
++			cdrwin = false
++		} else {
++			fread(chunk)
++			if i+chunk >= bs {
++				fwrite(int64(bs - i))
++			} else {
++				fwrite(chunk)
++			}
++		}
++	}
++	return nil
++}
++
++func (l *Layout) add(s segment) {
++	if s.n <= 0 {
++		return
++	}
++	if k := len(l.segs) - 1; k >= 0 {
++		p := &l.segs[k]
++		if p.kind == s.kind && (s.kind == segZero || p.src+p.n == s.src) {
++			p.n += s.n
++			return
++		}
++	}
++	l.segs = append(l.segs, s)
++}
++
++// ReadAt fills p with the VCD bytes at off; bin reads the BIN.
++func (l *Layout) ReadAt(p []byte, off int64, bin io.ReaderAt) (int, error) {
++	if off < 0 {
++		return 0, errors.New("negative offset")
++	}
++	done := 0
++	for done < len(p) && off < l.Size {
++		q := p[done:]
++		var n int
++		if off < HeaderSize {
++			n = copy(q, l.Header[off:])
++		} else {
++			k := len(l.start) - 1
++			for k > 0 && l.start[k] > off {
++				k--
++			}
++			sg, in := l.segs[k], off-l.start[k]
++			q = q[:min(int64(len(q)), sg.n-in)]
++			if sg.kind == segZero {
++				n = len(q)
++				clear(q)
++			} else {
++				var err error
++				if n, err = bin.ReadAt(q, sg.src+in); n < len(q) {
++					if err == nil || err == io.EOF {
++						err = io.ErrUnexpectedEOF // the BIN shrank
++					}
++					return done + n, err
++				}
++			}
++		}
++		done += n
++		off += int64(n)
++	}
++	if done < len(p) {
++		return done, io.EOF
++	}
++	return done, nil
++}
++
++// FindBin resolves a cue's BIN name in the cue's folder: the name as a
++// path below that folder, else its last component; letter case is matched
++// loosely. cue2pops also accepts paths elsewhere; the server never reads
++// outside the served folder.
++func FindBin(cueDir, name string) (string, error) {
++	rel := filepath.FromSlash(strings.ReplaceAll(name, "\\", "/"))
++	var tries []string
++	if filepath.IsLocal(rel) {
++		tries = append(tries, filepath.Join(cueDir, rel))
++	}
++	tries = append(tries, filepath.Join(cueDir, filepath.Base(rel)))
++	for _, p := range tries {
++		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
++			return p, nil
++		}
++	}
++	base := filepath.Base(rel)
++	if ents, err := os.ReadDir(cueDir); err == nil {
++		for _, e := range ents {
++			if strings.EqualFold(e.Name(), base) && e.Type().IsRegular() {
++				return filepath.Join(cueDir, e.Name()), nil
++			}
++		}
++	}
++	return "", fmt.Errorf("%w: BIN %q not found next to the cue", ErrRejected, name)
++}
++
++// Image is a cue's VCD: its layout and the files it comes from.
++type Image struct {
++	*Layout
++	CuePath, BinPath string
++	ModTime          time.Time // newest of cue and BIN
++}
++
++// maxCue: cue sheets are small; anything bigger is not one.
++const maxCue = 1 << 20
++
++// Load builds the VCD of the cue at cuePath.
++func Load(cuePath string) (*Image, error) {
++	cst, err := os.Stat(cuePath)
++	if err != nil {
++		return nil, err
++	}
++	if cst.Size() > maxCue {
++		return nil, reject("cue sheet larger than 1 MiB")
++	}
++	cue, err := os.ReadFile(cuePath)
++	if err != nil {
++		return nil, err
++	}
++	img := &Image{CuePath: cuePath, ModTime: cst.ModTime()}
++	img.Layout, err = Build(cue, func(name string) (int64, error) {
++		p, err := FindBin(filepath.Dir(cuePath), name)
++		if err != nil {
++			return 0, err
++		}
++		st, err := os.Stat(p)
++		if err != nil {
++			return 0, err
++		}
++		img.BinPath = p
++		if st.ModTime().After(img.ModTime) {
++			img.ModTime = st.ModTime()
++		}
++		return st.Size(), nil
++	})
++	if err != nil {
++		return nil, err
++	}
++	return img, nil
++}
++
++// Info is the VCD's stat under the given name.
++func (img *Image) Info(name string) os.FileInfo {
++	return common.NewCompressedInfo(name, img.Size, img.ModTime)
++}
++
++// FindCue returns the cue sheet that the (virtual) VCD at vcdPath stands
++// for: Name.cue next to it, letter case matched loosely.
++func FindCue(vcdPath string) (string, bool) {
++	if !strings.EqualFold(filepath.Ext(vcdPath), ".vcd") {
++		return "", false
++	}
++	stem := strings.TrimSuffix(vcdPath, filepath.Ext(vcdPath))
++	for _, ext := range []string{".cue", ".CUE"} {
++		if st, err := os.Stat(stem + ext); err == nil && st.Mode().IsRegular() {
++			return stem + ext, true
++		}
++	}
++	want := filepath.Base(stem) + ".cue"
++	ents, err := os.ReadDir(filepath.Dir(vcdPath))
++	if err != nil {
++		return "", false
++	}
++	for _, e := range ents {
++		if strings.EqualFold(e.Name(), want) && e.Type().IsRegular() {
++			return filepath.Join(filepath.Dir(vcdPath), e.Name()), true
++		}
++	}
++	return "", false
++}
++
++// VCDName is the name a cue sheet is listed as: "Game.cue" -> "Game.VCD".
++func VCDName(cueName string) string {
++	return strings.TrimSuffix(cueName, filepath.Ext(cueName)) + ".VCD"
++}
++
++// File reads a VCD (interfaces.FileObject, read-only).
++type File struct {
++	img  *Image
++	name string // host path of the VCD, as for a real file
++	info os.FileInfo
++	bin  *os.File
++	pos  int64
++}
++
++// Open opens the VCD of the cue at cuePath; vcdPath is the name it is
++// served under.
++func Open(cuePath, vcdPath string) (*File, error) {
++	img, err := Load(cuePath)
++	if err != nil {
++		return nil, err
++	}
++	bin, err := os.Open(img.BinPath)
++	if err != nil {
++		return nil, err
++	}
++	return &File{img: img, name: vcdPath, info: img.Info(filepath.Base(vcdPath)), bin: bin}, nil
++}
++
++func (f *File) Read(p []byte) (int, error) {
++	if f.pos >= f.img.Size {
++		return 0, io.EOF
++	}
++	n, err := f.img.ReadAt(p, f.pos, f.bin)
++	f.pos += int64(n)
++	if err == io.EOF && n > 0 {
++		err = nil
++	}
++	return n, err
++}
++
++func (f *File) Seek(offset int64, whence int) (int64, error) {
++	switch whence {
++	case io.SeekStart:
++	case io.SeekCurrent:
++		offset += f.pos
++	case io.SeekEnd:
++		offset += f.img.Size
++	default:
++		return f.pos, fmt.Errorf("invalid whence %d", whence)
++	}
++	if offset < 0 {
++		return f.pos, errors.New("negative position")
++	}
++	f.pos = offset
++	return f.pos, nil
++}
++
++// Write: VCDs made from cue sheets are read-only.
++func (f *File) Write([]byte) (int, error) { return 0, os.ErrPermission }
++
++func (f *File) Stat() (os.FileInfo, error) { return f.info, nil }
++func (f *File) Name() string               { return f.name }
++func (f *File) Close() error               { return f.bin.Close() }
+diff --git a/internal/fs/vcd/vcd_test.go b/internal/fs/vcd/vcd_test.go
+new file mode 100644
+index 0000000..146915a
+--- /dev/null
++++ b/internal/fs/vcd/vcd_test.go
+@@ -0,0 +1,316 @@
++package vcd
++
++import (
++	"bytes"
++	"errors"
++	"io"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++// binData is a recognisable BIN: every byte depends on its offset.
++func binData(n int) []byte {
++	b := make([]byte, n)
++	for i := range b {
++		b[i] = byte(i ^ i>>8 ^ i>>16)
++	}
++	return b
++}
++
++// header returns a HeaderSize header with the given non-zero bytes.
++func header(set map[int]byte) []byte {
++	h := make([]byte, HeaderSize)
++	for o, v := range set {
++		h[o] = v
++	}
++	return h
++}
++
++func build(t *testing.T, cue string, binSize int64) *Layout {
++	t.Helper()
++	l, err := Build([]byte(cue), func(string) (int64, error) { return binSize, nil })
++	if err != nil {
++		t.Fatal(err)
++	}
++	return l
++}
++
++func checkHeader(t *testing.T, got, want []byte) {
++	t.Helper()
++	for i := range want {
++		if got[i] != want[i] {
++			t.Fatalf("header byte %#x = %#02x, want %#02x", i, got[i], want[i])
++		}
++	}
++}
++
++// image returns the whole VCD of l for bin.
++func image(t *testing.T, l *Layout, bin []byte) []byte {
++	t.Helper()
++	out := make([]byte, l.Size)
++	if n, err := l.ReadAt(out, 0, bytes.NewReader(bin)); n != len(out) || (err != nil && err != io.EOF) {
++		t.Fatalf("ReadAt: %d %v", n, err)
++	}
++	return out
++}
++
++const cueOneTrack = "FILE \"G.bin\" BINARY\r\n  TRACK 01 MODE2/2352\r\n    INDEX 01 00:00:00\r\n"
++
++func TestOneTrack(t *testing.T) {
++	bin := binData(100 * SectorSize)
++	l := build(t, cueOneTrack, int64(len(bin)))
++	if l.BinName != "G.bin" {
++		t.Fatalf("bin name %q", l.BinName)
++	}
++	checkHeader(t, l.Header, header(map[int]byte{
++		0x00: 0x41, 0x02: 0xA0, 0x07: 0x01, 0x08: 0x20, // A0
++		0x0A: 0x41, 0x0C: 0xA1, 0x11: 0x01, // A1: data only, last track 01
++		0x14: 0x41, 0x16: 0xA2, 0x1B: 0x00, 0x1C: 0x03, 0x1D: 0x25, // A2: lead-out 00:03:25 (250 sectors)
++		0x1E: 0x41, 0x20: 0x01, 0x21: 0x00, 0x22: 0x00, 0x23: 0x00, 0x25: 0x00, 0x26: 0x02, 0x27: 0x00, // track 01: 00:00:00 / 00:02:00
++		0x400: 'k', 0x401: 'H', 0x402: 'n', 0x403: 0x20,
++		0x408: 100, 0x40C: 100, // sectors
++	}))
++	if l.Size != HeaderSize+int64(len(bin)) {
++		t.Fatalf("size %d", l.Size)
++	}
++	if img := image(t, l, bin); !bytes.Equal(img[HeaderSize:], bin) || !bytes.Equal(img[:HeaderSize], l.Header) {
++		t.Fatal("image is not header + BIN")
++	}
++}
++
++const cueAudio = `FILE "Game (USA).bin" BINARY
++  TRACK 01 MODE2/2352
++    INDEX 01 00:00:00
++  TRACK 02 AUDIO
++    INDEX 00 00:06:00
++    INDEX 01 00:08:00
++  TRACK 03 AUDIO
++    INDEX 00 00:48:10
++    INDEX 01 09:59:74
++`
++
++func TestDataAndTwoAudioTracks(t *testing.T) {
++	bin := binData(1000 * SectorSize)
++	l := build(t, cueAudio, int64(len(bin)))
++	checkHeader(t, l.Header, header(map[int]byte{
++		0x00: 0x41, 0x02: 0xA0, 0x07: 0x01, 0x08: 0x20,
++		0x0A: 0x01, 0x0C: 0xA1, 0x11: 0x03, // last track is audio, number 03
++		0x14: 0x01, 0x16: 0xA2, 0x1B: 0x00, 0x1C: 0x15, 0x1D: 0x25, // lead-out 00:15:25 (1150 sectors)
++		0x1E: 0x41, 0x20: 0x01, 0x26: 0x02, // track 01
++		// track 02: INDEX 00 00:06:00 +2 s = 00:08:00, INDEX 01 00:08:00 +2 s = 00:10:00
++		0x28: 0x01, 0x2A: 0x02, 0x2B: 0x00, 0x2C: 0x08, 0x2D: 0x00, 0x2F: 0x00, 0x30: 0x10, 0x31: 0x00,
++		// track 03: 00:48:10 -> 00:50:10; 09:59:74 -> 11:01:74 (cue2pops' minute carry quirk)
++		0x32: 0x01, 0x34: 0x03, 0x35: 0x00, 0x36: 0x50, 0x37: 0x10, 0x39: 0x11, 0x3A: 0x01, 0x3B: 0x74,
++		0x400: 'k', 0x401: 'H', 0x402: 'n', 0x403: 0x20,
++		0x408: 0xE8, 0x409: 0x03, 0x40C: 0xE8, 0x40D: 0x03, // 1000 sectors
++	}))
++	if l.BinName != "Game (USA).bin" || l.Size != HeaderSize+int64(len(bin)) {
++		t.Fatalf("%q %d", l.BinName, l.Size)
++	}
++}
++
++const cueCDRWIN = "FILE \"C.bin\" BINARY\n TRACK 01 MODE2/2352\n  INDEX 01 00:00:00\n TRACK 02 AUDIO\n  PREGAP 00:02:00\n  INDEX 01 00:10:00\n"
++
++func TestCDRWINPregapInserted(t *testing.T) {
++	bin := binData(1000 * SectorSize)
++	l := build(t, cueCDRWIN, int64(len(bin)))
++	checkHeader(t, l.Header, header(map[int]byte{
++		0x00: 0x41, 0x02: 0xA0, 0x07: 0x01, 0x08: 0x20,
++		0x0A: 0x01, 0x0C: 0xA1, 0x11: 0x02,
++		0x14: 0x01, 0x16: 0xA2, 0x1B: 0x00, 0x1C: 0x17, 0x1D: 0x25, // 1000+150+150 = 1300 sectors
++		0x1E: 0x41, 0x20: 0x01, 0x26: 0x02,
++		// track 02: 00:10:00 +2 s +2 s (CDRWIN) = 00:14:00, both indexes
++		0x28: 0x01, 0x2A: 0x02, 0x2C: 0x14, 0x30: 0x14,
++		0x400: 'k', 0x401: 'H', 0x402: 'n', 0x403: 0x20,
++		0x408: 0x7E, 0x409: 0x04, 0x40C: 0x7E, 0x40D: 0x04, // 1150 sectors
++	}))
++	gap := int64(150 * SectorSize)
++	at := int64(750 * SectorSize) // track 02 INDEX 01: 00:10:00
++	if l.Size != HeaderSize+int64(len(bin))+gap {
++		t.Fatalf("size %d", l.Size)
++	}
++	img := image(t, l, bin)[HeaderSize:]
++	if !bytes.Equal(img[:at], bin[:at]) || !bytes.Equal(img[at:at+gap], make([]byte, gap)) || !bytes.Equal(img[at+gap:], bin[at:]) {
++		t.Fatal("pregap not inserted at the audio track")
++	}
++}
++
++// A CDRWIN gap in the BIN's last MiB: cue2pops' second fread comes up short
++// and it writes the rest of its buffer as it was (here the previous MiB).
++func TestCDRWINInLastChunkKeepsStaleBuffer(t *testing.T) {
++	cue := strings.Replace(cueCDRWIN, "00:10:00", "00:06:00", 1) // 450 sectors
++	bin := binData(500 * SectorSize)
++	l := build(t, cue, int64(len(bin)))
++	at := int64(450 * SectorSize)
++	short := int64(len(bin)) - at                                          // real bytes after the gap
++	second := HeaderSize - (at - HeaderSize)                               // bytes cue2pops writes after the gap
++	if want := HeaderSize + at + 150*SectorSize + second; l.Size != want { // not BIN + gap
++		t.Fatalf("size %d, want %d", l.Size, want)
++	}
++	img := image(t, l, bin)[HeaderSize:]
++	tail := img[at+150*SectorSize:]
++	if !bytes.Equal(img[:at], bin[:at]) || !bytes.Equal(tail[:short], bin[at:]) ||
++		!bytes.Equal(tail[short:], bin[short:second]) {
++		t.Fatal("stale buffer bytes differ")
++	}
++}
++
++func TestReadAcrossHeaderAndGaps(t *testing.T) {
++	dir := t.TempDir()
++	bin := binData(1000 * SectorSize)
++	os.WriteFile(filepath.Join(dir, "c.bin"), bin, 0644)
++	os.WriteFile(filepath.Join(dir, "C.cue"), []byte(strings.Replace(cueCDRWIN, "C.bin", "C.BIN", 1)), 0644)
++	cue, ok := FindCue(filepath.Join(dir, "C.VCD"))
++	if !ok {
++		t.Fatal("cue not found")
++	}
++	f, err := Open(cue, filepath.Join(dir, "C.VCD")) // BIN name matched loosely
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer f.Close()
++	l := build(t, cueCDRWIN, int64(len(bin)))
++	want := image(t, l, bin)
++	if st, _ := f.Stat(); st.Size() != int64(len(want)) || st.Name() != "C.VCD" {
++		t.Fatalf("stat %s %d", st.Name(), st.Size())
++	}
++	at := int64(HeaderSize + 750*SectorSize)
++	for _, c := range []struct{ off, n int64 }{
++		{0, 64}, {HeaderSize - 10, 20}, {HeaderSize - 1, 3 * SectorSize}, {at - 5, 10},
++		{at + 150*SectorSize - 7, 14}, {at - 100, 150*SectorSize + 200}, {int64(len(want)) - 9, 9}, {HeaderSize, 2 << 20},
++	} {
++		if _, err := f.Seek(c.off, io.SeekStart); err != nil {
++			t.Fatal(err)
++		}
++		got := make([]byte, c.n)
++		if _, err := io.ReadFull(f, got); err != nil || !bytes.Equal(got, want[c.off:c.off+c.n]) {
++			t.Fatalf("read %d at %#x: %v", c.n, c.off, err)
++		}
++	}
++	if pos, _ := f.Seek(0, io.SeekEnd); pos != int64(len(want)) {
++		t.Fatalf("SEEK_END %d", pos)
++	}
++	if n, err := f.Read(make([]byte, 10)); n != 0 || err != io.EOF {
++		t.Fatalf("at EOF: %d %v", n, err)
++	}
++	if _, err := f.Write([]byte{1}); err == nil {
++		t.Fatal("write accepted")
++	}
++}
++
++var rejected = map[string]string{
++	"two files":       "FILE \"a.bin\" BINARY\nTRACK 01 MODE2/2352\nINDEX 01 00:00:00\nFILE \"b.bin\" BINARY\nTRACK 02 AUDIO\nINDEX 01 00:00:00\n",
++	"wave audio":      "FILE \"a.bin\" BINARY\nTRACK 01 MODE2/2352\nINDEX 01 00:00:00\nFILE \"b.wav\" WAVE\nTRACK 02 AUDIO\nINDEX 01 00:00:00\n",
++	"mode1":           "FILE \"a.bin\" BINARY\nTRACK 01 MODE1/2352\nINDEX 01 00:00:00\n",
++	"track 1":         "FILE \"a.bin\" BINARY\nTRACK 1 MODE2/2352\nINDEX 01 00:00:00\n",
++	"no index 01":     "FILE \"a.bin\" BINARY\nTRACK 01 MODE2/2352\nINDEX 01 00:00:00\nTRACK 02 AUDIO\nINDEX 00 00:10:00\n",
++	"index at 01 min": "FILE \"a.bin\" BINARY\nTRACK 01 MODE2/2352\nINDEX 01 01:00:00\n",
++	"unquoted file":   "FILE a.bin BINARY\nTRACK 01 MODE2/2352\nINDEX 01 00:00:00\n",
++	"lower case":      "file \"a.bin\" binary\ntrack 01 mode2/2352\nindex 01 00:00:00\n",
++	"no binary":       "FILE \"a.bin\" MOTOROLA\nTRACK 01 MODE2/2352\nINDEX 01 00:00:00\n",
++}
++
++func TestRejectedCues(t *testing.T) {
++	for name, cue := range rejected {
++		if _, err := Build([]byte(cue), func(string) (int64, error) { return 1 << 20, nil }); !errors.Is(err, ErrRejected) {
++			t.Errorf("%s: accepted (%v)", name, err)
++		}
++	}
++	if _, err := Build(nil, nil); !errors.Is(err, ErrRejected) {
++		t.Error("empty cue accepted")
++	}
++	dir := t.TempDir()
++	os.WriteFile(filepath.Join(dir, "G.cue"), []byte(cueOneTrack), 0644)
++	if _, err := Load(filepath.Join(dir, "G.cue")); !errors.Is(err, ErrRejected) {
++		t.Errorf("cue without its BIN: %v", err)
++	}
++}
++
++func TestFindBinStaysInFolder(t *testing.T) {
++	dir := t.TempDir()
++	os.MkdirAll(filepath.Join(dir, "sub"), 0755)
++	os.WriteFile(filepath.Join(dir, "sub", "x.bin"), []byte("x"), 0644)
++	os.WriteFile(filepath.Join(dir, "y.bin"), []byte("y"), 0644)
++	for name, want := range map[string]string{
++		"sub/x.bin": filepath.Join(dir, "sub", "x.bin"), "sub\\x.bin": filepath.Join(dir, "sub", "x.bin"),
++		"C:\\Games\\y.bin": filepath.Join(dir, "y.bin"), "../../y.bin": filepath.Join(dir, "y.bin"), "Y.BIN": filepath.Join(dir, "y.bin"),
++	} {
++		if got, err := FindBin(dir, name); err != nil || !strings.EqualFold(got, want) {
++			t.Errorf("FindBin(%q) = %q %v, want %q", name, got, err, want)
++		}
++	}
++	if _, err := FindBin(dir, "../outside.bin"); err == nil {
++		t.Error("missing BIN found")
++	}
++}
++
++// TestMatchesCue2pops compares Build with the original cue2pops v2.0 when
++// CUE2POPS names a build of it (cue2pops.c, unmodified): byte for byte on
++// accepted cues, and both reject the rejected ones.
++func TestMatchesCue2pops(t *testing.T) {
++	tool := os.Getenv("CUE2POPS")
++	if tool == "" {
++		t.Skip("set CUE2POPS to a cue2pops v2.0 binary to compare")
++	}
++	type tc struct {
++		cue     string
++		sectors int
++	}
++	cases := map[string]tc{
++		"one track":       {cueOneTrack, 100},
++		"audio":           {cueAudio, 1000},
++		"cdrwin":          {cueCDRWIN, 1000},
++		"cdrwin-last-mib": {strings.Replace(cueCDRWIN, "00:10:00", "00:06:00", 1), 500},
++		"cdrwin-boundary": {strings.Replace(cueCDRWIN, "00:10:00", "00:05:71", 1), 1200}, // 446 sectors: 1 MiB = 445.8 sectors
++		"cdrwin-index00":  {strings.Replace(cueCDRWIN, "  PREGAP 00:02:00\n", "  PREGAP 00:02:00\n  INDEX 00 00:09:00\n", 1), 900},
++		"big":             {"FILE \"B.bin\" BINARY\r\n  TRACK 01 MODE2/2352\r\n    INDEX 01 00:00:00\r\n  TRACK 02 AUDIO\r\n    INDEX 00 01:58:70\r\n    INDEX 01 02:00:70\r\n  TRACK 03 AUDIO\r\n    INDEX 00 19:59:00\r\n    INDEX 01 19:59:50\r\n", 10000},
++		"postgap":         {"FILE \"P.bin\" BINARY\n TRACK 01 MODE2/2352\n  INDEX 01 00:00:00\n  POSTGAP 00:02:00\n TRACK 02 AUDIO\n  PREGAP 00:02:00\n  INDEX 01 00:04:00\n", 400},
++		"data only gap":   {"FILE \"D.bin\" BINARY\n TRACK 01 MODE2/2352\n  INDEX 01 00:00:00\n PREGAP 00:02:00\n", 600},
++		"odd size":        {cueOneTrack, 0},
++		"rem lines":       {"\xEF\xBB\xBFREM GENRE \"Platform\"\r\nREM DATE 1997\r\nCATALOG 0000000000000\r\nFILE \"R.bin\" BINARY\r\n  TRACK 01 MODE2/2352\r\n    FLAGS DCP\r\n    INDEX 00 00:00:00\r\n    INDEX 01 00:02:00\r\n  TRACK 02 AUDIO\r\n    FLAGS DCP\r\n    INDEX 00 03:10:22\r\n    INDEX 01 03:12:22\r\n", 15000},
++		"track in name":   {"FILE \"Game (TRACK 1).bin\" BINARY\n TRACK 01 MODE2/2352\n  INDEX 01 00:00:00\n", 10},
++	}
++	for name, cue := range rejected {
++		cases["rejected "+name] = tc{cue, 10}
++	}
++	for name, c := range cases {
++		dir := t.TempDir()
++		binName, err := BinName([]byte(c.cue))
++		if err != nil {
++			binName = "a.bin"
++		}
++		bin := binData(c.sectors * SectorSize)
++		if c.sectors == 0 {
++			bin = binData(3*SectorSize + 1000)
++		}
++		os.WriteFile(filepath.Join(dir, binName), bin, 0644)
++		cuePath := filepath.Join(dir, "game.cue")
++		os.WriteFile(cuePath, []byte(c.cue), 0644)
++		cmd := exec.Command(tool, cuePath)
++		cmd.Dir = dir
++		out, _ := cmd.CombinedOutput()
++		want, cerr := os.ReadFile(filepath.Join(dir, "game.VCD"))
++		img, gerr := Load(cuePath)
++		if cerr != nil || gerr != nil {
++			if (cerr == nil) != (gerr == nil) {
++				t.Errorf("%s: cue2pops: %v, Build: %v\n%s", name, cerr, gerr, out)
++			} else {
++				t.Logf("%s: both reject", name)
++			}
++			continue
++		}
++		got := image(t, img.Layout, bin)
++		if !bytes.Equal(got, want) {
++			i := 0
++			for i < min(len(got), len(want)) && got[i] == want[i] {
++				i++
++			}
++			t.Errorf("%s: %d bytes, cue2pops %d; first difference at %#x", name, len(got), len(want), i)
++			continue
++		}
++		t.Logf("%s: identical, %d bytes", name, len(got))
++	}
++}
+diff --git a/internal/fs/vcd_backend_test.go b/internal/fs/vcd_backend_test.go
+new file mode 100644
+index 0000000..7d021fd
+--- /dev/null
++++ b/internal/fs/vcd_backend_test.go
+@@ -0,0 +1,105 @@
++package fs
++
++import (
++	"bytes"
++	"io"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/pcm720/udpfsd/internal/fs/vcd"
++)
++
++func TestCueServedAsVCD(t *testing.T) {
++	pops := t.TempDir()
++	apps := t.TempDir()
++	bin := make([]byte, 300*vcd.SectorSize)
++	for i := range bin {
++		bin[i] = byte(i / 7)
++	}
++	cue := "FILE \"Game (USA).bin\" BINARY\r\n  TRACK 01 MODE2/2352\r\n    INDEX 01 00:00:00\r\n  TRACK 02 AUDIO\r\n    INDEX 00 00:02:00\r\n    INDEX 01 00:03:00\r\n"
++	mkfile(t, filepath.Join(pops, "Game (USA).cue"), cue)
++	mkfile(t, filepath.Join(pops, "Game (USA).bin"), string(bin))
++	mkfile(t, filepath.Join(pops, "Real.cue"), cue)
++	mkfile(t, filepath.Join(pops, "Real.VCD"), "a real VCD")
++	badCue := "FILE \"Bad.bin\" BINARY\r\n  TRACK 01 MODE1/2048\r\n    INDEX 01 00:00:00\r\n"
++	mkfile(t, filepath.Join(pops, "Bad.cue"), badCue)
++	mkfile(t, filepath.Join(pops, "Bad.bin"), "x")
++	mkfile(t, filepath.Join(pops, "POPSTARTER.KELF"), "kelf")
++	mkfile(t, filepath.Join(apps, "Game (USA).cue"), cue)
++	mkfile(t, filepath.Join(apps, "Game (USA).bin"), string(bin))
++	b, err := NewBackend(WithMount("POPS", pops), WithMount("APPS", apps), WithCueImages("POPS", "CD"), WithReadOnly())
++	if err != nil {
++		t.Fatal(err)
++	}
++	l, err := vcd.Build([]byte(cue), func(string) (int64, error) { return int64(len(bin)), nil })
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := make([]byte, l.Size)
++	l.ReadAt(want, 0, bytes.NewReader(bin))
++
++	h, _, err := b.Open("/POPS", os.O_RDONLY, true)
++	if err != nil {
++		t.Fatal(err)
++	}
++	sizes := map[string]uint32{}
++	for {
++		ok, name, st, err := b.Dread(h)
++		if err != nil || !ok {
++			break
++		}
++		sizes[name] = st.Size
++	}
++	b.Close(h)
++	wantList := map[string]uint32{"Game (USA).VCD": uint32(len(want)), "Game (USA).bin": uint32(len(bin)),
++		"Real.cue": uint32(len(cue)), "Real.VCD": 10, "Bad.cue": uint32(len(badCue)), "Bad.bin": 1, "POPSTARTER.KELF": 4}
++	if len(sizes) != len(wantList) {
++		t.Fatalf("listing %v", sizes)
++	}
++	for n, s := range wantList {
++		if sizes[n] != s {
++			t.Fatalf("listing %v, want %v", sizes, wantList)
++		}
++	}
++	if got := listDir(t, b, "/APPS"); !eq(got, []string{"Game (USA).bin", "Game (USA).cue"}) {
++		t.Fatalf("VCD outside POPS/CD: %v", got)
++	}
++
++	if gs, err := b.Getstat("/POPS/Game (USA).VCD"); err != nil || int(gs.Size) != len(want) {
++		t.Fatalf("getstat %d %v", gs.Size, err)
++	}
++	h, st, err := b.Open("/POPS/Game (USA).VCD", os.O_RDONLY, false)
++	if err != nil || int(st.Size) != len(want) {
++		t.Fatalf("open %d %v", st.Size, err)
++	}
++	buf := make([]byte, 128*1024)
++	b.Lseek(h, vcd.HeaderSize-100, io.SeekStart)
++	if n, got, err := b.Read(h, 1000, buf); err != nil || n != 1000 || !bytes.Equal(got, want[vcd.HeaderSize-100:vcd.HeaderSize+900]) {
++		t.Fatalf("read across the header: %d %v", n, err)
++	}
++	if pos, _ := b.Lseek(h, 0, io.SeekEnd); pos != int64(len(want)) {
++		t.Fatalf("SEEK_END %d", pos)
++	}
++	b.Close(h)
++	if got, err := readAll(t, b, "/POPS/Real.VCD"); err != nil || got != "a real VCD" {
++		t.Fatalf("real VCD: %q %v", got, err)
++	}
++	if _, err := readAll(t, b, "/POPS/Bad.VCD"); err == nil {
++		t.Fatal("rejected cue served")
++	}
++	if _, err := readAll(t, b, "/APPS/Game (USA).VCD"); err == nil {
++		t.Fatal("VCD served outside POPS/CD")
++	}
++	if _, _, err := b.Open("/POPS/Game (USA).VCD", os.O_RDWR, false); err == nil {
++		t.Fatal("VCD opened for writing")
++	}
++	h, _, err = b.Open("/.lz4f/POPS/Game (USA).VCD", os.O_RDONLY, false)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := readFrames(t, b, h, 131072); !bytes.Equal(got, want) {
++		t.Fatal("framed VCD differs")
++	}
++	b.Close(h)
++}
+diff --git a/internal/fs/virtual.go b/internal/fs/virtual.go
+index 3be28b0..f7ae6ad 100644
+--- a/internal/fs/virtual.go
++++ b/internal/fs/virtual.go
+@@ -11,6 +11,7 @@ import (
+ 	"github.com/pcm720/udpfsd/internal/fs/compression"
+ 	"github.com/pcm720/udpfsd/internal/fs/interfaces"
+ 	"github.com/pcm720/udpfsd/internal/fs/split"
++	"github.com/pcm720/udpfsd/internal/fs/vcd"
+ 	"github.com/pcm720/udpfsd/internal/fs/wire"
+ 	"github.com/pcm720/udpfsd/udpfs"
+ )
+@@ -101,6 +102,15 @@ func (s *Backend) openVirtual(fullPath string) interfaces.FileObject {
+ 			return f
+ 		}
+ 	}
++	if s.mountHas(s.cueMounts, fullPath) {
++		if cue, ok := vcd.FindCue(fullPath); ok {
++			f, err := vcd.Open(cue, fullPath)
++			if err == nil {
++				return f
++			}
++			log.Printf("fs: %s: no VCD: %v", cue, err)
++		}
++	}
+ 	return nil
+ }
+ 
+@@ -117,6 +127,13 @@ func (s *Backend) statVirtual(fullPath string) os.FileInfo {
+ 			return st
+ 		}
+ 	}
++	if s.mountHas(s.cueMounts, fullPath) {
++		if cue, ok := vcd.FindCue(fullPath); ok {
++			if img, err := vcd.Load(cue); err == nil {
++				return img.Info(filepath.Base(fullPath))
++			}
++		}
++	}
+ 	return nil
+ }
+ 
+@@ -138,9 +155,39 @@ func (s *Backend) virtualEntries(dir string, entries []os.DirEntry) []os.DirEntr
+ 	if s.splitMounts[m.name] {
+ 		entries = splitEntries(entries)
+ 	}
++	if s.cueMounts[m.name] {
++		entries = cueEntries(dir, entries)
++	}
+ 	return entries
+ }
+ 
++// cueEntries lists each cue sheet that cue2pops accepts as its VCD
++// (Game.cue -> Game.VCD, with the VCD's size). A real Game.VCD wins; the
++// BIN stays listed.
++func cueEntries(dir string, entries []os.DirEntry) []os.DirEntry {
++	present := map[string]bool{}
++	for _, e := range entries {
++		present[foldName(e.Name())] = true
++	}
++	out := make([]os.DirEntry, 0, len(entries))
++	changed := false
++	for _, e := range entries {
++		name := e.Name()
++		if strings.EqualFold(filepath.Ext(name), ".cue") && e.Type().IsRegular() && !present[foldName(vcd.VCDName(name))] {
++			if img, err := vcd.Load(filepath.Join(dir, name)); err == nil {
++				out = append(out, virtualEntry{img.Info(vcd.VCDName(name))})
++				changed = true
++				continue
++			}
++		}
++		out = append(out, e)
++	}
++	if changed {
++		sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
++	}
++	return out
++}
++
+ // splitEntries lists each split image (Name.iso.001, .002, ...) as one
+ // Name.iso with the summed size and hides its parts. A real Name.iso wins.
+ func splitEntries(entries []os.DirEntry) []os.DirEntry {

@@ -29,6 +29,17 @@ void flow_batch_install(void);
 void flow_auto_install(void);
 
 void flow_installed_games(void);
+/* Read every checkable installed game back (Verify game data for all). */
+void flow_check_all_games(void);
+
+/* flows_tools.c: install a PS2 game from the disc drive; HDD health
+ * (SMART, space, largest game that fits, check all games). */
+void flow_disc_install(void);
+void flow_hdd_health(void);
+
+/* flows_extras.c: saves / memory cards, cheats, OPL settings and art,
+ * for installed games (from the server's VMC, CHT, CFG and ART folders). */
+void flow_extras(void);
 /* PS1 game (.VCD) from the server or USB: plan screen, then install. */
 void flow_install_ps1(const char *path);
 /* Rename / delete an installed PS1 game partition. */

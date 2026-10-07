@@ -95,8 +95,12 @@ void default_display_title(const iso_info_t *iso, const char *source_path,
     base = colon + 1;
   str_copy(out, base, outsz);
   size_t n = strlen(out);
-  if (str_ends_with_ci(out, ".zso.iso"))
+  if (str_ends_with_ci(out, ".zso.iso") || str_ends_with_ci(out, ".cso.iso") ||
+      str_ends_with_ci(out, ".chd.iso"))
     out[n - 8] = 0;
   else if (str_ends_with_ci(out, ".iso") || str_ends_with_ci(out, ".zso"))
     out[n - 4] = 0;
+  /* A disc in the drive ("cdrom0:") has no file name: the game ID. */
+  if (!out[0])
+    str_copy(out, iso->part_id, outsz);
 }

@@ -32,17 +32,31 @@ chmod +x "$P/PC/udpfsd/udpfsd-linux-amd64"
 # POPStarter (pinned rev13 Beta KELF, unchanged).
 mkdir -p "$P/PC/udpfsd/POPS"
 [ -f "$DIST/udpfsd/POPS/POPSTARTER.KELF" ] && cp "$DIST/udpfsd/POPS/POPSTARTER.KELF" "$P/PC/udpfsd/POPS/"
-for d in DVD CD CFG ART APPS; do
+for d in DVD CD CFG ART APPS VMC CHT; do
   mkdir -p "$P/PC/udpfsd/$d"
 done
-echo "Put DVD game images (.iso / .zso) in this folder." > "$P/PC/udpfsd/DVD/_put_DVD_games_here.txt"
-echo "Put CD game images (.iso / .zso) in this folder." > "$P/PC/udpfsd/CD/_put_CD_games_here.txt"
+echo "Put DVD game images (.iso .zso .cso .chd, or split .iso.001 .002 ...) in this folder." > "$P/PC/udpfsd/DVD/_put_DVD_games_here.txt"
+echo "Put CD game images (.iso .zso .cso .chd) here; PS1 games (.VCD or BIN/CUE) too." > "$P/PC/udpfsd/CD/_put_CD_games_here.txt"
 echo "Optional: OPL per-game settings named <GAME-ID>.cfg, e.g. SLUS_203.12.cfg." > "$P/PC/udpfsd/CFG/_optional_OPL_settings_here.txt"
-echo "Optional: covers named <GAME-ID>_COV.png or .jpg, e.g. SLUS_203.12_COV.jpg." > "$P/PC/udpfsd/ART/_optional_covers_here.txt"
+printf '%s\n' "Optional art named <GAME-ID>_<TYPE>.png or .jpg, e.g. SLUS_203.12_COV.jpg." "" \
+  "COV is the XMB cover. All of these are also installed for OPL (as PNG):" \
+  "  COV COV2 ICO LAB LGO BG (or BG_00) SCR (or SCR_00) SCR2 (or SCR_01)" > "$P/PC/udpfsd/ART/_optional_covers_here.txt"
+printf '%s\n' "Memory cards and saves, installed with the game or from" \
+  "Saves, Cheats & Game Extras on the DESR:" "" \
+  "PS2 (OPL): <GAME-ID>_0.bin / <GAME-ID>_1.bin (slot 1 / 2), e.g. SLUS_203.12_0.bin;" \
+  "           raw 8-64 MiB OPL cards, or PCSX2 .ps2 cards (converted)." \
+  "PS2 saves: .psu files, copied onto a real memory card in the DESR." \
+  "PS1:       <GAME-ID>.VMC / .mcr / .mcd / .gme / .vmp (slot 1; add _1 for slot 2)," \
+  "           single saves <GAME-ID>.mcs (added to the game's card)." > "$P/PC/udpfsd/VMC/_put_memory_cards_here.txt"
+printf '%s\n' "Cheats, installed with the game or from Saves, Cheats & Game Extras:" "" \
+  "PS2 (OPL):        <GAME-ID>.cht, e.g. SLUS_203.12.cht (switched on for that game;" \
+  "                  all codes apply when it is started from the XMB)." \
+  "PS1 (POPStarter): <GAME-ID>.txt, e.g. SLUS_005.94.txt (becomes CHEATS.TXT)." > "$P/PC/udpfsd/CHT/_put_cheats_here.txt"
 printf '%s\n' "Homebrew apps (.ELF) to install as XMB channels (Apps menu on the DESR)." "" \
   "One app per folder, e.g. APPS\wLaunchELF\BOOT.ELF with the files it needs;" \
   "the installer offers to copy the whole folder. A lone .ELF works too." > "$P/PC/udpfsd/APPS/_put_apps_here.txt"
-printf '%s\n' "PS1 games: put .VCD files here (convert BIN/CUE with cue2pops)." "" \
+printf '%s\n' "PS1 games: put .VCD files here, or BIN/CUE (served as .VCD automatically)." \
+  "Multi-disc games: name the files ... (Disc 1).VCD, ... (Disc 2).VCD and install disc 1." "" \
   "POPSTARTER.KELF (POPStarter rev13 Beta) is already here." "" \
   "Also needed here, NOT included (Sony's POPS emulator, supply your own):" \
   "  POPS.ELF" \

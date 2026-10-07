@@ -10,10 +10,14 @@
 #include "apa_osd_header.h"
 #include "app_state.h"
 #include "crc32.h"
+#include "extras_install.h"
 #include "hdd_partitions.h"
+#include "manifest.h"
 #include "pfs_channel.h"
 #include "pops_install.h"
 #include "source_udpfs.h"
+#include "source_wire.h"
+#include "xmb_game_channel.h"
 #include "util.h"
 #include "xmb_text.h"
 
@@ -25,6 +29,9 @@
 static uint8_t buf[POPS_BUF] __attribute__((aligned(64)));
 static GameSource g_src;
 static udpfs_src_t g_u;
+static wire_src_t g_w;
+
+static inst_err_t open_source(const char *path);
 
 inst_err_t pops_plan_set_title(pops_plan_t *p, const char *title) {
   char clean[64], hidden[APA_NAME_MAX + 1];
@@ -43,8 +50,7 @@ inst_err_t pops_plan_build(const char *path, pops_plan_t *p, int *rc_out) {
   memset(p, 0, sizeof(*p));
   *rc_out = 0;
   str_copy(p->source_path, path, sizeof(p->source_path));
-  source_udpfs_init(&g_src, &g_u);
-  inst_err_t e = source_open(&g_src, path);
+  inst_err_t e = open_source(path);
   if (!e)
     e = vcd_probe(&g_src, &p->vcd);
   *rc_out = g_src.last_rc;
@@ -61,6 +67,9 @@ inst_err_t pops_plan_build(const char *path, pops_plan_t *p, int *rc_out) {
     t[n - 4] = 0;
   if (pops_plan_set_title(p, t))
     return ERR_SOURCE_SYSTEM_CNF;
+  p->ndiscs = 1;
+  str_copy(p->disc_path[0], path, SOURCE_PATH_MAX);
+  p->disc_bytes[0] = p->vcd.bytes;
   p->size_mb = pops_partition_mb(p->vcd.bytes, p->size_str, sizeof(p->size_str));
   return p->size_mb < 0 ? ERR_HDL_PLAN : ERR_OK;
 }
@@ -121,6 +130,15 @@ static inst_err_t install_runtime(const pops_plan_t *p, install_report_t *rep) {
     pops_vmc_dir(p->partition, vmc, sizeof(vmc));
     snprintf(dir, sizeof(dir), W "POPS/%s", vmc);
     fileXioMkdir(dir, 0777); /* POPStarter keeps SLOT0/1.VMC there */
+    /* Multi-disc: DISCS.TXT in the game's folder (POPStarter docs). */
+    char discs[96], dpath[96];
+    int dlen = p->ndiscs > 1 ? pops_discs_txt(p->ndiscs, discs, sizeof(discs)) : 0;
+    snprintf(dpath, sizeof(dpath), "%s/" POPS_DISCS, dir);
+    if (dlen > 0 && (r = file_write_all(dpath, discs, (uint32_t)dlen)) < 0) {
+      rep->rc = r;
+      rep->detail = "__common/POPS/<game>/DISCS.TXT";
+      e = ERR_XMB_RESOURCE_WRITE;
+    }
   }
   pfs_umount(W);
   return e;
@@ -138,61 +156,155 @@ static void progress(const install_ui_t *ui, time_t start, time_t *last, uint64_
     *abort = 1;
 }
 
-/* Source -> W IMAGE0.VCD, CRC-32 of every byte. */
-static inst_err_t copy_vcd(const pops_plan_t *p, const install_ui_t *ui, install_report_t *rep) {
-  int fd = fileXioOpen(W POPS_IMAGE, FIO_O_WRONLY | FIO_O_CREAT | FIO_O_TRUNC, 0666);
+/* The server's LZ4 frames when it offers them (only compressed bytes
+ * cross the network), else plain reads. */
+static inst_err_t open_source(const char *path) {
+  if (game_source_is_server(path) && g_manifest_loaded && g_manifest.wire_lz4f) {
+    source_wire_init(&g_src, &g_w);
+    if (source_open(&g_src, path) == ERR_OK)
+      return ERR_OK;
+  }
+  source_udpfs_init(&g_src, &g_u);
+  return source_open(&g_src, path);
+}
+
+int pops_plan_find_discs(pops_plan_t *p) {
+  char stem[96], dir[SOURCE_PATH_MAX];
+  int mine = pops_disc_number(p->source_path, stem, sizeof(stem));
+  if (mine <= 0)
+    return 1;
+  const char *slash = strrchr(p->source_path, '/');
+  if (!slash)
+    return 1;
+  snprintf(dir, sizeof(dir), "%.*s", (int)(slash - p->source_path), p->source_path);
+  static char found[POPS_MAX_DISCS][SOURCE_PATH_MAX];
+  memset(found, 0, sizeof(found));
+  int dd = fileXioDopen(dir);
+  if (dd < 0)
+    return 1;
+  iox_dirent_t de;
+  while (fileXioDread(dd, &de) > 0) {
+    char s[96];
+    if (source_classify(de.name) != SRC_TYPE_VCD)
+      continue;
+    int d = pops_disc_number(de.name, s, sizeof(s));
+    if (d >= 1 && !strcasecmp(s, stem) && !found[d - 1][0] &&
+        strlen(dir) + 1 + strlen(de.name) < SOURCE_PATH_MAX) {
+      strcpy(found[d - 1], dir);
+      strcat(found[d - 1], "/");
+      strcat(found[d - 1], de.name);
+    }
+  }
+  fileXioDclose(dd);
+  int n = 0;
+  while (n < POPS_MAX_DISCS && found[n][0])
+    n++;
+  if (n < 2 || n < mine)
+    return 1;
+  /* Every disc must be a readable VCD; disc 1 names the game. */
+  static pops_plan_t q;
+  q = *p;
+  for (int i = 0; i < n; i++) {
+    vcd_info_t v;
+    inst_err_t e = open_source(found[i]);
+    if (!e)
+      e = vcd_probe(&g_src, &v);
+    source_close(&g_src);
+    if (e)
+      return 1;
+    if (i == 0)
+      q.vcd = v;
+    str_copy(q.disc_path[i], found[i], SOURCE_PATH_MAX);
+    q.disc_bytes[i] = v.bytes;
+  }
+  uint64_t total = 0;
+  for (int i = 0; i < n; i++)
+    total += q.disc_bytes[i];
+  q.ndiscs = n;
+  str_copy(q.source_path, found[0], sizeof(q.source_path));
+  if (pops_plan_set_title(&q, stem) != ERR_OK)
+    return 1;
+  q.size_mb = pops_partition_mb(total, q.size_str, sizeof(q.size_str));
+  if (q.size_mb < 0)
+    return 1;
+  *p = q;
+  return n;
+}
+
+/* Disc i of the source -> W IMAGE<i>.VCD, CRC-32 of every byte. done and
+ * total count over all discs (progress). */
+static inst_err_t copy_disc(const pops_plan_t *p, int i, const install_ui_t *ui,
+                            install_report_t *rep, uint64_t *done, uint64_t total,
+                            uint32_t *crc_out) {
+  char dst[32];
+  snprintf(dst, sizeof(dst), W "%s", pops_image_name(i));
+  inst_err_t e = open_source(p->disc_path[i]);
+  if (e) {
+    rep->rc = g_src.last_rc;
+    return e;
+  }
+  int fd = fileXioOpen(dst, FIO_O_WRONLY | FIO_O_CREAT | FIO_O_TRUNC, 0666);
   if (fd < 0) {
     rep->rc = fd;
+    source_close(&g_src);
     return ERR_XMB_RESOURCE_WRITE;
   }
-  inst_err_t e = ERR_OK;
-  uint64_t total = p->vcd.bytes, done = 0;
+  uint64_t size = p->disc_bytes[i], got = 0;
   uint32_t crc = 0;
   time_t start = time(NULL), last = 0;
   int abort = 0;
-  if (g_src.ops->seek(&g_src, 0, SRC_SEEK_SET) != 0)
+  if (g_src.ops->seek(&g_src, 0, SRC_SEEK_SET) != 0 || source_size(&g_src) != (int64_t)size)
     e = ERR_SOURCE_READ;
-  while (!e && done < total) {
-    uint32_t want = total - done > POPS_BUF ? POPS_BUF : (uint32_t)(total - done);
-    if ((e = source_read_exact(&g_src, buf, want))) {
+  while (!e && got < size) {
+    uint32_t want = size - got > POPS_BUF ? POPS_BUF : (uint32_t)(size - got);
+    const uint8_t *blk;
+    uint32_t n;
+    if ((e = source_next_block(&g_src, buf, want, &blk, &n))) {
       rep->rc = g_src.last_rc;
       break;
     }
-    crc = crc32_update(crc, buf, want);
-    int w = fileXioWrite(fd, buf, (int)want);
-    if (w != (int)want) {
+    /* A lent block is only valid until the next source call: write it
+     * from buf, which is 64-byte aligned for fileXio. */
+    if (blk != buf)
+      memcpy(buf, blk, n);
+    crc = crc32_update(crc, buf, n);
+    int w = fileXioWrite(fd, buf, (int)n);
+    if (w != (int)n) {
       rep->rc = w;
       e = ERR_XMB_RESOURCE_WRITE;
       break;
     }
-    done += want;
-    progress(ui, start, &last, done, total, &abort);
+    got += n;
+    *done += n;
+    progress(ui, start, &last, *done, total, &abort);
     if (abort)
       e = ERR_USER_ABORT;
   }
   if (fileXioClose(fd) < 0 && !e)
     e = ERR_XMB_RESOURCE_WRITE;
-  rep->bytes_written = done;
-  rep->source_crc32 = crc;
+  source_close(&g_src);
+  *crc_out = crc;
   return e;
 }
 
-/* Read W IMAGE0.VCD back; ERR_USER_ABORT with *skipped = 1 when the user
- * skipped (START). */
-static inst_err_t verify_vcd(const pops_plan_t *p, const install_ui_t *ui,
-                             install_report_t *rep) {
-  int fd = fileXioOpen(W POPS_IMAGE, FIO_O_RDONLY);
+/* Read W IMAGE<i>.VCD back and compare with its copy CRC. */
+static inst_err_t verify_disc(const pops_plan_t *p, int i, const install_ui_t *ui,
+                              install_report_t *rep, uint64_t *done, uint64_t total,
+                              uint32_t want_crc) {
+  char path[32];
+  snprintf(path, sizeof(path), W "%s", pops_image_name(i));
+  int fd = fileXioOpen(path, FIO_O_RDONLY);
   if (fd < 0) {
     rep->rc = fd;
     return ERR_XMB_VERIFY;
   }
   inst_err_t e = ERR_OK;
-  uint64_t total = p->vcd.bytes, done = 0;
+  uint64_t size = p->disc_bytes[i], got = 0;
   uint32_t crc = 0;
   time_t start = time(NULL), last = 0;
   int abort = 0;
-  while (done < total) {
-    uint32_t want = total - done > POPS_BUF ? POPS_BUF : (uint32_t)(total - done);
+  while (got < size) {
+    uint32_t want = size - got > POPS_BUF ? POPS_BUF : (uint32_t)(size - got);
     int r = fileXioRead(fd, buf, (int)want);
     if (r != (int)want) {
       rep->rc = r;
@@ -200,22 +312,22 @@ static inst_err_t verify_vcd(const pops_plan_t *p, const install_ui_t *ui,
       break;
     }
     crc = crc32_update(crc, buf, want);
-    done += want;
-    progress(ui, start, &last, done, total, &abort);
+    got += want;
+    *done += want;
+    progress(ui, start, &last, *done, total, &abort);
     if (abort) {
       e = ERR_USER_ABORT;
       break;
     }
   }
   fileXioClose(fd);
-  rep->bytes_verified = done;
-  if (!e) {
+  if (!e && crc != want_crc) {
+    rep->detail = "CRC-32 of a VCD on the HDD != source";
+    e = ERR_XMB_VERIFY;
+  }
+  if (!e && i == 0) {
     rep->have_crc = 1;
     rep->installed_crc32 = crc;
-    if (crc != rep->source_crc32) {
-      rep->detail = "CRC-32 of IMAGE0.VCD on the HDD != source";
-      e = ERR_XMB_VERIFY;
-    }
   }
   return e;
 }
@@ -226,28 +338,52 @@ static void stage(const install_ui_t *ui, install_report_t *rep, install_stage_t
     ui->stage(ui->ctx, s);
 }
 
+/* Memory cards, saves and cheats from the server's VMC / CHT folders;
+ * best effort, after the game is complete. */
+static const char *ps1_extras(const pops_plan_t *p) {
+  static char text[220];
+  extras_opts_t o = {0, 0};
+  extras_report_t r;
+  extras_install_ps1(p->partition, p->vcd.boot_id, &o, &r);
+  if (!r.found)
+    return NULL;
+  snprintf(text, sizeof(text), "%.80s%s%.80s", r.installed ? r.what : "already there",
+           r.failed ? "; not all: " : "", r.failed ? r.note : "");
+  return text;
+}
+
 void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep) {
   memset(rep, 0, sizeof(*rep));
   void *kelf = NULL, *jkt_owned[2] = {NULL, NULL};
   int created = 0;
+  uint32_t crc[POPS_MAX_DISCS] = {0};
   stage(ui, rep, STAGE_PREPARING);
 
+  if (p->ndiscs < 1 || p->ndiscs > POPS_MAX_DISCS) {
+    rep->err = ERR_INVALID_ARG;
+    goto out;
+  }
   if (game_source_is_server(p->source_path) && g_app.net != NETWORK_READY) {
     rep->err = ERR_NETWORK;
     goto out;
   }
-  source_udpfs_init(&g_src, &g_u);
-  if ((rep->err = source_open(&g_src, p->source_path))) {
-    rep->rc = g_src.last_rc;
-    goto out;
-  }
-  vcd_info_t again;
-  if ((rep->err = vcd_probe(&g_src, &again)))
-    goto out;
-  if (strcmp(again.boot_id, p->vcd.boot_id) || again.bytes != p->vcd.bytes) {
-    rep->err = ERR_SOURCE_INVALID_ISO;
-    rep->detail = "source changed since it was selected";
-    goto out;
+  uint64_t total = 0;
+  for (int i = 0; i < p->ndiscs; i++) {
+    vcd_info_t again;
+    if ((rep->err = open_source(p->disc_path[i]))) {
+      rep->rc = g_src.last_rc;
+      goto out;
+    }
+    rep->err = vcd_probe(&g_src, &again);
+    source_close(&g_src);
+    if (rep->err)
+      goto out;
+    if (again.bytes != p->disc_bytes[i] || (i == 0 && strcmp(again.boot_id, p->vcd.boot_id))) {
+      rep->err = ERR_SOURCE_INVALID_ISO;
+      rep->detail = "source changed since it was selected";
+      goto out;
+    }
+    total += p->disc_bytes[i];
   }
   if (hdd_exists(p->partition) != 0) {
     rep->err = ERR_PARTITION_EXISTS;
@@ -285,6 +421,16 @@ void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep)
     rep->detail = "EXECUTE.KELF";
     goto out;
   }
+  /* Multi-disc: DISCS.TXT next to the VCDs too (PSX-XMB-Manager's place;
+   * install_runtime wrote the documented one in the game's POPS folder). */
+  char discs[96];
+  int dlen = p->ndiscs > 1 ? pops_discs_txt(p->ndiscs, discs, sizeof(discs)) : 0;
+  if (dlen > 0 && (r = file_write_all(W POPS_DISCS, discs, (uint32_t)dlen)) < 0) {
+    rep->err = ERR_XMB_RESOURCE_WRITE;
+    rep->rc = r;
+    rep->detail = POPS_DISCS;
+    goto out;
+  }
   char info[1024], today[9];
   xmb_game_info_t gi;
   int have_gi = game_load_info(p->vcd.boot_id, &gi);
@@ -300,10 +446,14 @@ void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep)
     rep->rc = cr.rc;
     rep->detail = cr.step;
     goto out;
-  }  stage(ui, rep, STAGE_COPYING);
-  if ((rep->err = copy_vcd(p, ui, rep)))
-    goto out;
-  source_close(&g_src);
+  }
+  stage(ui, rep, STAGE_COPYING);
+  uint64_t done = 0;
+  for (int i = 0; i < p->ndiscs; i++)
+    if ((rep->err = copy_disc(p, i, ui, rep, &done, total, &crc[i])))
+      goto out;
+  rep->bytes_written = done;
+  rep->source_crc32 = crc[0];
   pfs_umount(W);
 
   stage(ui, rep, STAGE_VALIDATING);
@@ -312,12 +462,16 @@ void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep)
     rep->rc = r;
     goto out;
   }
-  if (file_size(W "EXECUTE.KELF") != klen || file_size(W "res/info.sys") != info_len) {
+  if (file_size(W "EXECUTE.KELF") != klen || file_size(W "res/info.sys") != info_len ||
+      (dlen > 0 && file_size(W POPS_DISCS) != dlen)) {
     rep->err = ERR_XMB_VERIFY;
-    rep->detail = "EXECUTE.KELF / res/info.sys";
+    rep->detail = "EXECUTE.KELF / res/info.sys / DISCS.TXT";
     goto out;
   }
-  rep->err = verify_vcd(p, ui, rep);
+  done = 0;
+  for (int i = 0; i < p->ndiscs && !rep->err; i++)
+    rep->err = verify_disc(p, i, ui, rep, &done, total, crc[i]);
+  rep->bytes_verified = done;
   if (rep->err == ERR_USER_ABORT && ui && ui->skip_verify && ui->skip_verify(ui->ctx)) {
     rep->verify_skipped = 1; /* copied in full with its CRC; read-back skipped */
     rep->err = ERR_OK;
@@ -335,6 +489,7 @@ void pops_install(pops_plan_t *p, const install_ui_t *ui, install_report_t *rep)
     rep->detail = "OSD header (system.cnf, icon.sys, icon)";
     goto out;
   }
+  rep->extras = ps1_extras(p);
   stage(ui, rep, STAGE_FINISHED);
 out:
   source_close(&g_src);

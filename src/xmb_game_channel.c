@@ -9,13 +9,16 @@
 #include "app_state.h"
 #include "hdd_partitions.h"
 #include "hdl_header.h"
+#include "extras_install.h"
 #include "hdl_install.h"
 #include "manifest.h"
 #include "opl_dependency.h"
 #include "opl_launcher_payload.h"
 #include "pfs_channel.h"
 #include "server_assets.h"
+#include "source_cdvd.h"
 #include "source_udpfs.h"
+#include "source_wire.h"
 #include "source_zso.h"
 #include "transaction.h"
 #include "util.h"
@@ -49,12 +52,41 @@ int game_source_is_server(const char *path) { return !strncmp(path, "udpfs:", 6)
 static GameSource g_src, g_inner, g_fallback;
 static udpfs_src_t g_usrc, g_ufb;
 static zso_src_t g_zso;
+static wire_src_t g_wire;
+static cdvd_src_t g_cdvd;
+
+int game_source_is_disc(const char *path) { return !strncmp(path, CDVD_PATH, strlen(CDVD_PATH)); }
+
+/* The disc drive knows CD from DVD; files go by folder name. */
+static disc_hint_t probe_hint(const char *path) {
+  if (game_source_is_disc(path))
+    return g_cdvd.dvd ? DISC_HINT_DVD : DISC_HINT_CD;
+  return iso_hint_from_path(path);
+}
+
+/* The patched udpfsd compresses images for the network (LZ4 frames,
+ * decompressed here): any server image, including its virtual ZSO, CSO
+ * and CHD images. */
+static int wire_usable(const char *path) {
+  return game_source_is_server(path) && g_manifest_loaded && g_manifest.wire_lz4f &&
+         !source_is_raw_zso(path);
+}
 
 /* Any fileXio device (udpfs:, mass0:). ZSO is decompressed here: a raw
  * .zso (USB), and udpfsd's virtual "<x>.zso.iso" too - the raw .zso next
  * to it is read instead, so only the compressed bytes cross the network.
- * Same logical ISO bytes either way (CRC, resume, verify unchanged). */
-static void source_init_for(const char *path, int zso_on_ps2) {
+ * Same logical ISO bytes either way (CRC, resume, verify unchanged).
+ * mode 2: the server's LZ4 frames; 1: as above; 0: plain bytes only. */
+static void source_init_for(const char *path, int mode) {
+  int zso_on_ps2 = mode >= 1;
+  if (game_source_is_disc(path)) {
+    source_cdvd_init(&g_src, &g_cdvd);
+    return;
+  }
+  if (mode == 2) {
+    source_wire_init(&g_src, &g_wire);
+    return;
+  }
   int virt = zso_on_ps2 && game_source_is_server(path) && source_classify(path) == SRC_TYPE_ZSO;
   if (source_is_raw_zso(path) || virt) {
     source_udpfs_init(&g_inner, &g_usrc);
@@ -72,6 +104,11 @@ static void source_init_for(const char *path, int zso_on_ps2) {
 /* Open with PS2-side ZSO decompression; if that fails (a ZSO variant this
  * reader does not support), fall back to udpfsd's decompression. */
 static inst_err_t game_source_open(const char *path) {
+  if (wire_usable(path)) {
+    source_init_for(path, 2);
+    if (source_open(&g_src, path) == ERR_OK)
+      return ERR_OK;
+  }
   source_init_for(path, 1);
   inst_err_t e = source_open(&g_src, path);
   if (e && game_source_is_server(path) && source_classify(path) == SRC_TYPE_ZSO) {
@@ -90,7 +127,7 @@ inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out) {
 
   inst_err_t e = game_source_open(path);
   if (!e)
-    e = iso_probe(&g_src, iso_hint_from_path(path), &p->iso);
+    e = iso_probe(&g_src, probe_hint(path), &p->iso);
   *rc_out = g_src.last_rc;
   source_close(&g_src);
   if (e)
@@ -100,6 +137,9 @@ inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out) {
   default_display_title(&p->iso, path, title, sizeof(title));
   /* udpfsd's prepared title (CFG / game list), for the same game only */
   const manifest_entry_t *me = g_manifest_loaded ? manifest_find_path(&g_manifest, path) : NULL;
+  /* A disc: the server may still know its title by game ID. */
+  if (!me && g_manifest_loaded && game_source_is_disc(path))
+    me = manifest_find_id(&g_manifest, p->iso.boot_id);
   if (me && me->ok && !strcmp(me->id, p->iso.boot_id) && me->title[0])
     str_copy(title, me->title, sizeof(title));
   if (game_plan_set_title(p, title))
@@ -429,60 +469,27 @@ static void finish_report(install_report_t *rep, const char *visible,
   rep->visible_exists = hdd_exists(visible) > 0;
 }
 
-/* Copy udpfsd's CFG/<ID>.cfg (OPL per-game settings) to the OPL
- * partition's CFG folder, where OPL reads it when OPL-Launcher boots the
- * game - only if OPL has none yet. Best effort: written as .tmp, read
- * back, renamed. Returns "copied" | "kept" | "failed" | "none". */
-static const char *copy_opl_cfg(const char *boot_id) {
-  const manifest_entry_t *me = g_manifest_loaded ? manifest_find_id(&g_manifest, boot_id) : NULL;
-  if (g_app.net != NETWORK_READY || !me || !me->cfg[0])
+/* After the game is complete, best effort: its extras from the server's
+ * (or the USB drive's) CFG, CHT, VMC and ART folders into the OPL
+ * partition (extras_install.h). An OPL cfg already on the HDD is kept;
+ * existing memory cards are never replaced here. Returns the journal's
+ * word for the settings ("copied" | "kept" | "failed" | "none"); *desc
+ * says what was installed. */
+static const char *install_ps2_extras(const char *boot_id, const char **desc) {
+  static char text[220];
+  extras_opts_t o = {0, 0};
+  extras_report_t r;
+  extras_install_ps2(boot_id, &o, &r);
+  *desc = NULL;
+  if (!r.found)
     return "none";
-  opl_runtime_t opl;
-  int rc;
-  if (opl_check_runtime(&opl, &rc) != ERR_OK)
+  snprintf(text, sizeof(text), "%.80s%s%.80s%s", r.installed ? r.what : "already there",
+           r.failed ? "; not all: " : "", r.failed ? r.note : "",
+           r.kept && r.installed ? " (some kept)" : "");
+  *desc = text;
+  if (r.failed && !r.installed)
     return "failed";
-  char src[SOURCE_PATH_MAX];
-  snprintf(src, sizeof(src), "udpfs:%s", me->cfg);
-  void *data = NULL;
-  int n = file_load(src, &data, 64 * 1024);
-  if (n <= 0) {
-    free(data);
-    return "failed";
-  }
-  const char *result = "failed";
-  if (pfs_mount(PFS_WORK, opl.partition, FIO_MT_RDWR) == 0) {
-    const char *dir = opl_cfg_dir(opl.partition); /* "pfs1:CFG/" or "pfs1:OPL/CFG/" */
-    char dst[64], tmp[72], d[32];
-    snprintf(dst, sizeof(dst), "%s%s.cfg", dir, boot_id);
-    snprintf(tmp, sizeof(tmp), "%s.tmp", dst);
-    switch (opl_cfg_decide(1, file_size(dst) >= 0)) {
-    case OPL_CFG_KEEP:
-      result = "kept";
-      break;
-    case OPL_CFG_COPY: {
-      if (opl.partition[0] != '+')
-        fileXioMkdir(PFS_WORK "OPL", 0777);
-      snprintf(d, sizeof(d), "%.*s", (int)strlen(dir) - 1, dir);
-      fileXioMkdir(d, 0777);
-      void *back = NULL;
-      fileXioRemove(tmp);
-      if (file_write_all(tmp, data, (uint32_t)n) == 0 &&
-          file_load(tmp, &back, (uint32_t)n + 1) == n && !memcmp(back, data, (size_t)n) &&
-          fileXioRename(tmp, dst) >= 0)
-        result = "copied";
-      else
-        fileXioRemove(tmp);
-      free(back);
-      break;
-    }
-    case OPL_CFG_NONE:
-      result = "none";
-      break;
-    }
-    pfs_umount(PFS_WORK);
-  }
-  free(data);
-  return result;
+  return r.installed ? "copied" : "kept";
 }
 
 /* Show a verified game in the XMB the way PFS-BatchKit-Manager does (its
@@ -542,8 +549,8 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
     fail(j, rep, cr.err, cr.rc, cr.step);
   } else {
     rep->err = ERR_OK;
-    /* The game is complete; its OPL settings are a best-effort extra. */
-    rep->opl_cfg = copy_opl_cfg(j->startup_id);
+    /* The game is complete; its extras are best effort. */
+    rep->opl_cfg = install_ps2_extras(j->startup_id, &rep->extras);
     str_copy(j->opl_cfg, rep->opl_cfg, sizeof(j->opl_cfg));
     persist(j);
   }
@@ -575,7 +582,7 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     goto out;
   }
   iso_info_t again;
-  if ((rep->err = iso_probe(&g_src, iso_hint_from_path(p->source_path), &again))) {
+  if ((rep->err = iso_probe(&g_src, probe_hint(p->source_path), &again))) {
     rep->rc = g_src.last_rc;
     goto out_src;
   }
@@ -713,6 +720,9 @@ stream:
     goto out_src;
   }
   source_close(&g_src); /* verification does not re-read the network */
+  /* Installed data already read back from the HDD during the copy. */
+  uint64_t checked = hr.verified_bytes;
+  uint32_t checked_crc = hr.verified_crc32;
   j.has_source_crc = 1;
   j.source_crc32 = hr.crc32;
   rep->source_crc32 = hr.crc32;
@@ -724,7 +734,7 @@ stream:
 
   /* 17-18. full read-back from the HDD and CRC comparison */
   stage(ui, rep, STAGE_VALIDATING);
-  hr = hdl_verify(p->hidden, &p->iso, 1 + p->alloc.subs, &cb);
+  hr = hdl_verify(p->hidden, &p->iso, 1 + p->alloc.subs, checked, checked_crc, &cb);
   j.bytes_verified = hr.bytes;
   rep->bytes_verified = hr.bytes;
   if (hr.err == ERR_USER_ABORT && !p->resume && ui && ui->skip_verify &&

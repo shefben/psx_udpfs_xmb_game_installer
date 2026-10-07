@@ -127,11 +127,68 @@ static void finish_stream(cp_state_t *c, hdl_result_t *out, uint64_t total) {
   }
 }
 
+/* Read-back during the copy (pumped loop only): the pump's IOP thread
+ * reads earlier, flushed parts of the game back into vbuf while the EE
+ * waits for the network, and the EE adds them to `crc`. It only reads
+ * below `limit`: data flushed at a checkpoint at least VERIFY_LAG bytes
+ * ago. A flush writes the drive's cache to the disk but does not empty
+ * it, so the lag is far larger than any IDE drive's cache (2-16 MiB on
+ * DESR-era drives, 64 MiB on the biggest later ones): what is read back
+ * has long been evicted and comes from the disk. The final check
+ * (hdl_verify) reads only what is left after `pos`. */
+#define VERIFY_LAG (256ull * 1024 * 1024)
+static uint8_t vbuf[PUMP_SLOT] __attribute__((aligned(64)));
+typedef struct {
+  int on;
+  uint64_t pos;   /* bytes [0, pos) read back */
+  uint32_t crc;   /* CRC-32 of them */
+  uint64_t limit;
+  uint32_t len;   /* bytes of the read in flight, 0 if none */
+  uint32_t slot;
+} vstate_t;
+
+static void verify_step(void *ctx) {
+  vstate_t *v = ctx;
+  if (!v->on)
+    return;
+  if (v->len) {
+    int got = 0, r = pump_read_poll(&got);
+    if (r == 0)
+      return;
+    if (r < 0 || got != (int)v->len) { /* the final check reads it instead */
+      v->on = 0;
+      v->len = 0;
+      return;
+    }
+    u64 t0 = GetTimerSystemTime();
+    v->crc = crc32_update(v->crc, vbuf, v->len);
+    g_stream_timing.verify_ticks += GetTimerSystemTime() - t0;
+    v->pos += v->len;
+    v->len = 0;
+    g_stream_timing.verified = v->pos;
+  }
+  if (v->pos < v->limit) {
+    uint64_t left = v->limit - v->pos;
+    uint32_t n = left > v->slot ? v->slot : (uint32_t)left;
+    if (pump_read_start((uint32_t)(v->pos / ISO_SECTOR), vbuf, n) == 0)
+      v->len = n;
+    else
+      v->on = 0;
+  }
+}
+
+static void verify_limit(vstate_t *v, uint64_t flushed) {
+  uint64_t lim = flushed > VERIFY_LAG ? flushed - VERIFY_LAG : 0;
+  if (lim > v->limit)
+    v->limit = lim;
+}
+
 /* Copy loop with hddpump.irx: the IOP writes block n on its own thread
- * while the EE reads block n+1 from the source (fileXio's IOP thread),
- * so network and HDD work at the same time. hdl0: is already mounted.
- * Returns 1 and fills *out when it ran, 0 if the pump is unavailable
- * (nothing written; the caller uses its own loop). */
+ * while the EE works on block n+1 and the source already fetches block
+ * n+2 (read-ahead: fileXio's non-blocking mode), so network, EE and HDD
+ * work at the same time; meanwhile earlier data is read back (vstate_t).
+ * hdl0: is already mounted. Returns 1 and fills *out when it ran, 0 if
+ * the pump is unavailable (nothing written; the caller uses its own loop). */
 static int stream_pumped(GameSource *src, uint64_t total, cp_state_t *c, hdl_result_t *out) {
   uint32_t slot = 0;
   if (!g_hdl_use_pump ||
@@ -139,9 +196,12 @@ static int stream_pumped(GameSource *src, uint64_t total, cp_state_t *c, hdl_res
     return 0;
   if (slot > STREAM_BUF_SIZE)
     slot = STREAM_BUF_SIZE;
+  slot &= ~(uint32_t)(ISO_SECTOR - 1);
   *out = res(ERR_OK, 0);
   uint64_t start = c->safe, queued = c->safe;
   uint32_t qseg = c->seg; /* segment CRC including queued, unflushed blocks */
+  /* Data before a resume point was written in an earlier session. */
+  vstate_t v = {1, 0, 0, start, 0, slot > PUMP_SLOT ? PUMP_SLOT : slot};
   if (src->ops->seek(src, (int64_t)start, SRC_SEEK_SET) != (int64_t)start) {
     out->err = ERR_SOURCE_READ;
     pump_end(NULL);
@@ -151,27 +211,31 @@ static int stream_pumped(GameSource *src, uint64_t total, cp_state_t *c, hdl_res
   time_t t_start = time(NULL), last = 0;
   int abort = 0;
   memset(&g_stream_timing, 0, sizeof(g_stream_timing));
+  source_async(src, SRC_ASYNC_ON, verify_step, &v);
   while (queued < total) {
     uint32_t want = total - queued > slot ? slot : (uint32_t)(total - queued);
     u64 t0 = GetTimerSystemTime();
-    inst_err_t e = source_read_exact(src, stream_buf, want);
+    const uint8_t *blk;
+    uint32_t got;
+    inst_err_t e = source_next_block(src, stream_buf, want, &blk, &got);
     if (e) {
       out->err = e;
       out->rc = src->last_rc;
       break;
     }
     u64 t1 = GetTimerSystemTime();
-    uint32_t nseg = crc32_update(qseg, stream_buf, want);
+    uint32_t nseg = crc32_update(qseg, blk, got);
     u64 t2 = GetTimerSystemTime();
     /* Waits only while every IOP buffer is still queued for the HDD. */
-    int w = pump_put(stream_buf, want);
+    int w = pump_put(blk, got);
     if (w < 0) {
       out->err = ERR_HDL_WRITE;
       out->rc = w;
       break;
     }
-    queued += want;
+    queued += got;
     qseg = nseg;
+    verify_step(&v);
     g_stream_timing.read_ticks += t1 - t0;
     g_stream_timing.crc_ticks += t2 - t1;
     g_stream_timing.write_ticks += GetTimerSystemTime() - t2; /* HDD wait only */
@@ -186,21 +250,33 @@ static int stream_pumped(GameSource *src, uint64_t total, cp_state_t *c, hdl_res
       }
       c->safe = queued;
       c->seg = qseg;
+      /* The journal is written through fileXio: no read may be in flight. */
+      source_async(src, SRC_ASYNC_SYNC, NULL, NULL);
       if (save_checkpoint(c) < 0) {
         out->err = ERR_JOURNAL;
         break;
       }
       qseg = c->seg;
+      verify_limit(&v, c->safe);
     }
     if (abort) {
       out->err = ERR_USER_ABORT;
       break;
     }
   }
+  source_async(src, SRC_ASYNC_OFF, NULL, NULL);
   /* Whatever was queued is on the HDD once the flush succeeds. */
   if (pump_flush() == 0) {
     c->safe = queued;
     c->seg = qseg;
+  }
+  if (v.len) { /* collect the read-back in flight */
+    int got = 0;
+    if (pump_read_wait(&got) == 1 && got == (int)v.len) {
+      v.crc = crc32_update(v.crc, vbuf, v.len);
+      v.pos += v.len;
+    }
+    v.len = 0;
   }
   uint64_t wrote = 0;
   int r = pump_end(&wrote);
@@ -213,6 +289,8 @@ static int stream_pumped(GameSource *src, uint64_t total, cp_state_t *c, hdl_res
     c->seg = 0;
   }
   finish_stream(c, out, total);
+  out->verified_bytes = v.pos;
+  out->verified_crc32 = v.crc;
   return 1;
 }
 
@@ -384,10 +462,10 @@ int hdl_partition_looks_valid(const char *hidden, hdl_header_info_t *out) {
 }
 
 static hdl_result_t read_back(const char *hidden, uint64_t total, const iso_info_t *iso,
-                              const stream_cb_t *cb);
+                              uint64_t from, uint32_t crc0, const stream_cb_t *cb);
 
-hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
-                        int expected_parts, const stream_cb_t *cb) {
+hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso, int expected_parts,
+                        uint64_t start, uint32_t start_crc, const stream_cb_t *cb) {
   uint64_t total = (uint64_t)iso->sectors * ISO_SECTOR;
   uint16_t type = 0;
   int r = hdd_stat(hidden, &type, NULL, NULL);
@@ -405,7 +483,9 @@ hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
                                   iso->layer1_start, expected_parts, total);
   if (e)
     return res(e, 0);
-  return read_back(hidden, total, iso, cb);
+  if (start > total || start % ISO_SECTOR)
+    start = start_crc = 0;
+  return read_back(hidden, total, iso, start, start_crc, cb);
 }
 
 hdl_result_t hdl_read_back(const char *hidden, uint64_t total, const stream_cb_t *cb) {
@@ -417,14 +497,22 @@ hdl_result_t hdl_read_back(const char *hidden, uint64_t total, const stream_cb_t
     return res(ERR_HDL_VERIFY, type);
   if (total == 0 || total % ISO_SECTOR)
     return res(ERR_INVALID_ARG, 0);
-  return read_back(hidden, total, NULL, cb);
+  return read_back(hidden, total, NULL, 0, 0, cb);
 }
 
-/* Full read-back of the installed data from the HDD, read-only mount.
- * With `iso`, sector 16 must hold its PVD. The caller compares the CRC
- * with the CRC of the source stream. */
+/* PVD at sector 16 of the installed data, as the probe saw it. A ZSO
+ * container (no PVD there) can never pass this. */
+static int pvd_bad(const uint8_t *s16, const iso_info_t *iso) {
+  return memcmp(s16, "\x01" "CD001", 6) != 0 || get_u32le(s16 + 80) != iso->pvd_blocks ||
+         memcmp(s16 + 40, iso->volume_id, strlen(iso->volume_id)) != 0;
+}
+
+/* Read-back of the installed data [from, total) from the HDD, read-only
+ * mount, continuing crc0 (the CRC-32 of [0, from)). With `iso`, sector
+ * 16 must hold its PVD. The caller compares the CRC with the CRC of the
+ * source stream. */
 static hdl_result_t read_back(const char *hidden, uint64_t total, const iso_info_t *iso,
-                              const stream_cb_t *cb) {
+                              uint64_t from, uint32_t crc0, const stream_cb_t *cb) {
   int r;
   char dev[48];
   snprintf(dev, sizeof(dev), "hdd0:%s", hidden);
@@ -439,22 +527,35 @@ static hdl_result_t read_back(const char *hidden, uint64_t total, const iso_info
   }
 
   hdl_result_t out = res(ERR_OK, 0);
+  if (iso && from > 0) {
+    /* Block 0 was read back during the copy: check the PVD on its own. */
+    if (fileXioLseek(fd, 16, FIO_SEEK_SET) != 16 ||
+        fileXioRead(fd, stream_buf, ISO_SECTOR) != ISO_SECTOR || pvd_bad(stream_buf, iso)) {
+      out = res(ERR_HDL_VERIFY, 0);
+      goto done;
+    }
+  }
   /* hdlfs lseek takes 2048-byte sector numbers. */
-  r = fileXioLseek(fd, 0, FIO_SEEK_SET);
-  if (r != 0) {
+  r = fileXioLseek(fd, (int)(from / ISO_SECTOR), FIO_SEEK_SET);
+  if (r != (int)(from / ISO_SECTOR)) {
     out = res(ERR_HDL_VERIFY, r);
     goto done;
   }
   time_t start = time(NULL), last = 0;
-  uint64_t done_bytes = 0;
-  uint32_t crc = 0;
+  uint64_t done_bytes = from;
+  uint32_t crc = crc0;
+  if (done_bytes >= total) {
+    out.bytes = done_bytes;
+    out.crc32 = crc;
+    goto done;
+  }
   int abort = 0;
   memset(&g_stream_timing, 0, sizeof(g_stream_timing));
   /* Double buffer: the IOP reads block n+1 from the HDD into one buffer
    * while the EE computes the CRC of block n in the other. */
   uint8_t *bufs[2] = {stream_buf, stream_buf2};
   int cur = 0;
-  uint32_t want = total > STREAM_BUF_SIZE ? STREAM_BUF_SIZE : (uint32_t)total;
+  uint32_t want = total - from > STREAM_BUF_SIZE ? STREAM_BUF_SIZE : (uint32_t)(total - from);
   u64 t0 = GetTimerSystemTime();
   r = fileXioRead(fd, bufs[cur], (int)want);
   while (done_bytes < total) {
@@ -480,10 +581,7 @@ static hdl_result_t read_back(const char *hidden, uint64_t total, const iso_info
     /* Structural: the PVD must be at sector 16 of the installed data.
      * A ZSO container (no PVD there) can never pass this. */
     int bad = iso && done_bytes == 0 && want >= 17 * ISO_SECTOR &&
-              (memcmp(blk + 16 * ISO_SECTOR, "\x01" "CD001", 6) != 0 ||
-               get_u32le(blk + 16 * ISO_SECTOR + 80) != iso->pvd_blocks ||
-               memcmp(blk + 16 * ISO_SECTOR + 40, iso->volume_id,
-                      strlen(iso->volume_id)) != 0);
+              pvd_bad(blk + 16 * ISO_SECTOR, iso);
     if (!bad) {
       crc = crc32_update(crc, blk, want);
       done_bytes += want;

@@ -12,9 +12,12 @@ source_type_t source_classify(const char *name) {
     return SRC_TYPE_NONE;
   if (str_ends_with_ci(name, ".zso.iso"))
     return strlen(name) > 8 ? SRC_TYPE_ZSO : SRC_TYPE_NONE;
-  /* Other udpfsd virtual images are deliberately not offered in v1. */
-  if (str_ends_with_ci(name, ".cso.iso") || str_ends_with_ci(name, ".chd.iso"))
-    return SRC_TYPE_NONE;
+  /* udpfsd's other virtual images: it decompresses them (and compresses
+   * for the network when it offers LZ4 frames). */
+  if (str_ends_with_ci(name, ".cso.iso"))
+    return strlen(name) > 8 ? SRC_TYPE_CSO : SRC_TYPE_NONE;
+  if (str_ends_with_ci(name, ".chd.iso"))
+    return strlen(name) > 8 ? SRC_TYPE_CHD : SRC_TYPE_NONE;
   return SRC_TYPE_ISO;
 }
 
@@ -27,6 +30,10 @@ const char *source_type_label(source_type_t t) {
     return "ZSO";
   case SRC_TYPE_VCD:
     return "PS1";
+  case SRC_TYPE_CSO:
+    return "CSO";
+  case SRC_TYPE_CHD:
+    return "CHD";
   default:
     return "";
   }
@@ -91,6 +98,40 @@ inst_err_t source_read_at(GameSource *src, uint64_t offset, void *buf,
   return source_read_exact(src, buf, size);
 }
 
+void source_async(GameSource *src, int mode, void (*idle)(void *ctx), void *ctx) {
+  if (src->ops->set_async)
+    src->ops->set_async(src, mode, idle, ctx);
+}
+
+inst_err_t source_next_block(GameSource *src, uint8_t *buf, uint32_t want,
+                             const uint8_t **out, uint32_t *got) {
+  if (src->ops->read_ptr) {
+    const uint8_t *p = NULL;
+    int n = src->ops->read_ptr(src, want, &p);
+    if (n <= 0) {
+      src->last_rc = n;
+      return ERR_SOURCE_READ;
+    }
+    if ((uint32_t)n == want || (n % 2048) == 0) {
+      *out = p;
+      *got = (uint32_t)n;
+      return ERR_OK;
+    }
+    /* Not on a sector boundary: complete the block in buf. */
+    memcpy(buf, p, (size_t)n);
+    inst_err_t e = source_read_exact(src, buf + n, want - (uint32_t)n);
+    if (e)
+      return e;
+  } else {
+    inst_err_t e = source_read_exact(src, buf, want);
+    if (e)
+      return e;
+  }
+  *out = buf;
+  *got = want;
+  return ERR_OK;
+}
+
 /* ---- memsrc ------------------------------------------------------ */
 
 static int mem_open(GameSource *src, const char *path) {
@@ -146,7 +187,7 @@ static int64_t mem_size(GameSource *src) {
 }
 
 static const GameSourceOps MEM_OPS = {mem_open, mem_close, mem_read, mem_seek,
-                                      mem_size};
+                                      mem_size, NULL,      NULL};
 
 void memsrc_init(GameSource *src, memsrc_t *m, uint64_t total_size) {
   memset(m, 0, sizeof(*m));
@@ -168,7 +209,8 @@ void memsrc_add(memsrc_t *m, uint64_t offset, const void *data, uint32_t len) {
 
 const char *source_display_name(const char *name, char *out, size_t outsz) {
   size_t n = strlen(name);
-  if (n > 8 && (str_ends_with_ci(name, ".zso.iso") || str_ends_with_ci(name, ".cso.iso")))
+  if (n > 8 && (str_ends_with_ci(name, ".zso.iso") || str_ends_with_ci(name, ".cso.iso") ||
+                str_ends_with_ci(name, ".chd.iso")))
     n -= 4;
   if (outsz) {
     if (n >= outsz)

@@ -18,6 +18,7 @@
 #include "opl_dependency.h"
 #include "opl_launcher_payload.h"
 #include "partname.h"
+#include "pump.h"
 #include "rw_buffer.h"
 #include "sha256.h"
 #include "ui.h"
@@ -151,8 +152,19 @@ static void check_network(void) {
        g_app.iop.pump_ok ? "loaded" : "NOT loaded",
        g_hdl_use_pump ? "in use" : "basic copy loop in use");
   line(g_app.iop.rw_buffer == RW_BUFFER_FAST ? "PASS" : "WARN",
-       "fileXio transfer buffer %d KiB (64 KiB = full-speed install)",
+       "fileXio transfer buffer %d KiB (128 KiB = one UDPFS request per block)",
        g_app.iop.rw_buffer / 1024);
+  uint32_t mfree = 0, mmax = 0;
+  if (g_app.iop.pump_ok && pump_meminfo(&mfree, &mmax) == 0)
+    line("INFO", "IOP memory free %lu KiB (largest block %lu KiB)",
+         (unsigned long)(mfree >> 10), (unsigned long)(mmax >> 10));
+  if (g_app.net == NETWORK_READY && g_manifest_loaded) {
+    line(g_manifest.wire_lz4f ? "PASS" : "WARN",
+         "server LZ4 transfer compression: %s",
+         g_manifest.wire_lz4f ? "yes" : "no (older udpfsd: plain transfers)");
+    line(g_manifest.extras ? "PASS" : "WARN", "server game extras (VMC, CHT, OPL art): %s",
+         g_manifest.extras ? "yes" : "no (older udpfsd)");
+  }
   if (g_app.iop.udpfs_ok) {
     int dd = fileXioDopen("udpfs:/"), n = 0;
     if (dd >= 0) {

@@ -8,6 +8,7 @@
 #include <intrman.h>
 #include <iomanX.h>
 #include <sifcmd.h>
+#include <sifman.h>
 #include <sysclib.h>
 #include <sysmem.h>
 #include <thbase.h>

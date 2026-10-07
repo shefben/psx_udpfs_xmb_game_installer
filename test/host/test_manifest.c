@@ -59,6 +59,22 @@ TEST(manifest_poweroff_flag) {
   CHECK(!m.power_off);
 }
 
+TEST(manifest_wire_flag) {
+  static manifest_t m;
+  const char *t = "udpfsd-manifest 1 auto=0 wire=lz4f\n";
+  CHECK_EQ_INT(manifest_parse(t, strlen(t), &m), 0);
+  CHECK(m.wire_lz4f);
+  t = "udpfsd-manifest 1 wire=zstd\n"; /* unknown codec: not used */
+  CHECK_EQ_INT(manifest_parse(t, strlen(t), &m), 0);
+  CHECK(!m.wire_lz4f);
+  t = "udpfsd-manifest 1 auto=1\n";
+  CHECK_EQ_INT(manifest_parse(t, strlen(t), &m), 0);
+  CHECK(!m.wire_lz4f && !m.extras);
+  t = "udpfsd-manifest 1 wire=lz4f extras=1\n";
+  CHECK_EQ_INT(manifest_parse(t, strlen(t), &m), 0);
+  CHECK(m.wire_lz4f && m.extras);
+}
+
 TEST(manifest_rejects_bad_lines) {
   const char *t =
       "udpfsd-manifest 1 auto=0\n"

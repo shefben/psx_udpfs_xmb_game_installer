@@ -1,4 +1,4 @@
-UDPFS Game Installer for the PSX DESR - v3.1 hotfix
+UDPFS Game Installer for the PSX DESR - v4.0
 ============================================
 
 Installs PS2 games (.iso / .zso) from your PC onto the PSX DESR's
@@ -41,13 +41,15 @@ PC SIDE
 1. Copy the PC\udpfsd folder anywhere on the PC, e.g. C:\udpfsd.
 
 2. Put your games in it:
-     DVD games (.iso or .zso)  ->  udpfsd\DVD
-     CD games  (.iso or .zso)  ->  udpfsd\CD
+     DVD games (.iso .zso .cso .chd, or split .iso.001 .002 ...)  ->  udpfsd\DVD
+     CD games  (.iso .zso .cso .chd)                              ->  udpfsd\CD
    Optional: game info shown in the XMB (release date, developer,
              genre): copy PFS-BatchKit-Manager's BAT\PS2DB.xml next to
              udpfsd and set gamedb = PS2DB.xml in udpfsd.cfg.
    Optional: OPL game settings (<GAME-ID>.cfg) -> udpfsd\CFG,
-             covers (<GAME-ID>_COV.png / .jpg)  -> udpfsd\ART.
+             covers and OPL art (<GAME-ID>_COV.png / .jpg ...) -> udpfsd\ART,
+             memory cards and saves -> udpfsd\VMC, cheats -> udpfsd\CHT
+             (see SAVES, CHEATS, SETTINGS AND ART below).
    Covers you don't have are downloaded automatically.
 
    Already have your games somewhere else (e.g. PFS-BatchKit-Manager)?
@@ -113,6 +115,8 @@ DESR SIDE
                                          PS1 .VCD in the POPS folder)
      Install Games from USB              same, from a FAT32/exFAT USB drive
                                          (games over 4 GiB need exFAT)
+     Install Game from Disc              a PS2 CD or DVD in the DESR's own
+                                         drive (DVD-9 too)
      Install All Games from the server   pick several (Square toggles)
      Install Installer as XMB Channel    puts the installer itself in the
                                          XMB, so you no longer need the
@@ -125,6 +129,10 @@ DESR SIDE
      Remove Games                        delete several games at once
                                          (Square toggles, Start = all,
                                          hold R1 + X to confirm)
+     Saves, Cheats & Game Extras         see below
+     HDD Health Check                    SMART, space, the largest game
+                                         that still fits, and a check of
+                                         every installed game
 
    In every game list: L2 changes the order (name A-Z, Z-A, size),
    R2 searches (shows only names containing the text you enter).
@@ -142,12 +150,39 @@ APPS (HOMEBREW AS XMB CHANNELS)
    for their own files next to themselves (from where they were started)
    may not find them and use their defaults.
 
+SAVES, CHEATS, SETTINGS AND ART
+-------------------------------
+
+   Installed with each game, and any time later from Saves, Cheats &
+   Game Extras (all games, or one). Name the files by game ID:
+
+   PC\udpfsd\CFG   SLUS_203.12.cfg     OPL settings for that game
+   PC\udpfsd\CHT   SLUS_203.12.cht     OPL cheats (switched on for that game)
+                   SLUS_005.94.txt     PS1: POPStarter CHEATS.TXT
+   PC\udpfsd\VMC   SLUS_203.12_0.bin   OPL memory card, slot 1 (_1 = slot 2);
+                                       PCSX2 .ps2 cards work too
+                   SLUS_005.94.VMC     PS1 memory card (.mcr .mcd .gme .vmp too)
+                   SLUS_005.94.mcs     a single PS1 save, added to the game's card
+                   anything.psu        a PS2 save: Memory cards & saves copies
+                                       it onto a real memory card in the DESR
+   PC\udpfsd\ART   SLUS_203.12_COV.jpg cover; also COV2 ICO LAB LGO BG SCR SCR2
+                                       (BG_00 SCR_00 SCR_01 work too) for OPL
+
+   Everything is put where OPL or POPStarter reads it (the OPL partition's
+   CFG CHT VMC ART folders; __common\POPS\<game>\ for PS1). Existing OPL
+   settings are kept unless you choose to replace them; existing memory
+   cards are only replaced after hold R1 + X. OPL shows art only with
+   "Cover art" switched on in its display settings.
+
 PS1 GAMES (POPSTARTER)
 ----------------------
 
-   PS1 games must be in POPStarter's .VCD format (convert BIN/CUE with
-   cue2pops; multi-file BIN/CUE must be merged first). Put the .VCD files
-   in PC\udpfsd\POPS or PC\udpfsd\CD (on a USB drive: POPS\ or CD\);
+   PS1 games as .VCD (POPStarter's format), or as BIN/CUE: the server
+   offers a BIN/CUE as a .VCD by itself. Multi-disc games: name the files
+   "... (Disc 1).VCD", "... (Disc 2).VCD" and install disc 1; the installer
+   offers to put all discs in one game (change discs in-game with
+   Select+L2+R2 and Triangle, then a direction for the disc, then Square).
+   Put the games in PC\udpfsd\POPS or PC\udpfsd\CD (on a USB drive: POPS\ or CD\);
    these files go in PC\udpfsd\POPS (USB: POPS\):
      POPSTARTER.KELF   POPStarter rev13 Beta (krHACKen): already in
                        PC\udpfsd\POPS; on USB copy it to POPS\ too

@@ -112,9 +112,18 @@ static void cb_progress(void *ctx, uint64_t done, uint64_t total, uint32_t el) {
   if (c && c->stage == STAGE_VALIDATING)
     ui_at(ROW_BAR + 3, " HDD read %u.%u   CRC %u.%u MiB/s", rd / 10, rd % 10, cr / 10,
           cr % 10);
-  else
-    ui_at(ROW_BAR + 3, " network %u.%u   CRC %u.%u   HDD write %u.%u MiB/s", rd / 10,
-          rd % 10, cr / 10, cr % 10, wr / 10, wr % 10);
+  else {
+    const char *from = c && c->p && game_source_is_disc(c->p->source_path) ? "disc"
+                       : c && c->p && !game_source_is_server(c->p->source_path) ? "USB"
+                                                                              : "network";
+    if (t->verified) /* the pumped copy reads earlier parts back while it runs */
+      ui_at(ROW_BAR + 3, " %s %u.%u  CRC %u.%u  HDD write %u.%u MiB/s  checked %u MiB", from,
+            rd / 10, rd % 10, cr / 10, cr % 10, wr / 10, wr % 10,
+            (unsigned)(t->verified >> 20));
+    else
+      ui_at(ROW_BAR + 3, " %s %u.%u   CRC %u.%u   HDD write %u.%u MiB/s", from, rd / 10,
+            rd % 10, cr / 10, cr % 10, wr / 10, wr % 10);
+  }
   if (c && c->stage == STAGE_VALIDATING && !c->no_skip)
     ui_at(ROW_BAR + 4, " [START] skip verification    Hold [SELECT]+[O] to abort");
   else if (c && c->stage == STAGE_COPYING && c->p)
@@ -223,12 +232,15 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
              "%s installed (TX_COMPLETE).\n\n%s\n%s\n\n"
              "Bytes copied:     %llu\nBytes read back:  %llu\n"
              "Source CRC-32:    %08lx\nInstalled CRC-32: %s\n"
-             "OPL settings:     %s\n\n"
+             "Game extras:      %.60s\n\n"
              "The game partition is now %s and appears in the XMB\n"
              "after it refreshes (return to the XMB or reboot).",
              p->title, p->visible, p->hidden, (unsigned long long)rep.bytes_written,
              (unsigned long long)rep.bytes_verified, (unsigned long)rep.source_crc32,
-             installed, rep.opl_cfg ? rep.opl_cfg : "none", p->visible);
+             installed,
+             rep.extras ? rep.extras
+                        : "none on the server (CFG, CHT, VMC, ART folders)",
+             p->visible);
     ui_message("Finished", msg);
     return;
   }
@@ -1164,13 +1176,37 @@ void flow_install_ps1(const char *path) {
     ui_message("Cannot install", msg);
     return;
   }
+  /* A multi-disc game: offer all its discs as one game. */
+  static pops_plan_t single;
+  single = plan;
+  ui_at(5, " Looking for the other discs...");
+  int nd = pops_plan_find_discs(&plan);
+  if (nd > 1) {
+    char q[400];
+    snprintf(q, sizeof(q),
+             "This disc belongs to a %d-disc game:\n\n  %.60s\n\n"
+             "Install all %d discs as ONE game? (recommended)\n"
+             "POPStarter changes discs in-game: Select+L2+R2 with Triangle (open\n"
+             "lid), Up/Right/Down/Left (disc 1-4), Square (close lid).\n\n"
+             "[O] installs only the chosen disc.",
+             nd, plan.title, nd);
+    if (!ui_confirm("Multi-disc game", q))
+      plan = single;
+  }
   for (;;) {
     ui_header("Install PS1 game", NULL);
     ui_at(3, " Title       %.60s", plan.title);
     ui_at(4, " Game ID     %s   (PS1, POPStarter)", plan.vcd.boot_id);
     ui_at(5, " Source      %.64s", plan.source_path);
     ui_at(6, " Partition   %s (%s)", plan.partition, plan.size_str);
-    ui_at(7, " Size        %lu MiB", (unsigned long)(plan.vcd.bytes >> 20));
+    uint64_t all = 0;
+    for (int i = 0; i < plan.ndiscs; i++)
+      all += plan.disc_bytes[i];
+    if (plan.ndiscs > 1)
+      ui_at(7, " Size        %lu MiB, %d discs (IMAGE0..%d.VCD + DISCS.TXT)",
+            (unsigned long)(all >> 20), plan.ndiscs, plan.ndiscs - 1);
+    else
+      ui_at(7, " Size        %lu MiB", (unsigned long)(all >> 20));
     ui_at(9, " Needs POPSTARTER.KELF next to the VCD or in POPS/ on the same");
     ui_at(10, " device; POPS.ELF and IOPRP252.IMG are copied to __common/POPS");
     ui_at(11, " if they are not there yet.");
@@ -1205,14 +1241,16 @@ void flow_install_ps1(const char *path) {
                                        : "nothing is left on the HDD; fix the cause and retry.");
     return;
   }
-  char msg[400];
+  char msg[600];
   snprintf(msg, sizeof(msg),
-           "%s installed as %s.\n\n"
-           "Copied %llu bytes, CRC-32 %08lx, read back: %s.\n\n"
+           "%s installed as %s%s.\n\n"
+           "Copied %llu bytes, read back: %s.\n"
+           "Game extras: %.60s\n\n"
            "It appears in the XMB after it refreshes and starts through\n"
-           "POPStarter. Memory cards: __common/POPS/%s/",
-           plan.title, plan.partition, (unsigned long long)rep.bytes_written,
-           (unsigned long)rep.source_crc32, rep.verify_skipped ? "SKIPPED" : "equal",
+           "POPStarter. Memory cards: __common/POPS/%.40s/",
+           plan.title, plan.partition, plan.ndiscs > 1 ? " (all discs)" : "",
+           (unsigned long long)rep.bytes_written, rep.verify_skipped ? "SKIPPED" : "equal",
+           rep.extras ? rep.extras : "none on the server (VMC, CHT folders)",
            plan.partition + 3);
   ui_message("Finished", msg);
 }
@@ -1251,6 +1289,7 @@ typedef struct {
   char hidden[APA_NAME_MAX + 1];
   pair_state_t state;
   int can_cover; /* pair_can_add_cover(): listed under Repair too */
+  int checkable; /* flow_check_all_games: has a completed install journal */
 } pair_row_t;
 
 static pair_row_t pairs[MAX_PAIRS];
@@ -1329,6 +1368,75 @@ static void pair_list(const char *title, int only_problems) {
 }
 
 void flow_installed_games(void) { pair_list("Installed Games", 0); }
+
+void flow_check_all_games(void) {
+  int n = collect_pairs();
+  if (n < 0) {
+    ui_message("Check installed games", "Cannot read the HDD partition table.");
+    return;
+  }
+  int todo = 0;
+  for (int i = 0; i < n; i++) {
+    pair_facts_t f;
+    game_pair_facts(pairs[i].visible, pairs[i].hidden, &f);
+    pairs[i].checkable = pairs[i].state != PAIR_PS1 && pair_can_verify(&f);
+    todo += pairs[i].checkable;
+  }
+  char msg[400];
+  snprintf(msg, sizeof(msg),
+           "Reads %d of %d installed games back from the HDD and compares each\n"
+           "with the CRC-32 recorded when it was copied. Nothing is written\n"
+           "except the journals. This takes about as long as reading every\n"
+           "game once; hold [SELECT]+[O] to stop.\n\n"
+           "Games without a completed install journal (other tools) and PS1\n"
+           "games cannot be checked this way and are listed as skipped.",
+           todo, n);
+  if (!todo) {
+    ui_message("Check installed games", msg);
+    return;
+  }
+  if (!ui_confirm("Check installed games", msg))
+    return;
+  static char report[8192];
+  int ok = 0, bad = 0, skipped = 0, stopped = 0;
+  size_t r = 0;
+  report[0] = 0;
+  for (int i = 0; i < n && !stopped; i++) {
+    const char *name = pairs[i].visible + 3;
+    if (!pairs[i].checkable) {
+      skipped++;
+      r += (size_t)snprintf(report + r, r < sizeof(report) ? sizeof(report) - r : 0,
+                            "skipped   %s\n", name);
+      continue;
+    }
+    progress_ctx_t ctx = {NULL, STAGE_VALIDATING, 1, 0, 0};
+    install_ui_t ui = {cb_stage, cb_progress, cb_abort, &ctx, NULL, NULL};
+    install_report_t rep;
+    char h[64];
+    snprintf(h, sizeof(h), "Checking %d/%d", ok + bad + 1, todo);
+    ui_header(h, name);
+    game_verify_data(pairs[i].hidden, &ui, &rep);
+    const char *res = "OK      ";
+    if (rep.err == ERR_USER_ABORT) {
+      stopped = 1;
+      res = "stopped ";
+    } else if (rep.err) {
+      bad++;
+      res = rep.have_crc ? "DAMAGED " : "UNREADABLE";
+    } else {
+      ok++;
+    }
+    if (r < sizeof(report))
+      r += (size_t)snprintf(report + r, sizeof(report) - r, "%s  %s\n", res, name);
+  }
+  char head[200];
+  snprintf(head, sizeof(head), "%d OK, %d damaged or unreadable, %d skipped%s\n%s\n", ok, bad,
+           skipped, stopped ? ", stopped early" : "",
+           bad ? "Reinstall a damaged game (delete it, then install it again)." : "");
+  static char text[8400];
+  snprintf(text, sizeof(text), "%s\n%s", head, report);
+  ui_text_view("Check installed games", text);
+}
 
 /* ------------------------------------------------------------------ */
 /* Remove games (several at once)                                      */

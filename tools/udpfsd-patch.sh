@@ -9,23 +9,18 @@
 #   tools/udpfsd-patch.sh save <file>  write the dev tree's diff against its
 #                                      base to patches/udpfsd/<file>
 #
-# Uses a local `go` >= 1.25 if present, otherwise the pinned Docker image
-# (same as tools/build-udpfsd.sh).
+# Needs a native Go >= 1.25 (as tools/build-udpfsd.sh); no Docker.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DEV=$ROOT/build/udpfsd-dev
-GO_IMAGE=golang:1.25@sha256:699337d620559a59b4a2bb298ad59611e535d2ee755a34cf2d2a98f37578dc80
 
+[ -x /usr/local/go/bin/go ] && PATH=/usr/local/go/bin:$PATH
 run_go() {
-  if command -v go >/dev/null 2>&1; then
-    (cd "$DEV" && sh -c "$1")
-  elif command -v docker >/dev/null 2>&1; then
-    docker run --rm -v "$DEV:/src" -w /src "$GO_IMAGE" sh -c "$1"
-  elif command -v docker.exe >/dev/null 2>&1; then
-    docker.exe run --rm -v "$(wslpath -w "$DEV"):/src" -w /src "$GO_IMAGE" sh -c "$1"
-  else
-    echo "ERROR: neither go nor docker found"; exit 1
-  fi
+  command -v go >/dev/null 2>&1 || {
+    echo "ERROR: Go 1.25 is needed: install the go1.25.x linux-amd64 tarball from https://go.dev/dl/ into /usr/local/go"
+    exit 1
+  }
+  (cd "$DEV" && sh -c "$1")
 }
 
 case "${1:-}" in

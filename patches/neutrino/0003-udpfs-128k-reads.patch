@@ -1,0 +1,14 @@
+diff -ruN a/iop/udpfs/src/udpfs_packet.h b/iop/udpfs/src/udpfs_packet.h
+--- a/iop/udpfs/src/udpfs_packet.h	2026-10-06 18:48:04.245119600 -0500
++++ b/iop/udpfs/src/udpfs_packet.h	2026-10-06 18:48:04.277119200 -0500
+@@ -54,7 +54,9 @@
+ 
+ /* Limits */
+ #define UDPFS_MAX_PATH          256   /* Max path length including null */
+-#define UDPFS_MAX_READ          (64 * 1024)  /* Max bytes per read request */
++/* 128 KiB: one request per fileXio IOP buffer (installer rw_buffer.h);
++ * udpfsd reads into a 128 KiB buffer, so any udpfsd accepts it. */
++#define UDPFS_MAX_READ          (128 * 1024) /* Max bytes per read request */
+ #define UDPFS_MAX_PAYLOAD       1400  /* Max message payload */
+ #define UDPFS_MAX_RETRIES       4
+ #define UDPFS_MAX_SECTOR_READ   128   /* Max sectors per block read (64KB) */
