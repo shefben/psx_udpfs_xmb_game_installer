@@ -14,6 +14,7 @@
 
 #include "iop_boot.h"
 #include "rw_buffer.h"
+#include "source_wire.h"
 
 /* Embedded IRX images (bin2c, see Makefile). */
 #define IRX(n)                                                                 \
@@ -37,6 +38,8 @@ IRX(bdm);
 IRX(bdmfs_fatfs);
 IRX(usbmass_bd);
 IRX(hddpump);
+IRX(mcman);
+IRX(mcserv);
 
 /* ps2hdd-hdl.irx: -o 4 -n 128 (as proven by ps2-usbhdl/HDLGameInstaller). */
 static const char PS2HDD_ARGS[] = "-o\0"
@@ -137,6 +140,18 @@ static union {
 } dhcp_buf __attribute__((aligned(64)));
 #define dhcp_res dhcp_buf.r
 
+int iop_load_memcard(iop_status_t *st) {
+  static int loaded = -1;
+  static int at_reboot = -1;
+  extern int _iop_reboot_count;
+  if (loaded >= 0 && at_reboot == _iop_reboot_count)
+    return loaded;
+  at_reboot = _iop_reboot_count;
+  /* mcman needs sio2man, which iop_boot_base loaded for the pads. */
+  loaded = LOAD(st, mcman, 0, NULL) == 0 && LOAD(st, mcserv, 0, NULL) == 0 ? 0 : -1;
+  return loaded;
+}
+
 void iop_boot_network(const char *local_ip, int dhcp, iop_status_t *st) {
   st->net_ok = st->udpfs_ok = 0;
   st->dhcp_status = 0;
@@ -173,6 +188,8 @@ void iop_boot_network(const char *local_ip, int dhcp, iop_status_t *st) {
   net_fail |= LOAD(st, udpfs_ioman, 0, NULL);
   /* After the last module load, so the bigger buffer cannot starve one. */
   st->rw_buffer = rw_buffer_setup(fileXioSetRWBufferSize);
+  if (st->rw_buffer)
+    source_wire_set_request((uint32_t)st->rw_buffer);
   st->net_ok = !net_fail;
   if (st->net_ok) {
     int dd = fileXioDopen("udpfs:/");

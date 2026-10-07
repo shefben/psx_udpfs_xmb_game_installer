@@ -197,7 +197,7 @@ TEST(batch_summary_mentions_opl_cfg_failure) {
   e[0].opl_cfg = "failed";
   char sum[512];
   batch_summary(e, 1, sum, sizeof(sum));
-  CHECK(strstr(sum, "OPL cfg not copied") != NULL);
+  CHECK(strstr(sum, "game extras (settings, cheats, cards, art) not installed") != NULL);
 }
 
 TEST(batch_summary_mentions_missing_cover) {

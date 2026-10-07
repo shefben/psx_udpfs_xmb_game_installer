@@ -1,0 +1,999 @@
+diff --git a/cmd/udpfsd/main.go b/cmd/udpfsd/main.go
+index accdd6a..bdf5586 100644
+--- a/cmd/udpfsd/main.go
++++ b/cmd/udpfsd/main.go
+@@ -83,7 +83,7 @@ func main() {
+ 		fs.WithCompressionCacheSize(*compressionCacheSize),
+ 	}
+ 	for _, f := range gameFolders(cfg) {
+-		fsopts = append(fsopts, fs.WithMount(f.Mount, f.Dir))
++		fsopts = append(fsopts, fs.WithMount(f.Mount, f.Dir), fs.WithSplitImages(f.Mount))
+ 	}
+ 	if cfg.ART != "" {
+ 		fsopts = append(fsopts, fs.WithMount("ART", cfg.ART))
+diff --git a/internal/fs/backend.go b/internal/fs/backend.go
+index 10ba86a..dfba192 100644
+--- a/internal/fs/backend.go
++++ b/internal/fs/backend.go
+@@ -25,7 +25,8 @@ type Backend struct {
+ 
+ 	// Device data
+ 	fsRoot               string
+-	mounts               []mount // read-only top-level mounts
++	mounts               []mount         // read-only top-level mounts
++	splitMounts          map[string]bool // mounts with split images (Name.iso.001...)
+ 	blockDevice          string
+ 	sectorSize           int
+ 	compressionCacheSize int
+diff --git a/internal/fs/fileops.go b/internal/fs/fileops.go
+index 9a14588..065ead7 100644
+--- a/internal/fs/fileops.go
++++ b/internal/fs/fileops.go
+@@ -58,6 +58,7 @@ func (s *Backend) Open(path string, flag int, isDir bool) (handle int32, stat ud
+ 		if err != nil {
+ 			return 0, udpfs.StatInfo{}, err
+ 		}
++		entries = s.virtualEntries(fullPath, entries)
+ 		handle := s.allocHandle(&dirHandle{entries: entries, dirPath: fullPath})
+ 		if handle < 0 {
+ 			return handle, udpfs.StatInfo{}, nil
+diff --git a/internal/fs/mounts.go b/internal/fs/mounts.go
+index bd77668..0832988 100644
+--- a/internal/fs/mounts.go
++++ b/internal/fs/mounts.go
+@@ -69,6 +69,45 @@ func WithMount(name, hostPath string) func(s *Backend) {
+ // WithInstallDir serves path read-only as /INSTALL.
+ func WithInstallDir(path string) func(s *Backend) { return WithMount(InstallDirName, path) }
+ 
++// WithSplitImages serves split images, Name.iso.001, Name.iso.002, ...,
++// as one Name.iso in the named mounts (game folders).
++func WithSplitImages(mounts ...string) func(s *Backend) {
++	return func(s *Backend) {
++		if s.splitMounts == nil {
++			s.splitMounts = map[string]bool{}
++		}
++		for _, m := range mounts {
++			s.splitMounts[m] = true
++		}
++	}
++}
++
++// mountOf returns the mount a resolved host path lies in, or nil.
++func (s *Backend) mountOf(resolved string) *mount {
++	for i := range s.mounts {
++		d := s.mounts[i].dir
++		if resolved == d || strings.HasPrefix(resolved, strings.TrimSuffix(d, string(os.PathSeparator))+string(os.PathSeparator)) {
++			return &s.mounts[i]
++		}
++	}
++	return nil
++}
++
++// mountHas reports whether resolved lies in a mount listed in set.
++func (s *Backend) mountHas(set map[string]bool, resolved string) bool {
++	m := s.mountOf(resolved)
++	return m != nil && set[m.name]
++}
++
++// foldName is the key that identifies a file name in its folder (letter
++// case does not count on Windows).
++func foldName(name string) string {
++	if foldCase {
++		return strings.ToLower(name)
++	}
++	return name
++}
++
+ func (s *Backend) initMounts() error {
+ 	for i := range s.mounts {
+ 		abs, err := filepath.Abs(s.mounts[i].dir)
+diff --git a/internal/fs/split/split.go b/internal/fs/split/split.go
+new file mode 100644
+index 0000000..ffc81c4
+--- /dev/null
++++ b/internal/fs/split/split.go
+@@ -0,0 +1,174 @@
++// Package split serves a split disc image, "Name.iso.001", "Name.iso.002",
++// ... (consecutive, from .001), as one read-only "Name.iso".
++package split
++
++import (
++	"errors"
++	"fmt"
++	"io"
++	"os"
++	"path/filepath"
++	"regexp"
++	"strconv"
++	"time"
++
++	"github.com/pcm720/udpfsd/internal/fs/compression/common"
++)
++
++var partRe = regexp.MustCompile(`^(.+\.(?i:iso))\.([0-9]{3})$`)
++
++// PartOf reports whether name is a part "<image>.NNN" of a split image
++// ("Game.iso.001" -> "Game.iso", 1).
++func PartOf(name string) (image string, n int, ok bool) {
++	m := partRe.FindStringSubmatch(name)
++	if m == nil {
++		return "", 0, false
++	}
++	n, _ = strconv.Atoi(m[2])
++	return m[1], n, n > 0
++}
++
++// PartName is the name of part n of image.
++func PartName(image string, n int) string { return fmt.Sprintf("%s.%03d", image, n) }
++
++// Part is one piece of a split image.
++type Part struct {
++	Path    string
++	Size    int64
++	ModTime time.Time
++}
++
++// Parts returns the parts of the split image at path (".../Name.iso"):
++// path.001, path.002, ... up to the first missing number. nil if there is
++// no path.001.
++func Parts(path string) []Part {
++	var parts []Part
++	for n := 1; n <= 999; n++ {
++		p := PartName(path, n)
++		st, err := os.Stat(p)
++		if err != nil || !st.Mode().IsRegular() {
++			break
++		}
++		parts = append(parts, Part{Path: p, Size: st.Size(), ModTime: st.ModTime()})
++	}
++	return parts
++}
++
++// Info is the stat of the image made of parts: summed size, newest time.
++func Info(name string, parts []Part) os.FileInfo {
++	var size int64
++	var mt time.Time
++	for _, p := range parts {
++		size += p.Size
++		if p.ModTime.After(mt) {
++			mt = p.ModTime
++		}
++	}
++	return common.NewCompressedInfo(name, size, mt)
++}
++
++// Stat returns the stat of the split image at path, or nil if there is none.
++func Stat(path string) os.FileInfo {
++	parts := Parts(path)
++	if parts == nil {
++		return nil
++	}
++	return Info(filepath.Base(path), parts)
++}
++
++// File reads the parts as one image (interfaces.FileObject).
++type File struct {
++	path  string
++	parts []Part
++	start []int64 // image offset of each part
++	info  os.FileInfo
++	size  int64
++	pos   int64
++	cur   int // index of the open part, -1 if none
++	f     *os.File
++}
++
++// Open opens the split image at path (".../Name.iso").
++func Open(path string) (*File, error) {
++	parts := Parts(path)
++	if parts == nil {
++		return nil, os.ErrNotExist
++	}
++	f := &File{path: path, parts: parts, info: Info(filepath.Base(path), parts), cur: -1}
++	for _, p := range parts {
++		f.start = append(f.start, f.size)
++		f.size += p.Size
++	}
++	return f, nil
++}
++
++func (f *File) Read(p []byte) (int, error) {
++	if f.pos >= f.size {
++		return 0, io.EOF
++	}
++	read := 0
++	for len(p) > 0 && f.pos < f.size {
++		i := len(f.parts) - 1
++		for i > 0 && f.start[i] > f.pos {
++			i--
++		}
++		if f.cur != i {
++			if f.f != nil {
++				f.f.Close()
++				f.f = nil
++			}
++			pf, err := os.Open(f.parts[i].Path)
++			if err != nil {
++				return read, err
++			}
++			f.f, f.cur = pf, i
++		}
++		off := f.pos - f.start[i]
++		chunk := p[:min(int64(len(p)), f.parts[i].Size-off)]
++		n, err := f.f.ReadAt(chunk, off)
++		read += n
++		f.pos += int64(n)
++		p = p[n:]
++		if n < len(chunk) {
++			if err == nil || err == io.EOF {
++				err = io.ErrUnexpectedEOF // a part shrank since it was opened
++			}
++			return read, err
++		}
++	}
++	return read, nil
++}
++
++func (f *File) Seek(offset int64, whence int) (int64, error) {
++	switch whence {
++	case io.SeekStart:
++	case io.SeekCurrent:
++		offset += f.pos
++	case io.SeekEnd:
++		offset += f.size
++	default:
++		return f.pos, fmt.Errorf("invalid whence %d", whence)
++	}
++	if offset < 0 {
++		return f.pos, errors.New("negative position")
++	}
++	f.pos = offset
++	return f.pos, nil
++}
++
++// Write: split images are read-only.
++func (f *File) Write([]byte) (int, error) { return 0, os.ErrPermission }
++
++func (f *File) Stat() (os.FileInfo, error) { return f.info, nil }
++
++// Name is the image's host path (".../Name.iso"), as for a real file.
++func (f *File) Name() string { return f.path }
++
++func (f *File) Close() error {
++	if f.f == nil {
++		return nil
++	}
++	err := f.f.Close()
++	f.f, f.cur = nil, -1
++	return err
++}
+diff --git a/internal/fs/split/split_test.go b/internal/fs/split/split_test.go
+new file mode 100644
+index 0000000..7d77130
+--- /dev/null
++++ b/internal/fs/split/split_test.go
+@@ -0,0 +1,101 @@
++package split
++
++import (
++	"bytes"
++	"io"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestPartOf(t *testing.T) {
++	for name, want := range map[string]struct {
++		img string
++		n   int
++	}{
++		"Game.iso.001": {"Game.iso", 1}, "Game (USA).ISO.002": {"Game (USA).ISO", 2}, "a.b.iso.999": {"a.b.iso", 999},
++	} {
++		img, n, ok := PartOf(name)
++		if !ok || img != want.img || n != want.n {
++			t.Errorf("PartOf(%q) = %q %d %v", name, img, n, ok)
++		}
++	}
++	for _, name := range []string{"Game.iso", "Game.iso.000", "Game.iso.01", "Game.iso.0001", "Game.bin.001", ".iso.001", "Game.zso.001"} {
++		if _, _, ok := PartOf(name); ok {
++			t.Errorf("PartOf(%q) accepted", name)
++		}
++	}
++}
++
++func makeSet(t *testing.T, sizes ...int) (string, []byte) {
++	t.Helper()
++	dir := t.TempDir()
++	var all []byte
++	for i, n := range sizes {
++		b := make([]byte, n)
++		for j := range b {
++			b[j] = byte(len(all) + j)
++		}
++		all = append(all, b...)
++		if err := os.WriteFile(filepath.Join(dir, PartName("G.iso", i+1)), b, 0644); err != nil {
++			t.Fatal(err)
++		}
++	}
++	return filepath.Join(dir, "G.iso"), all
++}
++
++func TestReadAcrossParts(t *testing.T) {
++	path, all := makeSet(t, 1000, 1, 2500, 7)
++	f, err := Open(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer f.Close()
++	if st, _ := f.Stat(); st.Size() != int64(len(all)) || st.Name() != "G.iso" || !st.Mode().IsRegular() {
++		t.Fatalf("stat %v %d", st.Name(), st.Size())
++	}
++	if f.Name() != path {
++		t.Fatalf("name %q", f.Name())
++	}
++	got, err := io.ReadAll(f)
++	if err != nil || !bytes.Equal(got, all) {
++		t.Fatalf("read all: %d bytes %v", len(got), err)
++	}
++	for _, c := range []struct{ off, n int }{{990, 20}, {999, 2}, {1000, 1}, {1001, 2505}, {0, 3508}, {3500, 8}} {
++		if pos, err := f.Seek(int64(c.off), io.SeekStart); err != nil || pos != int64(c.off) {
++			t.Fatal(err)
++		}
++		buf := make([]byte, c.n+10)
++		n, err := io.ReadFull(f, buf)
++		want := all[c.off:min(len(all), c.off+len(buf))]
++		if n != len(want) || !bytes.Equal(buf[:n], want) {
++			t.Fatalf("read %d at %d: %d bytes %v", len(buf), c.off, n, err)
++		}
++	}
++	if pos, _ := f.Seek(-8, io.SeekEnd); pos != int64(len(all)-8) {
++		t.Fatalf("SEEK_END %d", pos)
++	}
++	if _, err := f.Seek(-1, io.SeekStart); err == nil {
++		t.Fatal("negative seek accepted")
++	}
++	if _, err := f.Write([]byte("x")); err == nil {
++		t.Fatal("write accepted")
++	}
++}
++
++func TestPartsStopAtGap(t *testing.T) {
++	path, _ := makeSet(t, 10, 20)
++	os.WriteFile(PartName(path, 4), []byte("x"), 0644)
++	if p := Parts(path); len(p) != 2 || p[1].Size != 20 {
++		t.Fatalf("%+v", p)
++	}
++	if st := Stat(path); st == nil || st.Size() != 30 {
++		t.Fatalf("stat %v", st)
++	}
++	if Stat(filepath.Join(filepath.Dir(path), "none.iso")) != nil {
++		t.Fatal("stat of a missing set")
++	}
++	if _, err := Open(filepath.Join(filepath.Dir(path), "none.iso")); !os.IsNotExist(err) {
++		t.Fatal(err)
++	}
++}
+diff --git a/internal/fs/split_backend_test.go b/internal/fs/split_backend_test.go
+new file mode 100644
+index 0000000..4e57af7
+--- /dev/null
++++ b/internal/fs/split_backend_test.go
+@@ -0,0 +1,103 @@
++package fs
++
++import (
++	"bytes"
++	"io"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestSplitImageServedAsOne(t *testing.T) {
++	dvd := t.TempDir()
++	other := t.TempDir()
++	data := make([]byte, 5000)
++	for i := range data {
++		data[i] = byte(i * 7)
++	}
++	mkfile(t, filepath.Join(dvd, "sub", "Game.iso.001"), string(data[:3000]))
++	mkfile(t, filepath.Join(dvd, "sub", "Game.iso.002"), string(data[3000:4096]))
++	mkfile(t, filepath.Join(dvd, "sub", "Game.iso.003"), string(data[4096:]))
++	mkfile(t, filepath.Join(dvd, "sub", "Game.iso.005"), "after a gap")
++	mkfile(t, filepath.Join(dvd, "sub", "Real.iso"), "real image")
++	mkfile(t, filepath.Join(dvd, "sub", "Real.iso.001"), "ignored part")
++	mkfile(t, filepath.Join(dvd, "sub", "Real.iso.002"), "ignored part")
++	mkfile(t, filepath.Join(other, "X.iso.001"), "not a game folder")
++	b, err := NewBackend(WithMount("DVD", dvd), WithMount("OTHER", other), WithSplitImages("DVD"), WithReadOnly())
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	h, _, err := b.Open("/DVD/sub", os.O_RDONLY, true)
++	if err != nil {
++		t.Fatal(err)
++	}
++	sizes := map[string]uint32{}
++	for {
++		ok, name, st, err := b.Dread(h)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if !ok {
++			break
++		}
++		sizes[name] = st.Size
++	}
++	b.Close(h)
++	want := map[string]uint32{"Game.iso": 5000, "Game.iso.005": 11, "Real.iso": 10}
++	if len(sizes) != len(want) {
++		t.Fatalf("listing %v", sizes)
++	}
++	for n, s := range want {
++		if sizes[n] != s {
++			t.Fatalf("listing %v, want %v", sizes, want)
++		}
++	}
++	if got := listDir(t, b, "/OTHER"); !eq(got, []string{"X.iso.001"}) {
++		t.Fatalf("split image outside a game folder: %v", got)
++	}
++
++	h, st, err := b.Open("/DVD/sub/Game.iso", os.O_RDONLY, false)
++	if err != nil || st.Size != 5000 {
++		t.Fatalf("open: %d %v", st.Size, err)
++	}
++	if gs, err := b.Getstat("/DVD/sub/Game.iso"); err != nil || gs.Size != 5000 {
++		t.Fatalf("getstat open: %d %v", gs.Size, err)
++	}
++	buf := make([]byte, 128*1024)
++	if pos, err := b.Lseek(h, 2990, io.SeekStart); err != nil || pos != 2990 {
++		t.Fatal(err)
++	}
++	n, got, err := b.Read(h, 2000, buf)
++	if err != nil || n != 2000 || !bytes.Equal(got, data[2990:4990]) {
++		t.Fatalf("read across parts: %d %v", n, err)
++	}
++	if pos, _ := b.Lseek(h, 0, io.SeekEnd); pos != 5000 {
++		t.Fatalf("SEEK_END %d", pos)
++	}
++	if n, _, err := b.Read(h, 100, buf); n != 0 || err != nil {
++		t.Fatalf("at EOF %d %v", n, err)
++	}
++	b.Close(h)
++	if gs, err := b.Getstat("/DVD/sub/Game.iso"); err != nil || gs.Size != 5000 {
++		t.Fatalf("getstat closed: %d %v", gs.Size, err)
++	}
++	if got, err := readAll(t, b, "/DVD/sub/Real.iso"); err != nil || got != "real image" {
++		t.Fatalf("real Real.iso: %q %v", got, err)
++	}
++	if _, err := readAll(t, b, "/OTHER/X.iso"); err == nil {
++		t.Fatal("split image served outside a game folder")
++	}
++	if _, _, err := b.Open("/DVD/sub/Game.iso", os.O_RDWR, false); err == nil {
++		t.Fatal("split image opened for writing")
++	}
++	// Over /.lz4f too.
++	h, st, err = b.Open("/.lz4f/DVD/sub/Game.iso", os.O_RDONLY, false)
++	if err != nil || st.Size != 5000 {
++		t.Fatalf("framed: %d %v", st.Size, err)
++	}
++	if got := readFrames(t, b, h, 4096); !bytes.Equal(got, data) {
++		t.Fatal("framed split image differs")
++	}
++	b.Close(h)
++}
+diff --git a/internal/fs/virtual.go b/internal/fs/virtual.go
+index 050d577..3be28b0 100644
+--- a/internal/fs/virtual.go
++++ b/internal/fs/virtual.go
+@@ -1,13 +1,16 @@
+ package fs
+ 
+ import (
++	iofs "io/fs"
+ 	"log"
+ 	"os"
+ 	"path/filepath"
++	"sort"
+ 	"strings"
+ 
+ 	"github.com/pcm720/udpfsd/internal/fs/compression"
+ 	"github.com/pcm720/udpfsd/internal/fs/interfaces"
++	"github.com/pcm720/udpfsd/internal/fs/split"
+ 	"github.com/pcm720/udpfsd/internal/fs/wire"
+ 	"github.com/pcm720/udpfsd/udpfs"
+ )
+@@ -78,10 +81,12 @@ func (s *Backend) openReadOnly(clientPath string) (interfaces.FileObject, error)
+ }
+ 
+ // openVirtual opens a file that does not exist on the host but stands for
+-// an image: <name>.<zso|cso|chd>.iso, the decompressed image. nil if
+-// fullPath is none of these.
++// an image: <name>.<zso|cso|chd>.iso, the decompressed image; Name.iso in
++// a game folder, the split image Name.iso.001, .002, ... nil if fullPath
++// is none of these.
+ func (s *Backend) openVirtual(fullPath string) interfaces.FileObject {
+-	if s.enableCompression && strings.EqualFold(filepath.Ext(fullPath), ".iso") {
++	isISO := strings.EqualFold(filepath.Ext(fullPath), ".iso")
++	if s.enableCompression && isISO {
+ 		// If path has .iso extension, trim it and probe every supported extension
+ 		compressedPath := strings.TrimSuffix(fullPath, filepath.Ext(fullPath))
+ 		if s.pathExists(compressedPath) {
+@@ -91,15 +96,89 @@ func (s *Backend) openVirtual(fullPath string) interfaces.FileObject {
+ 			}
+ 		}
+ 	}
++	if isISO && s.mountHas(s.splitMounts, fullPath) {
++		if f, err := split.Open(fullPath); err == nil {
++			return f
++		}
++	}
+ 	return nil
+ }
+ 
+ // statVirtual is os.Stat for the files openVirtual opens (nil if none).
+ func (s *Backend) statVirtual(fullPath string) os.FileInfo {
+-	if s.enableCompression && strings.EqualFold(filepath.Ext(fullPath), ".iso") {
++	isISO := strings.EqualFold(filepath.Ext(fullPath), ".iso")
++	if s.enableCompression && isISO {
+ 		if st := compression.GetStat(strings.TrimSuffix(fullPath, filepath.Ext(fullPath))); st != nil {
+ 			return st
+ 		}
+ 	}
++	if isISO && s.mountHas(s.splitMounts, fullPath) {
++		if st := split.Stat(fullPath); st != nil {
++			return st
++		}
++	}
+ 	return nil
+ }
++
++// virtualEntry is a directory entry for a virtual file.
++type virtualEntry struct{ info os.FileInfo }
++
++func (e virtualEntry) Name() string               { return e.info.Name() }
++func (e virtualEntry) IsDir() bool                { return false }
++func (e virtualEntry) Type() iofs.FileMode        { return 0 }
++func (e virtualEntry) Info() (os.FileInfo, error) { return e.info, nil }
++
++// virtualEntries is the listing of dir (a folder in a mount) as the client
++// sees it: with the virtual images of that mount.
++func (s *Backend) virtualEntries(dir string, entries []os.DirEntry) []os.DirEntry {
++	m := s.mountOf(dir)
++	if m == nil {
++		return entries
++	}
++	if s.splitMounts[m.name] {
++		entries = splitEntries(entries)
++	}
++	return entries
++}
++
++// splitEntries lists each split image (Name.iso.001, .002, ...) as one
++// Name.iso with the summed size and hides its parts. A real Name.iso wins.
++func splitEntries(entries []os.DirEntry) []os.DirEntry {
++	present := map[string]bool{}
++	for _, e := range entries {
++		present[foldName(e.Name())] = true
++	}
++	count := map[string]int{} // folded image name -> parts .001..N present
++	first := map[string]string{}
++	for _, e := range entries {
++		if img, n, ok := split.PartOf(e.Name()); ok && n == 1 && e.Type().IsRegular() {
++			k := 1
++			for k < 999 && present[foldName(split.PartName(img, k+1))] {
++				k++
++			}
++			count[foldName(img)], first[foldName(img)] = k, img
++		}
++	}
++	if len(count) == 0 {
++		return entries
++	}
++	parts := map[string][]split.Part{}
++	out := make([]os.DirEntry, 0, len(entries))
++	for _, e := range entries {
++		img, n, ok := split.PartOf(e.Name())
++		if ok && e.Type().IsRegular() && n <= count[foldName(img)] {
++			if info, err := e.Info(); err == nil {
++				parts[foldName(img)] = append(parts[foldName(img)], split.Part{Size: info.Size(), ModTime: info.ModTime()})
++			}
++			continue // a part: listed as its image only
++		}
++		out = append(out, e)
++	}
++	for key, img := range first {
++		if !present[key] && len(parts[key]) == count[key] {
++			out = append(out, virtualEntry{split.Info(img, parts[key])})
++		}
++	}
++	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
++	return out
++}
+diff --git a/internal/fs/wire_backend_test.go b/internal/fs/wire_backend_test.go
+index 526d9b6..b9d2704 100644
+--- a/internal/fs/wire_backend_test.go
++++ b/internal/fs/wire_backend_test.go
+@@ -9,6 +9,7 @@ import (
+ 	"slices"
+ 	"testing"
+ 
++	"github.com/pcm720/udpfsd/internal/fs/compression/chd"
+ 	"github.com/pcm720/udpfsd/internal/fs/wire"
+ 	"github.com/pcm720/udpfsd/udpfs"
+ 	"github.com/pierrec/lz4/v4"
+@@ -126,3 +127,40 @@ func TestGetstatWithoutOpen(t *testing.T) {
+ 		t.Fatalf("missing: %v", err)
+ 	}
+ }
++
++func TestWireFramesCompressedFormats(t *testing.T) {
++	ref, err := os.ReadFile(filepath.Join("compression", "test", "test.iso"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	dir := t.TempDir()
++	names := map[string]string{"test.cso": "c.cso", "test.zso": "z.zso"}
++	if chd.Available {
++		names["test_dvd.chd"] = "d.chd"
++	}
++	for src, dst := range names {
++		b, err := os.ReadFile(filepath.Join("compression", "test", src))
++		if err != nil {
++			t.Fatal(err)
++		}
++		mkfile(t, filepath.Join(dir, dst), string(b))
++	}
++	b, err := NewBackend(WithMount("DVD", dir), WithReadOnly(), WithCompression())
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, dst := range names {
++		path := "/.lz4f/DVD/" + dst + ".iso"
++		if gs, err := b.Getstat(path); err != nil || int(gs.Size) != len(ref) {
++			t.Fatalf("%s: getstat %d %v", path, gs.Size, err)
++		}
++		h, st, err := b.Open(path, os.O_RDONLY, false)
++		if err != nil || int(st.Size) != len(ref) {
++			t.Fatalf("%s: open %d %v", path, st.Size, err)
++		}
++		if got := readFrames(t, b, h, 131072); !bytes.Equal(got, ref) {
++			t.Fatalf("%s: frames differ", path)
++		}
++		b.Close(h)
++	}
++}
+diff --git a/internal/prep/formats_test.go b/internal/prep/formats_test.go
+new file mode 100644
+index 0000000..2abfe70
+--- /dev/null
++++ b/internal/prep/formats_test.go
+@@ -0,0 +1,178 @@
++package prep
++
++import (
++	"encoding/binary"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/pcm720/udpfsd/internal/fs/compression/chd"
++)
++
++// writeCSO stores data as a CISO with every block flagged plain
++// (uncompressed): n+1 index entries, bit 31 = plain, alignment 0.
++func writeCSO(t *testing.T, path string, data []byte) {
++	t.Helper()
++	const bs = 2048
++	n := (len(data) + bs - 1) / bs
++	hdr := make([]byte, 24)
++	copy(hdr, "CISO")
++	binary.LittleEndian.PutUint32(hdr[4:], 24)
++	binary.LittleEndian.PutUint64(hdr[8:], uint64(len(data)))
++	binary.LittleEndian.PutUint32(hdr[16:], bs)
++	hdr[20] = 1 // version
++	idx := make([]byte, 4*(n+1))
++	pos := uint32(24 + 4*(n+1))
++	for i := 0; i <= n; i++ {
++		binary.LittleEndian.PutUint32(idx[4*i:], pos|0x80000000)
++		pos += bs
++	}
++	out := append(append(hdr, idx...), data...)
++	out = append(out, make([]byte, n*bs-len(data))...)
++	if err := os.WriteFile(path, out, 0644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++// writeCHD stores data as an uncompressed CHD v5 (DVD-style: 2048-byte
++// units, 4096-byte hunks): header, map of 32-bit big-endian hunk numbers,
++// then the hunks aligned to the hunk size.
++func writeCHD(t *testing.T, path string, data []byte) {
++	t.Helper()
++	const hunk = 4096
++	hunks := (len(data) + hunk - 1) / hunk
++	first := (124 + 4*hunks + hunk - 1) / hunk // hunk number of the first data hunk
++	out := make([]byte, (first+hunks)*hunk)
++	copy(out, "MComprHD")
++	binary.BigEndian.PutUint32(out[8:], 124)
++	binary.BigEndian.PutUint32(out[12:], 5)
++	binary.BigEndian.PutUint64(out[32:], uint64(len(data))) // logical bytes
++	binary.BigEndian.PutUint64(out[40:], 124)               // map offset
++	binary.BigEndian.PutUint32(out[56:], hunk)
++	binary.BigEndian.PutUint32(out[60:], 2048)
++	for i := 0; i < hunks; i++ {
++		binary.BigEndian.PutUint32(out[124+4*i:], uint32(first+i))
++	}
++	copy(out[first*hunk:], data)
++	if err := os.WriteFile(path, out, 0644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func scanOne(t *testing.T, mount string, files map[string][]byte) (string, []string) {
++	t.Helper()
++	base := t.TempDir()
++	dir := filepath.Join(base, mount)
++	os.MkdirAll(dir, 0755)
++	for name, data := range files {
++		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
++			t.Fatal(err)
++		}
++	}
++	cache := filepath.Join(base, "c")
++	if _, err := Run(Options{Folders: []Folder{{Mount: mount, Dir: dir}}, CacheDir: cache}); err != nil {
++		t.Fatal(err)
++	}
++	return readManifest(t, cache)
++}
++
++func TestScanSplitImage(t *testing.T) {
++	img := buildISO("SPLIT", 1000, 1000, cnfOK, false)
++	other := buildISO("REAL", 1000, 1000, strings.Replace(cnfOK, "SLUS_203.12", "SLUS_210.90", 1), false)
++	_, lines := scanOne(t, "DVD", map[string][]byte{
++		"Split Game (USA).iso.001": img[:600*2048],
++		"Split Game (USA).iso.002": img[600*2048 : 900*2048],
++		"Split Game (USA).iso.003": img[900*2048:],
++		"Split Game (USA).iso.005": []byte("after a gap: not part of the set"),
++		"Real.iso":                 other,
++		"Real.iso.001":             []byte("a real Real.iso wins"),
++	})
++	want := []string{
++		"/DVD/Real.iso\tok\tSLUS_210.90\tReal\t2048000\tDVD\t0\t-\t-",
++		"/DVD/Split Game (USA).iso\tok\tSLUS_203.12\tSplit Game\t2048000\tDVD\t0\t-\t-",
++	}
++	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
++		t.Fatalf("manifest:\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
++	}
++}
++
++func TestScanSplitImageCache(t *testing.T) {
++	base := t.TempDir()
++	dir := filepath.Join(base, "G")
++	os.MkdirAll(dir, 0755)
++	img := buildISO("X", 1000, 1000, cnfOK, false)
++	os.WriteFile(filepath.Join(dir, "a.iso.001"), img[:500*2048], 0644)
++	os.WriteFile(filepath.Join(dir, "a.iso.002"), img[500*2048:], 0644)
++	o := Options{Folders: []Folder{{"GAMES", dir}}, CacheDir: filepath.Join(base, "c")}
++	if _, err := Run(o); err != nil {
++		t.Fatal(err)
++	}
++	probes := 0
++	probeHook = func(string) { probes++ }
++	defer func() { probeHook = nil }()
++	if _, err := Run(o); err != nil || probes != 0 {
++		t.Fatalf("unchanged split image re-probed (%d) %v", probes, err)
++	}
++	// A third part changes the image (size and time): probed again.
++	os.WriteFile(filepath.Join(dir, "a.iso.003"), make([]byte, 2048), 0644)
++	if res, err := Run(o); err != nil || probes != 1 || res.Games != 1 {
++		t.Fatalf("changed split image: probes %d %+v %v", probes, res, err)
++	}
++}
++
++func TestScanCSO(t *testing.T) {
++	cso := filepath.Join(t.TempDir(), "x.cso")
++	writeCSO(t, cso, buildISO("CSO", 1000, 1000, cnfOK, false))
++	b, _ := os.ReadFile(cso)
++	_, lines := scanOne(t, "CD", map[string][]byte{"Game (Europe).cso": b, "bad.cso": []byte("CISO but not really")})
++	want := []string{
++		"/CD/Game (Europe).cso.iso\tok\tSLUS_203.12\tGame\t2048000\tCD\t0\t-\t-",
++	}
++	if len(lines) != 2 || lines[0] != want[0] || !strings.HasPrefix(lines[1], "/CD/bad.cso.iso\tinvalid:") {
++		t.Fatalf("manifest:\n%s", strings.Join(lines, "\n"))
++	}
++}
++
++func TestScanCHD(t *testing.T) {
++	p := filepath.Join(t.TempDir(), "x.chd")
++	writeCHD(t, p, buildISO("CHD", 1000, 1000, cnfOK, true))
++	b, _ := os.ReadFile(p)
++	_, lines := scanOne(t, "DVD", map[string][]byte{"Game.chd": b})
++	if !chd.Available {
++		// Without CHD support udpfsd cannot serve it: not listed.
++		if len(lines) != 0 {
++			t.Fatalf("CHD listed without CHD support: %q", lines)
++		}
++		return
++	}
++	want := "/DVD/Game.chd.iso\tok\tSLUS_203.12\tGame\t2048000\tDVD\t0\t-\t-"
++	if len(lines) != 1 || lines[0] != want {
++		t.Fatalf("manifest %q\nwant %q", lines, want)
++	}
++}
++
++func TestOpenLogicalFormats(t *testing.T) {
++	dir := t.TempDir()
++	img := buildISO("FMT", 100, 100, cnfOK, false)
++	writeCSO(t, filepath.Join(dir, "a.cso"), img)
++	writeZSO(t, filepath.Join(dir, "a.zso"), img)
++	os.WriteFile(filepath.Join(dir, "s.iso.001"), img[:10*2048+5], 0644)
++	os.WriteFile(filepath.Join(dir, "s.iso.002"), img[10*2048+5:], 0644)
++	paths := []string{"a.cso", "a.zso", "s.iso"}
++	if chd.Available {
++		writeCHD(t, filepath.Join(dir, "a.chd"), img)
++		paths = append(paths, "a.chd")
++	}
++	for _, name := range paths {
++		r, size, c, err := OpenLogical(filepath.Join(dir, name))
++		if err != nil || size != int64(len(img)) {
++			t.Fatalf("%s: %d %v", name, size, err)
++		}
++		buf := make([]byte, 3*2048)
++		if _, err := r.ReadAt(buf, 9*2048); err != nil || string(buf) != string(img[9*2048:12*2048]) {
++			t.Fatalf("%s: ReadAt across a block/part boundary: %v", name, err)
++		}
++		c.Close()
++	}
++}
+diff --git a/internal/prep/iso.go b/internal/prep/iso.go
+index f359609..4249577 100644
+--- a/internal/prep/iso.go
++++ b/internal/prep/iso.go
+@@ -11,10 +11,12 @@ import (
+ 	"os"
+ 	"path/filepath"
+ 	"regexp"
++	"slices"
+ 	"strings"
+ 	"sync"
+ 
+ 	"github.com/pcm720/udpfsd/internal/fs/compression"
++	"github.com/pcm720/udpfsd/internal/fs/split"
+ )
+ 
+ const isoSector = 2048
+@@ -55,24 +57,33 @@ func (r *readerAtCloser) ReadAt(p []byte, off int64) (int, error) {
+ 
+ func (r *readerAtCloser) Close() error { return r.f.Close() }
+ 
+-// OpenLogical opens an .iso as-is or a .zso through udpfsd's decompressor,
+-// returning the logical ISO stream.
++// OpenLogical opens an .iso as-is, a compressed image (.zso, .cso, .chd)
++// through udpfsd's decompressor, or a split image (Name.iso standing for
++// Name.iso.001, .002, ...), returning the logical ISO stream.
+ func OpenLogical(path string) (io.ReaderAt, int64, io.Closer, error) {
+-	if strings.EqualFold(filepath.Ext(path), ".zso") {
++	ext := strings.ToLower(filepath.Ext(path))
++	if ext != ".iso" && slices.Contains(compression.GetSupportedExtensions(), ext) {
++		format := strings.ToUpper(ext[1:])
+ 		fo := compression.Open(path, 8)
+ 		if fo == nil {
+-			return nil, 0, nil, fmt.Errorf("%s: not a valid ZSO", filepath.Base(path))
++			return nil, 0, nil, fmt.Errorf("%s: not a valid %s", filepath.Base(path), format)
+ 		}
+-		// The cached reader's Stat carries no size; read it from the header.
+ 		st := compression.GetStat(path)
+ 		if st == nil {
+ 			fo.Close()
+-			return nil, 0, nil, fmt.Errorf("%s: not a valid ZSO", filepath.Base(path))
++			return nil, 0, nil, fmt.Errorf("%s: not a valid %s", filepath.Base(path), format)
+ 		}
+ 		r := &readerAtCloser{f: fo}
+ 		return r, st.Size(), r, nil
+ 	}
+ 	f, err := os.Open(path)
++	if errors.Is(err, os.ErrNotExist) && ext == ".iso" {
++		if sf, serr := split.Open(path); serr == nil {
++			st, _ := sf.Stat()
++			r := &readerAtCloser{f: sf}
++			return r, st.Size(), r, nil
++		}
++	}
+ 	if err != nil {
+ 		return nil, 0, nil, err
+ 	}
+diff --git a/internal/prep/scan.go b/internal/prep/scan.go
+index a6c590c..f6f335c 100644
+--- a/internal/prep/scan.go
++++ b/internal/prep/scan.go
+@@ -10,10 +10,14 @@ import (
+ 	"log"
+ 	"os"
+ 	"path/filepath"
++	"slices"
+ 	"sort"
+ 	"strings"
+ 	"sync"
+ 	"time"
++
++	"github.com/pcm720/udpfsd/internal/fs/compression"
++	"github.com/pcm720/udpfsd/internal/fs/split"
+ )
+ 
+ // Folder is a game folder served as /<Mount>.
+@@ -90,14 +94,23 @@ func Begin(o Options) error {
+ 		[]byte(fmt.Sprintf("udpfsd-manifest 1 auto=%d%s scanning=1\n", auto, Features)))
+ }
+ 
++// isCompressed reports whether ext (".zso", ".cso", ".chd", ...) is a
++// compressed image udpfsd serves decompressed (CHD only when built in).
++func isCompressed(ext string) bool {
++	return slices.Contains(compression.GetSupportedExtensions(), strings.ToLower(ext))
++}
++
+ func clientPath(mount, rel string) string {
+ 	p := "/" + mount + "/" + filepath.ToSlash(rel)
+-	if strings.EqualFold(filepath.Ext(p), ".zso") {
++	if isCompressed(filepath.Ext(p)) {
+ 		p += ".iso" // udpfsd's virtual decompressed name
+ 	}
+ 	return p
+ }
+ 
++// collect lists the images in the game folders: .iso, compressed images
++// (.zso, .cso, .chd) as <name>.<ext>.iso, and split images (Name.iso.001,
++// .002, ...) as the Name.iso udpfsd serves for them.
+ func (o *Options) collect() []entry {
+ 	var out []entry
+ 	for _, f := range o.Folders {
+@@ -106,15 +119,27 @@ func (o *Options) collect() []entry {
+ 				return nil
+ 			}
+ 			ext := strings.ToLower(filepath.Ext(p))
+-			if ext != ".iso" && ext != ".zso" {
+-				return nil
+-			}
+-			st, err := d.Info()
+-			if err != nil {
++			host := p
++			var st os.FileInfo
++			if ext == ".iso" || isCompressed(ext) {
++				if st, err = d.Info(); err != nil {
++					return nil
++				}
++			} else if img, n, ok := split.PartOf(d.Name()); ok && n == 1 {
++				host = filepath.Join(filepath.Dir(p), img)
++				if _, err := os.Stat(host); err == nil {
++					return nil // a real Name.iso wins (and is listed itself)
++				}
++				parts := split.Parts(host)
++				if parts == nil {
++					return nil
++				}
++				st = split.Info(img, parts)
++			} else {
+ 				return nil
+ 			}
+-			rel, _ := filepath.Rel(f.Dir, p)
+-			out = append(out, entry{Path: clientPath(f.Mount, rel), Host: p,
++			rel, _ := filepath.Rel(f.Dir, host)
++			out = append(out, entry{Path: clientPath(f.Mount, rel), Host: host,
+ 				Size: st.Size(), ModTime: st.ModTime().UnixNano()})
+ 			return nil
+ 		})
+diff --git a/internal/prep/titles.go b/internal/prep/titles.go
+index ba2b4d9..174b25a 100644
+--- a/internal/prep/titles.go
++++ b/internal/prep/titles.go
+@@ -60,7 +60,7 @@ var trailingGroup = regexp.MustCompile(`\s*[\(\[][^\)\]]*[\)\]]\s*$`)
+ // trailing "(USA)"/"[!]"-style groups.
+ func FileTitle(path string) string {
+ 	name := filepath.Base(strings.ReplaceAll(path, "\\", "/"))
+-	for _, ext := range []string{".iso", ".zso"} {
++	for _, ext := range []string{".iso", ".zso", ".ziso", ".cso", ".ciso", ".chd"} {
+ 		if strings.HasSuffix(strings.ToLower(name), ext) {
+ 			name = name[:len(name)-len(ext)]
+ 		}

@@ -18,11 +18,16 @@
 #if defined(VARIANT_BOOTSTRAP) && !defined(HAVE_EMBEDDED_INSTALLER_KELF)
 #error "the bootstrap variant must embed the signed installer app KELF"
 #endif
+#if (defined(VARIANT_APP) || defined(VARIANT_BOOTSTRAP)) && !defined(HAVE_EMBEDDED_APP_LAUNCHER)
+#error "release variants must embed the signed app launcher KELF"
+#endif
 
 extern unsigned char default_jkt1_png[], default_jkt2_png[];
 extern unsigned int size_default_jkt1_png, size_default_jkt2_png;
 extern unsigned char installer_jkt1_png[], installer_jkt2_png[];
 extern unsigned int size_installer_jkt1_png, size_installer_jkt2_png;
+extern unsigned char app_jkt1_png[], app_jkt2_png[];
+extern unsigned int size_app_jkt1_png, size_app_jkt2_png;
 extern unsigned char manual_blank_png[], jkt_cp_png[];
 extern unsigned int size_manual_blank_png, size_jkt_cp_png;
 extern unsigned char osd_icon_ico[];
@@ -35,6 +40,10 @@ extern unsigned int size_opl_launcher_kelf;
 #ifdef HAVE_EMBEDDED_INSTALLER_KELF
 extern unsigned char installer_kelf[];
 extern unsigned int size_installer_kelf;
+#endif
+#ifdef HAVE_EMBEDDED_APP_LAUNCHER
+extern unsigned char app_launcher_kelf[];
+extern unsigned int size_app_launcher_kelf;
 #endif
 
 const char *payload_build_variant(void) {
@@ -165,4 +174,17 @@ void payload_osd_icon(const uint8_t **data, uint32_t *size) {
 void payload_installer_jackets(jacket_pair_t *j) {
   *j = (jacket_pair_t){installer_jkt1_png, size_installer_jkt1_png, installer_jkt2_png,
                        size_installer_jkt2_png};
+}
+
+void payload_app_jackets(jacket_pair_t *j) {
+  *j = (jacket_pair_t){app_jkt1_png, size_app_jkt1_png, app_jkt2_png, size_app_jkt2_png};
+}
+
+inst_err_t payload_app_launcher(payload_t *out) {
+  memset(out, 0, sizeof(*out));
+#ifdef HAVE_EMBEDDED_APP_LAUNCHER
+  if (use_embedded(out, app_launcher_kelf, size_app_launcher_kelf))
+    return ERR_OK;
+#endif
+  return ERR_KELF_MISSING;
 }

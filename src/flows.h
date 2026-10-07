@@ -29,10 +29,30 @@ void flow_batch_install(void);
 void flow_auto_install(void);
 
 void flow_installed_games(void);
+/* Read every checkable installed game back (Verify game data for all). */
+void flow_check_all_games(void);
+
+/* flows_tools.c: install a PS2 game from the disc drive; HDD health
+ * (SMART, space, largest game that fits, check all games). */
+void flow_disc_install(void);
+void flow_hdd_health(void);
+
+/* flows_extras.c: saves / memory cards, cheats, OPL settings and art,
+ * for installed games (from the server's VMC, CHT, CFG and ART folders). */
+void flow_extras(void);
 /* PS1 game (.VCD) from the server or USB: plan screen, then install. */
 void flow_install_ps1(const char *path);
 /* Rename / delete an installed PS1 game partition. */
 void flow_ps1_actions(const char *partition);
+/* Once at start-up: hooks the UI into the HDD layer (128 GiB warning). */
+void flows_init(void);
+
+/* Install a homebrew .ELF (udpfs: or USB) as an XMB app channel. */
+void flow_install_app(const char *elf_path);
+
+/* Apps submenu: install from UDPFS / USB, installed apps (delete). */
+void flow_apps(void);
+
 /* Select several installed games and delete both partitions of each. */
 void flow_remove_games(void);
 void flow_repair(void);

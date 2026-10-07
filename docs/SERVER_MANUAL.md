@@ -1,4 +1,4 @@
-# udpfsd Server Manual (v3.0)
+# udpfsd Server Manual (v4.0)
 
 udpfsd is the PC side of the UDPFS Game Installer. It serves your game
 folders to the PSX DESR over the network (read-only), prepares titles,
@@ -29,26 +29,43 @@ the server stops with `config: ... line N`.
 
 | Key | What it does |
 |---|---|
-| `dvd = DVD` | DVD games (.iso / .zso, subfolders included) |
-| `cd = CD` | CD games; PS1 `.VCD` games may be here too |
+| `dvd = DVD` | DVD games (.iso / .zso / .cso / .chd, or split `.iso.001`, `.002` ..., subfolders included) |
+| `cd = CD` | CD games; PS1 `.VCD` (or BIN/CUE) games may be here too |
 | `games = <folder>` | games of either type (the disc type is read from the image) |
 | `install = <folder>` | an extra folder, shown to the DESR as `/INSTALL` |
-| `pops = POPS` | PS1 games (.VCD) plus `POPSTARTER.KELF` (included), `POPS.ELF`, `IOPRP252.IMG` (yours) |
+| `apps = APPS` | Homebrew apps (.ELF, one folder per app), installed as XMB channels |
+| `pops = POPS` | PS1 games (.VCD, or BIN/CUE) plus `POPSTARTER.KELF` (included), `POPS.ELF`, `IOPRP252.IMG` (yours) |
+| `vmc = VMC` | Memory cards and saves: OPL cards `<GAME-ID>_0.bin` / `_1.bin`, PCSX2 `.ps2` cards, `.psu` saves; PS1 cards `<GAME-ID>.VMC` / `.mcr` / `.mcd` / `.mc` / `.gme` / `.vmp`, single PS1 saves `.mcs` |
+| `cht = CHT` | Cheats: OPL `<GAME-ID>.cht`, PS1 (POPStarter) `<GAME-ID>.txt` |
 
 Each folder you set must exist. You can point the folders anywhere, for
 example at PFS-BatchKit-Manager's folders:
 `dvd = F:\ps2\PFS-BatchKit-Manager\DVD`.
 
-**Compressed games:** `.zso` and `.cso` files are listed to the DESR as
-`<name>.zso.iso`. The console fetches the compressed file and unpacks it
-itself; for blocks it cannot unpack, the server unpacks them instead.
+**Compressed games:** `.zso`, `.cso` and `.chd` files are listed to the
+DESR as `<name>.zso.iso`, `<name>.cso.iso` and `<name>.chd.iso`, unpacked
+by the server. **Split images** `Name.iso.001`, `.002`, ... (numbered
+from .001 without gaps) are listed as one `Name.iso`; a real `Name.iso`
+next to them wins.
+
+**PS1 BIN/CUE:** in `POPS` and `CD`, a `Name.cue` with one `.bin` (in the
+same folder) is listed as `Name.VCD`: the bytes cue2pops 2.0 would write
+(header, gaps), made on the fly without a copy. Its optional game fixes,
+trainer and NTSC patch are not applied. Cues cue2pops refuses (several
+files, WAVE, no MODE2/2352 first track) are not offered. A real
+`Name.VCD` wins.
+
+**Compressed transfers:** every image is also served under `/.lz4f/...`
+as LZ4 frames (the manifest says `wire=lz4f`); the 4.0 installer uses
+them, so compressible data (padding, empty sectors) costs almost nothing
+on the network. One CPU core per transfer compresses on the fly.
 
 ### Titles, covers, game info
 
 | Key | What it does |
 |---|---|
-| `cfg = CFG` | OPL per-game settings, `<GAME-ID>.cfg` (e.g. `SLUS_203.12.cfg`). Copied to the DESR's OPL folder at install, and only if OPL has none there yet. Its `Title=` line is used as the game title. |
-| `art = ART` | Covers: `<GAME-ID>_COV.png/.jpg`, `<GAME-ID>_COV2.*` or `<GAME-ID>.*` |
+| `cfg = CFG` | OPL per-game settings, `<GAME-ID>.cfg` (e.g. `SLUS_203.12.cfg`). Copied to the DESR's OPL folder at install (kept if OPL has one there, unless replaced from *Saves, Cheats & Game Extras*). Its `Title=` line is used as the game title. |
+| `art = ART` | Covers: `<GAME-ID>_COV.png/.jpg`, `<GAME-ID>_COV2.*` or `<GAME-ID>.*`. Also OPL art, installed into OPL's ART folder as PNG (JPEG converted, served under `/.oplart/`): `_COV _COV2 _ICO _LAB _LGO _BG` (or `_BG_00`) `_SCR` (or `_SCR_00`) `_SCR2` (or `_SCR_01`) |
 | `gamelist = GameListPS2.txt` | List of game IDs and names (PFS-BatchKit-Manager format), used for titles |
 | `gamedb = PS2DB.xml` | Game database (PFS-BatchKit-Manager `BAT\PS2DB.xml`). Adds the release date, developer, publisher and genre shown in the XMB game info. A game not in the database gets its install date as the release date. |
 | `download_covers = yes` | Downloads covers missing from `art` (from xlenore/ps2-covers on GitHub) |
@@ -107,7 +124,12 @@ overrides `udpfsd.cfg`. Run the server with `-h` for the full list.
   duplicates (the same game as .iso and .zso is installed once).
 - **Auto-install, OPL install, covers, OPL settings, game info:** all
   come from the scan.
-- **PS1 games:** pick a `.VCD` from the `POPS` or the `CD` folder.
+- **Game extras** (`CFG`, `CHT`, `VMC`, `ART`): installed with each game
+  and from *Saves, Cheats & Game Extras*, into the OPL partition (PS2) or
+  `__common/POPS/<game>/` (PS1). `.psu` saves go onto a real memory card.
+- **PS1 games:** pick a `.VCD` (or a BIN/CUE shown as `.VCD`) from the
+  `POPS` or the `CD` folder. Multi-disc games named `(Disc 1)`, `(Disc 2)`
+  ... install as one game.
   `POPSTARTER.KELF` (shipped), `POPS.ELF` and `IOPRP252.IMG` are taken
   from next to the `.VCD`, else from the `POPS` folder.
 - **Without the server:** Installed Games, Remove Games, Repair, Back up
@@ -123,4 +145,4 @@ overrides `udpfsd.cfg`. Run the server with `-h` for the full list.
 | Game listed as "duplicate" | Two images of the same game; only one is installed. |
 | Plain "PS2 GAME" cover | Restart the server, then on the DESR: Installed Games > game > Repair XMB channel. |
 | No release date / genre in the XMB | Set `gamedb`; the game must be in that database. |
-| PS1 install says POPSTARTER.KELF / POPS.ELF missing | Keep the shipped `POPSTARTER.KELF` and add `POPS.ELF` and `IOPRP252.IMG` next to the .VCD or in the `POPS` folder. Installers before 3.0 reported these files missing on the server even when present; update the installer. |
+| PS1 install says POPSTARTER.KELF / POPS.ELF missing | Keep the shipped `POPSTARTER.KELF` and add `POPS.ELF` and `IOPRP252.IMG` next to the .VCD or in the `POPS` folder. Installers before 3.1 reported these files missing on the server even when present; update the installer. |

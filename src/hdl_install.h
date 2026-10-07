@@ -40,6 +40,8 @@ typedef struct {
   uint64_t read_ticks;  /* UDPFS read (stream) or HDD read (verify) */
   uint64_t crc_ticks;   /* CRC-32 on the EE */
   uint64_t write_ticks; /* HDD write (stream only) */
+  uint64_t verify_ticks; /* CRC-32 of data read back during the copy */
+  uint64_t verified;     /* bytes read back during the copy */
 } stream_timing_t;
 extern stream_timing_t g_stream_timing;
 
@@ -48,6 +50,10 @@ typedef struct {
   int rc;         /* underlying driver code */
   uint64_t bytes; /* bytes streamed / read back */
   uint32_t crc32; /* CRC-32 of those bytes */
+  /* hdl_stream: installed bytes [0, verified_bytes) already read back
+   * from the HDD during the copy, with their CRC-32 (pumped loop). */
+  uint64_t verified_bytes;
+  uint32_t verified_crc32;
 } hdl_result_t;
 
 /* Create `hidden` sized by `alloc` and write the HDL header via
@@ -68,11 +74,13 @@ hdl_result_t hdl_stream(const char *hidden, GameSource *src, uint64_t total, uin
                         uint32_t start_crc, const stream_cb_t *cb);
 
 /* Verify without the source: APA type HDL, HDL header fields, then a
- * read-only remount and a sequential read of all installed data
- * (CRC-32 + PVD/volume-id check at sector 16). The caller requires
- * bytes == expected and crc32 == the stream CRC. */
-hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso,
-                        int expected_parts, const stream_cb_t *cb);
+ * read-only remount, the PVD/volume-id check at sector 16 and a
+ * sequential read of the installed data from `start` (bytes before it
+ * were read back during the copy: their CRC-32 is start_crc; 0/0 reads
+ * everything). The caller requires bytes == expected and crc32 == the
+ * stream CRC. */
+hdl_result_t hdl_verify(const char *hidden, const iso_info_t *iso, int expected_parts,
+                        uint64_t start, uint32_t start_crc, const stream_cb_t *cb);
 
 /* Read back `total` installed bytes (APA type HDL checked) and return
  * their CRC-32: "Verify game data" for an install whose journal holds

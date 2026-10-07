@@ -39,6 +39,8 @@ typedef struct {
   int auto_install;
   int power_off; /* udpfsd.cfg power_off_after_install: switch off after auto-install */
   int scanning; /* server still preparing: no entries yet */
+  int wire_lz4f; /* "wire=lz4f": images also served as LZ4 frames (wire_frame.h) */
+  int extras;    /* "extras=1": /.oplart (OPL art as PNG), VMC and CHT folders */
   int n, n_bad;
   manifest_entry_t e[MANIFEST_MAX];
 } manifest_t;

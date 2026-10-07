@@ -2,11 +2,13 @@
 #define IOP_IRX_IMPORTS_H
 
 #include <irx.h>
+#include <atad.h>
 
 /* Please keep in alphabetical order! */
 #include <intrman.h>
 #include <iomanX.h>
 #include <sifcmd.h>
+#include <sifman.h>
 #include <sysclib.h>
 #include <sysmem.h>
 #include <thbase.h>

@@ -57,6 +57,10 @@ static int parse_header(const char *line, manifest_t *m) {
       m->power_off = p[9] == '1';
     } else if (n == 10 && !strncmp(p, "scanning=", 9)) {
       m->scanning = p[9] == '1';
+    } else if (n == 9 && !strncmp(p, "wire=lz4f", 9)) {
+      m->wire_lz4f = 1;
+    } else if (n == 8 && !strncmp(p, "extras=1", 8)) {
+      m->extras = 1;
     }
     p += n;
   }

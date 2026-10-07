@@ -29,8 +29,12 @@ TEST(source_classify_names) {
   CHECK_EQ_INT(source_classify("GAME.ISO"), SRC_TYPE_ISO);
   CHECK_EQ_INT(source_classify("Gran Turismo 4.zso.iso"), SRC_TYPE_ZSO);
   CHECK_EQ_INT(source_classify("X.ZSO.ISO"), SRC_TYPE_ZSO);
-  CHECK_EQ_INT(source_classify("X.cso.iso"), SRC_TYPE_NONE);
-  CHECK_EQ_INT(source_classify("X.chd.iso"), SRC_TYPE_NONE);
+  CHECK_EQ_INT(source_classify("X.cso.iso"), SRC_TYPE_CSO);
+  CHECK_EQ_INT(source_classify("X.CHD.ISO"), SRC_TYPE_CHD);
+  CHECK_EQ_INT(source_classify(".chd.iso"), SRC_TYPE_NONE);
+  CHECK_STR(source_type_label(SRC_TYPE_CHD), "CHD");
+  char shown[32];
+  CHECK_STR(source_display_name("Okami.chd.iso", shown, sizeof(shown)), "Okami.chd");
   CHECK_EQ_INT(source_classify("X.zso"), SRC_TYPE_ZSO_FILE); /* USB: decompressed on the PS2 */
   CHECK_EQ_INT(source_classify("X.bin"), SRC_TYPE_NONE);
   CHECK_EQ_INT(source_classify(".iso"), SRC_TYPE_NONE);

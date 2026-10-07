@@ -11,12 +11,19 @@ LIB_SRCS := errors.c util.c partname.c source.c iso9660.c hdl_plan.c \
             xmb_text.c apa_osd_header.c transaction.c settings.c \
             opl_dependency.c hdl_header.c game_pair.c crc32.c sha256.c batch.c \
             manifest.c server_assets.c ui_style.c rw_buffer.c \
-            remove_games.c listview.c lz4_block.c source_zso.c pops.c dhcp_proto.c resume_seg.c space.c
+            remove_games.c listview.c lz4_block.c source_zso.c pops.c dhcp_proto.c resume_seg.c space.c apps.c app_cfg.c wire_frame.c \
+            hdd_health.c extras.c
 CFLAGS += -DFIXTURE_DIR=\"$(abspath ../fixtures)\"
 TEST_SRCS := $(wildcard test_*.c)
 
 OBJS := $(addprefix $(BUILD)/lib_,$(LIB_SRCS:.c=.o)) \
         $(addprefix $(BUILD)/,$(TEST_SRCS:.c=.o))
+
+# The network sources, built against a fake fileXio (fake/, fake_filexio.c).
+NET_SRCS := source_udpfs.c source_wire.c
+# The disc drive source against a fake libcdvd (fake_cdvd.c).
+OBJS += $(addprefix $(BUILD)/net_,$(NET_SRCS:.c=.o)) $(BUILD)/fake_filexio.o \
+        $(BUILD)/cdvd_source_cdvd.o $(BUILD)/fake_cdvd.o
 
 # Reference implementations extracted verbatim from pinned upstream
 # sources, for parity tests. Skipped if reference/ was not fetched.
@@ -39,6 +46,22 @@ $(BUILD)/ref_hdl_pname.o: $(BUILD)/ref_hdl_pname.c
 	$(CC) $(CFLAGS) -w -c -o $@ $<
 
 $(BUILD)/lib_%.o: $(SRC)/%.c $(wildcard $(SRC)/*.h)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(SRC) -c -o $@ $<
+
+$(BUILD)/net_%.o: $(SRC)/%.c $(wildcard $(SRC)/*.h) $(wildcard fake/*.h)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Ifake -I$(SRC) -c -o $@ $<
+
+$(BUILD)/cdvd_source_cdvd.o: $(SRC)/source_cdvd.c $(wildcard $(SRC)/*.h) $(wildcard fake/*.h)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -D_EE -Ifake -I$(SRC) -c -o $@ $<
+
+$(BUILD)/fake_cdvd.o: fake_cdvd.c $(wildcard fake/*.h)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/fake_filexio.o: fake_filexio.c $(wildcard fake/*.h) $(SRC)/wire_frame.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I$(SRC) -c -o $@ $<
 

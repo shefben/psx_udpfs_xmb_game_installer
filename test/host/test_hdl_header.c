@@ -140,4 +140,11 @@ TEST(default_title_rules) {
   iso.volume_id[0] = 0;
   default_display_title(&iso, "udpfs:/x/ICO.iso", t, sizeof(t));
   CHECK_STR(t, "ICO");
+  default_display_title(&iso, "udpfs:/DVD/Okami.chd.iso", t, sizeof(t));
+  CHECK_STR(t, "Okami");
+  default_display_title(&iso, "udpfs:/CD/Ape Escape.cso.iso", t, sizeof(t));
+  CHECK_STR(t, "Ape Escape");
+  /* A disc in the drive has no file name: the game ID. */
+  default_display_title(&iso, "cdrom0:", t, sizeof(t));
+  CHECK_STR(t, iso.part_id);
 }

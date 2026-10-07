@@ -57,4 +57,8 @@ void iop_boot_base(iop_status_t *st);
 /* dhcp: ask a DHCP server first; local_ip is then the fallback. */
 void iop_boot_network(const char *local_ip, int dhcp, iop_status_t *st);
 
+/* Memory cards (PS2 saves): mcman + mcserv, loaded on first use only.
+ * 0 when loaded (again after an IOP reset), -1 if they failed. */
+int iop_load_memcard(iop_status_t *st);
+
 #endif

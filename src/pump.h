@@ -26,4 +26,37 @@ int pump_flush(void);
 /* Flush, close and free; *written = bytes written since pump_begin. */
 int pump_end(uint64_t *written);
 
+/* ATA device 0 as atad sees it, plus IDENTIFY words 121-124. */
+typedef struct {
+  int exists, lba48, identify;
+  uint32_t sectors;
+  uint16_t sig[4];
+} pump_atainfo_t;
+
+/* 0, or <0 when the pump module is not running. */
+int pump_atainfo(pump_atainfo_t *out);
+
+/* Read-back while a copy runs (between pump_begin and pump_end): the
+ * IOP reads `len` bytes (multiple of 2048, <= slot size) at 2048-byte
+ * sector `sector` of the open partition, after the writes queued so far,
+ * into `dst` (64-byte aligned; do not touch it until done). One at a
+ * time. pump_read_start: 0 started, -16 one is running, <0 error.
+ * pump_read_poll: 1 done (*got = bytes or <0), 0 still running.
+ * pump_read_wait: waits for it, then like poll. */
+int pump_read_start(uint32_t sector, void *dst, uint32_t len);
+int pump_read_poll(int *got);
+int pump_read_wait(int *got);
+
+/* SMART of ATA device 0: status 0 ok, 1 threshold exceeded, <0 failed;
+ * data_rc 0 when data[] (SMART READ DATA) is valid. 0, or <0 when the
+ * pump module is not running. */
+typedef struct {
+  int status, data_rc;
+  uint8_t data[512];
+} pump_smart_t;
+int pump_smart(pump_smart_t *out);
+
+/* Free IOP memory: total and largest block. 0 or <0. */
+int pump_meminfo(uint32_t *free_bytes, uint32_t *max_block);
+
 #endif

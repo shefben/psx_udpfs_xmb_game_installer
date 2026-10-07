@@ -20,6 +20,7 @@
 typedef struct {
   char name[NAME_MAX_];
   int is_dir;
+  int is_app; /* a homebrew .ELF: installed as an XMB app channel */
   source_type_t type;
   uint64_t size;
 } entry_t;
@@ -44,13 +45,15 @@ static int list_dir(const char *dir, int server, int *count) {
      * .zso is only read directly from local devices (USB). */
     if (server && t == SRC_TYPE_ZSO_FILE)
       t = SRC_TYPE_NONE;
-    if (!is_dir && t == SRC_TYPE_NONE)
+    int is_app = !is_dir && t == SRC_TYPE_NONE && str_ends_with_ci(de.name, ".elf");
+    if (!is_dir && t == SRC_TYPE_NONE && !is_app)
       continue;
     if (strlen(de.name) >= NAME_MAX_)
       continue;
     entry_t *e = &entries[n++];
     str_copy(e->name, de.name, sizeof(e->name));
     e->is_dir = is_dir;
+    e->is_app = is_app;
     e->type = t;
     e->size = ((uint64_t)de.stat.hisize << 32) | de.stat.size;
   }
@@ -137,7 +140,8 @@ static void browse(const char *title, const char *root, char *cwd, listui_state_
       } else {
         char sz[24], shown[NAME_MAX_];
         format_size(e->size, sz, sizeof(sz));
-        snprintf(rows[i], UI_ROW_LEN, "[%s] %-50.50s %10s", source_type_label(e->type),
+        snprintf(rows[i], UI_ROW_LEN, "[%.3s] %-50.50s %10.10s",
+                 e->is_app ? "APP" : source_type_label(e->type),
                  source_display_name(e->name, shown, sizeof(shown)), sz);
       }
       items[i].name = e->name;
@@ -170,7 +174,9 @@ static void browse(const char *title, const char *root, char *cwd, listui_state_
       /* Server ZSO: the exact listed path is udpfsd's virtual
        * "<name>.zso.iso", served as decompressed ISO bytes. USB ZSO: the
        * raw file, decompressed on the PS2 (source_zso). */
-      if (entries[pick].type == SRC_TYPE_VCD)
+      if (entries[pick].is_app)
+        flow_install_app(path);
+      else if (entries[pick].type == SRC_TYPE_VCD)
         flow_install_ps1(path);
       else
         probe_and_install(path, server);
@@ -182,6 +188,37 @@ void browser_run(void) {
   static char cwd[SOURCE_PATH_MAX] = "udpfs:/";
   static listui_state_t ls; /* order and search kept while browsing */
   browse("Install Games from UDPFS", "udpfs:/", cwd, &ls);
+}
+
+/* Start in <root>APPS when that folder exists, else at the root. */
+static void apps_start(char *cwd, const char *root) {
+  char apps[SOURCE_PATH_MAX];
+  snprintf(apps, sizeof(apps), "%sAPPS", root);
+  int dd = fileXioDopen(apps);
+  if (dd >= 0) {
+    fileXioDclose(dd);
+    str_copy(cwd, apps, SOURCE_PATH_MAX);
+  } else {
+    str_copy(cwd, root, SOURCE_PATH_MAX);
+  }
+}
+
+void browser_run_apps(int usb) {
+  static char cwd[SOURCE_PATH_MAX];
+  static listui_state_t ls;
+  const char *root = usb ? USB_ROOT : "udpfs:/";
+  if (usb && !g_app.iop.usb_ok) {
+    ui_message("Install App from USB",
+               "The USB drivers failed to load (see Diagnostics), so USB\n"
+               "drives cannot be read.");
+    return;
+  }
+  if (!usb && g_app.net != NETWORK_READY) {
+    ui_message("Install App from UDPFS", network_not_ready_text());
+    return;
+  }
+  apps_start(cwd, root);
+  browse(usb ? "Install App from USB" : "Install App from UDPFS", root, cwd, &ls);
 }
 
 void browser_run_usb(void) {

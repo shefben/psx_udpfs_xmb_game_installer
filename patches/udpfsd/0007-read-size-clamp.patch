@@ -1,0 +1,174 @@
+diff --git a/internal/fs/fileops.go b/internal/fs/fileops.go
+index e3fb54f..8ec1869 100644
+--- a/internal/fs/fileops.go
++++ b/internal/fs/fileops.go
+@@ -144,6 +144,9 @@ func (s *Backend) Read(handle int32, size uint32, readBuffer []byte) (int32, []b
+ 	f.Lock()
+ 	defer f.Unlock()
+ 
++	if uint64(size) > uint64(len(readBuffer)) {
++		size = uint32(len(readBuffer)) // never past the caller's buffer
++	}
+ 	read, err := f.Read(readBuffer[:size])
+ 	if err != nil && err != os.ErrClosed && err != io.EOF {
+ 		log.Printf("fs: failed to read file %s: %v", f.Name(), err)
+@@ -360,7 +363,8 @@ func (s *Backend) Bread(handle int32, sectorNr int64, sectorCount uint16, readBu
+ 		return nil, err
+ 	}
+ 
+-	n, err := f.Read(readBuffer[:int(sectorCount)*sectorSize])
++	// Whole sectors only, and never past the caller's buffer.
++	n, err := f.Read(readBuffer[:min(int(sectorCount), len(readBuffer)/sectorSize)*sectorSize])
+ 	if err != nil && err != io.EOF {
+ 		log.Printf("fs: failed to read %s: %v", f.Name(), err)
+ 		return nil, err
+diff --git a/internal/fs/readsize_test.go b/internal/fs/readsize_test.go
+new file mode 100644
+index 0000000..a0f1476
+--- /dev/null
++++ b/internal/fs/readsize_test.go
+@@ -0,0 +1,43 @@
++package fs
++
++import (
++	"bytes"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestReadNeverPastBuffer(t *testing.T) {
++	dir := t.TempDir()
++	data := bytes.Repeat([]byte("0123456789abcdef"), 300*1024/16) // 300 KiB
++	mkfile(t, filepath.Join(dir, "big.iso"), string(data))
++	b, err := NewBackend(WithMount("DVD", dir), WithReadOnly())
++	if err != nil {
++		t.Fatal(err)
++	}
++	h, _, err := b.Open("/DVD/big.iso", os.O_RDONLY, false)
++	if err != nil || h <= 0 {
++		t.Fatalf("open: %d %v", h, err)
++	}
++	defer b.Close(h)
++	buf := make([]byte, 128*1024)
++	for _, size := range []uint32{128*1024 + 1, 1 << 20, 0xFFFFFFFF} {
++		if _, err := b.Lseek(h, 0, 0); err != nil {
++			t.Fatal(err)
++		}
++		n, got, err := b.Read(h, size, buf) // must not panic
++		if err != nil || int(n) != len(buf) || !bytes.Equal(got, data[:len(buf)]) {
++			t.Fatalf("read %d: n=%d err=%v", size, n, err)
++		}
++	}
++	// Block read: 0xFFFF sectors of 512 bytes would be 32 MiB.
++	got, err := b.Bread(h, 2, 0xFFFF, buf)
++	if err != nil || len(got) != len(buf) || !bytes.Equal(got, data[1024:1024+len(buf)]) {
++		t.Fatalf("bread: %d bytes, %v", len(got), err)
++	}
++	// A buffer that is not a whole number of sectors: whole sectors only.
++	got, err = b.Bread(h, 0, 10, buf[:1000])
++	if err != nil || len(got) != 512 {
++		t.Fatalf("bread odd buffer: %d bytes, %v", len(got), err)
++	}
++}
+diff --git a/udpfs/handlers.go b/udpfs/handlers.go
+index 6f91b47..fa30fc5 100644
+--- a/udpfs/handlers.go
++++ b/udpfs/handlers.go
+@@ -136,10 +136,14 @@ func (c *Connection) handleRead(addr *net.UDPAddr, payload []byte) int {
+ 	}
+ 	handle := int32(binary.LittleEndian.Uint32(payload[4:8]))
+ 	size := binary.LittleEndian.Uint32(payload[8:12])
++	// Never read past the reply buffer, whatever the client asks for.
++	if size > uint32(len(c.dataBuffer)) {
++		size = uint32(len(c.dataBuffer))
++	}
+ 
+ 	c.Lock()
+ 	defer c.Unlock()
+-	n, data, err := c.fs.Read(handle, size, c.dataBuffer[:cap(c.dataBuffer)])
++	n, data, err := c.fs.Read(handle, size, c.dataBuffer[:])
+ 	if err != nil {
+ 		errCode := -errToErrno(err)
+ 		c.SendReadResult(addr, errCode, nil)
+@@ -383,7 +387,8 @@ func (c *Connection) handleBread(addr *net.UDPAddr, payload []byte) int {
+ 
+ 	c.Lock()
+ 	defer c.Unlock()
+-	data, err := c.fs.Bread(handle, sectorNr, sectorCount, c.dataBuffer[:cap(c.dataBuffer)])
++	// The FS clamps sectorCount to whole sectors that fit this buffer.
++	data, err := c.fs.Bread(handle, sectorNr, sectorCount, c.dataBuffer[:])
+ 	if err != nil {
+ 		errCode := -errToErrno(err)
+ 		c.SendReadResult(addr, errCode, nil)
+diff --git a/udpfs/handlers_test.go b/udpfs/handlers_test.go
+new file mode 100644
+index 0000000..1387f20
+--- /dev/null
++++ b/udpfs/handlers_test.go
+@@ -0,0 +1,65 @@
++package udpfs
++
++import (
++	"encoding/binary"
++	"net"
++	"testing"
++
++	"github.com/pcm720/udpfsd/udprdma"
++)
++
++// readFS records what the protocol layer passes to Read/Bread and slices the
++// buffer the way the real backend does (a size past the buffer would panic).
++type readFS struct {
++	FS
++	gotSize   uint32
++	gotBufLen int
++}
++
++func (f *readFS) Read(handle int32, size uint32, buf []byte) (int32, []byte, error) {
++	f.gotSize, f.gotBufLen = size, len(buf)
++	return int32(size), buf[:size], nil
++}
++
++func (f *readFS) Bread(handle int32, sectorNr int64, sectorCount uint16, buf []byte) ([]byte, error) {
++	f.gotBufLen = len(buf)
++	n := min(int(sectorCount), len(buf)/512) * 512
++	return buf[:n], nil
++}
++
++func newTestConn(t *testing.T, fs FS) (*Connection, *net.UDPAddr) {
++	t.Helper()
++	addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}
++	sess := udprdma.NewSession(*addr, func(*net.UDPAddr, []byte) {}, nil)
++	c := NewConnection(sess, fs, false, false)
++	t.Cleanup(c.Close)
++	return c, addr
++}
++
++func TestReadRequestLargerThanBufferIsClamped(t *testing.T) {
++	fs := &readFS{}
++	c, addr := newTestConn(t, fs)
++	for _, size := range []uint32{64 * 1024, 128 * 1024, 128*1024 + 1, 1 << 20, 0xFFFFFFFF} {
++		req := make([]byte, 12)
++		req[0] = byte(MsgReadReq)
++		binary.LittleEndian.PutUint32(req[4:], 1)
++		binary.LittleEndian.PutUint32(req[8:], size)
++		c.HandlePayload(addr, req) // must not panic
++		want := min(size, uint32(len(c.dataBuffer)))
++		if fs.gotSize != want || fs.gotBufLen != len(c.dataBuffer) {
++			t.Fatalf("request %d: FS got size %d buffer %d, want %d/%d", size, fs.gotSize, fs.gotBufLen, want, len(c.dataBuffer))
++		}
++	}
++}
++
++func TestBreadRequestGetsWholeBuffer(t *testing.T) {
++	fs := &readFS{}
++	c, addr := newTestConn(t, fs)
++	req := make([]byte, 16)
++	req[0] = byte(MsgBreadReq)
++	binary.LittleEndian.PutUint16(req[2:], 0xFFFF) // 32 MiB of 512-byte sectors
++	c.HandlePayload(addr, req)                     // must not panic
++	if fs.gotBufLen != len(c.dataBuffer) {
++		t.Fatalf("buffer %d", fs.gotBufLen)
++	}
++}

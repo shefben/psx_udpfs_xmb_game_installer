@@ -73,6 +73,7 @@ typedef struct {
   /* OPL per-game cfg from the server: "copied" | "kept" | "failed" |
    * "none"; NULL when no channel was built. */
   const char *opl_cfg;
+  const char *extras; /* installed extras (settings, cheats, cards, art), or NULL */
   /* Channel cover: "server" (udpfsd's prepared jacket or an image next
    * to the game) | "missing" (the server listed a cover that could not
    * be read; default used) | "default"; NULL when no channel was built. */
@@ -84,6 +85,9 @@ inst_err_t game_plan_build(const char *path, game_plan_t *p, int *rc_out);
 
 /* The image is on udpfsd (needs the network), not e.g. on USB. */
 int game_source_is_server(const char *path);
+
+/* The source is the console's own disc drive (source_cdvd.h). */
+int game_source_is_disc(const char *path);
 
 /* Rebuild partition names after the title was edited. */
 inst_err_t game_plan_set_title(game_plan_t *p, const char *title);

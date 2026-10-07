@@ -13,11 +13,20 @@ typedef struct {
   char partition[APA_NAME_MAX + 1];
   char size_str[8];
   int size_mb;
+  /* 1, or 2..POPS_MAX_DISCS: every disc as IMAGE<n>.VCD + DISCS.TXT */
+  int ndiscs;
+  char disc_path[POPS_MAX_DISCS][SOURCE_PATH_MAX];
+  uint64_t disc_bytes[POPS_MAX_DISCS];
 } pops_plan_t;
 
 /* Probe the VCD and build the plan (name PP.<ID>..<TITLE>). */
 inst_err_t pops_plan_build(const char *path, pops_plan_t *p, int *rc_out);
 inst_err_t pops_plan_set_title(pops_plan_t *p, const char *title);
+
+/* The other discs of a multi-disc game next to the chosen VCD ("Game
+ * (Disc 2).VCD", disc 1..n all present): the plan becomes the whole set,
+ * named and sized from disc 1. Returns the number of discs (1: unchanged). */
+int pops_plan_find_discs(pops_plan_t *p);
 
 /* Copy POPS.ELF / IOPRP252.IMG to __common/POPS when missing, create the
  * game partition, write EXECUTE.KELF (POPSTARTER.KELF), IMAGE0.VCD

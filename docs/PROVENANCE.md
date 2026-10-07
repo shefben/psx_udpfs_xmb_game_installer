@@ -61,6 +61,14 @@ none are shipped.
 OPL-Launcher itself is built unmodified from 6da1af2 and signed; every
 game channel gets its own copy of that KELF.
 
+`launcher/main.c` (the app launcher, signed as every app channel's
+`EXECUTE.KELF`) is this project's own code. Its start-up follows
+OPL-Launcher 6da1af2 `src/main.c` (partition from argv, the same HDD
+modules, `pfs0:` mount, `LoadELFFromFile`); it links PS2SDK's
+`elf-loader` (AFL-2.0). The app channel layout (PFS, `res/`, header
+`BOOT2 = pfs:/EXECUTE.KELF`) is the installer channel's, which matches
+PSX-XMB-Manager's and PFS-BatchKit-Manager's app channels.
+
 ## Open PS2 Loader runtime (dist/udpfsd/OPNPS2LD.ELF)
 
 Official ps2homebrew build `OPNPS2LD-v1.2.0-Beta-2245-3e3f34e` (the

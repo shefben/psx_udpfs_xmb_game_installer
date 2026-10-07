@@ -2,9 +2,16 @@
 
 ## Environment
 
-* A PS2DEV toolchain with PS2SDK (EE + IOP compilers, `bin2c`,
-  `iopfixup`). Used here: `/usr/local/ps2dev/ps2dev` (EE GCC 15.2.0)
-  under Ubuntu on WSL2. Docker is optional for normal builds.
+* A PS2DEV toolchain (EE + IOP compilers). Used here:
+  `/usr/local/ps2dev/ps2dev` (EE GCC 15.2.0) under Ubuntu on WSL2.
+  Docker is optional for normal builds.
+* The pinned PS2SDK (`tools/ps2sdk.env`: ps2dev/ps2sdk 2c67045,
+  2026-10-06), built by `make ps2sdk` with that toolchain into
+  `/usr/local/ps2dev/ps2sdk-2c67045`; `tools/ps2env.sh` uses it when it
+  exists. Its `ps2atad.irx` recognises LBA48-aware DVRP firmware
+  (dvrpwned) and then uses 48-bit LBA for the whole PS2 area. Every build
+  checks the embedded atad for that (`build/.sdk-ok`) and stops with an
+  older PS2SDK.
 * `make`, `patch`, `git`, `python3`, a native `cc` (host tests).
 * For signed releases: `kelftool` on PATH (or `KELFTOOL=...`) and your
   own `PS2KEYS.dat`. Neither is shipped, searched for or committed.
@@ -74,10 +81,16 @@ compile (`#error`), so a normal install never depends on the server.
 `patches/udpfsd/*.patch` in order (`0001`: `-install-dir`; `0002`:
 `udpfsd.cfg`, read-only mounts, game preparation and the manifest the
 installer reads), runs `go vet` and the Go tests of every package
-except `chd` (needs CGO) and builds `build/udpfsd/udpfsd-windows-amd64.exe`
-and `udpfsd-linux-amd64` (CGO off, so ISO/CSO/ZSO like upstream's
-release binaries). It uses a local Go >= 1.25 or the digest-pinned
-`golang:1.25` Docker image. `make dist` puts both binaries, the signed
+(`chd` included) and builds `build/udpfsd/udpfsd-windows-amd64.exe` and
+`udpfsd-linux-amd64` with CGO and a static libchdr (pinned in
+`tools/libchdr.env`), so both read ISO/ZSO/CSO/CHD: the Linux binary is
+fully static, the Windows one cross-compiled with mingw-w64 and needing
+only Windows system DLLs (the script checks both). It runs natively, no
+Docker: Go 1.25 (`/usr/local/go` or on PATH) and the apt packages
+`build-essential cmake git file gcc-mingw-w64-x86-64`. Patches 0007-0012:
+128 KiB read clamp, LZ4 wire frames (`/.lz4f`), split images and the
+CSO/CHD scan, BIN/CUE as VCD, the `vmc`/`cht` folders, OPL art as PNG
+(`/.oplart`). `make dist` puts both binaries, the signed
 `opl-launcher-EXECUTE.KELF` and the `udpfsd.cfg` template in
 `dist/udpfsd/`; `make test-udpfsd` only tests.
 

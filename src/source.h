@@ -28,7 +28,21 @@ typedef struct {
   int64_t (*seek)(GameSource *src, int64_t offset, int whence);
   /* Logical size in bytes, or negative on error. */
   int64_t (*size)(GameSource *src);
+  /* Optional (NULL: unsupported). Background read-ahead for copy loops:
+   * SRC_ASYNC_ON starts it, SRC_ASYNC_SYNC waits for the read in flight
+   * (keeping its data) so the caller may use fileXio, SRC_ASYNC_OFF stops
+   * it. While a read is in flight nothing else may use fileXio; `idle`
+   * (may be NULL) is called repeatedly while one is awaited. */
+  void (*set_async)(GameSource *src, int mode, void (*idle)(void *ctx), void *ctx);
+  /* Optional: up to `max` bytes at the current position without a copy.
+   * *out stays valid until the next call on this source. >0 bytes, 0 at
+   * EOF, negative driver code on error. */
+  int (*read_ptr)(GameSource *src, uint32_t max, const uint8_t **out);
 } GameSourceOps;
+
+#define SRC_ASYNC_OFF 0
+#define SRC_ASYNC_ON 1
+#define SRC_ASYNC_SYNC 2
 
 struct GameSource {
   const GameSourceOps *ops;
@@ -44,11 +58,13 @@ typedef enum {
   SRC_TYPE_ZSO, /* udpfsd virtual "<name>.zso.iso" */
   SRC_TYPE_ZSO_FILE, /* a raw "<name>.zso" (USB), decompressed by source_zso */
   SRC_TYPE_VCD, /* PS1 game for POPStarter (pops.h) */
+  SRC_TYPE_CSO, /* udpfsd virtual "<name>.cso.iso" */
+  SRC_TYPE_CHD, /* udpfsd virtual "<name>.chd.iso" (CHD-enabled udpfsd) */
 } source_type_t;
 
 /* Classify a UDPFS directory entry by name only (plan section 30).
- * ".zso.iso" -> ZSO; other ".cso.iso"/".chd.iso" virtual images are
- * hidden in version 1; any other ".iso" -> ISO. Case-insensitive. */
+ * ".zso.iso" -> ZSO, ".cso.iso" -> CSO, ".chd.iso" -> CHD (udpfsd's
+ * virtual images), any other ".iso" -> ISO. Case-insensitive. */
 source_type_t source_classify(const char *name);
 const char *source_type_label(source_type_t t); /* "ISO", "ZSO", "" */
 
@@ -71,6 +87,17 @@ inst_err_t source_read_exact(GameSource *src, void *buf, uint32_t size);
 /* Seek to `offset` (SEEK_SET) then read exactly `size` bytes. */
 inst_err_t source_read_at(GameSource *src, uint64_t offset, void *buf,
                           uint32_t size);
+
+/* set_async if the source has it (no-op otherwise). */
+void source_async(GameSource *src, int mode, void (*idle)(void *ctx), void *ctx);
+
+/* Next block for a copy loop: `want` bytes (a multiple of 2048, or the
+ * rest of the source) or fewer, but always a multiple of 2048 unless it
+ * is exactly `want`. Lent from the source's buffer when it can (read_ptr),
+ * else read into `buf` (>= want bytes). ERR_OK with *out and *got, or
+ * ERR_SOURCE_READ (driver error or premature EOF). */
+inst_err_t source_next_block(GameSource *src, uint8_t *buf, uint32_t want,
+                             const uint8_t **out, uint32_t *got);
 
 /* ---- In-memory sparse source, used by host tests ----------------
  * A virtual file of `total_size` bytes that is all zeros except for
