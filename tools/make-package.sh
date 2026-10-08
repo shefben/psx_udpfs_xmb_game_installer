@@ -22,8 +22,8 @@ cp "$ROOT/docs/package/README.txt" "$P/"
 cp "$ROOT/CHANGELOG.md" "$P/CHANGELOG.txt"
 cp "$ROOT/docs/SERVER_MANUAL.md" "$P/SERVER-MANUAL.txt"
 cp "$DIST/desr-udpfs-installer-bootstrap.elf" "$P/PS2/"
-cp "$DIST/desr-udpfs-installer-app.elf" "$DIST/installer-EXECUTE.KELF" \
-   "$DIST/opl-launcher-PSX1.KELF" "$P/PS2/"
+# The bootstrap embeds the installer KELF and generation-specific launchers.
+# Users only copy/start this ELF on the console; loose payloads are redundant.
 cp "$DIST/BUILD-MANIFEST.txt" "$P/"
 [ ! -f "$DIST/RELEASE-NOTES.txt" ] || cp "$DIST/RELEASE-NOTES.txt" "$P/"
 cp "$DIST/udpfsd/udpfsd-windows-amd64.exe" "$DIST/udpfsd/udpfsd-linux-amd64" \

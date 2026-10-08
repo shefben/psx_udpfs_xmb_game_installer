@@ -19,6 +19,11 @@ WHAT IS IN THIS ZIP
   PS2\
     desr-udpfs-installer-bootstrap.elf   the installer, started on the DESR
 
+    This is the only file you need to copy to USB. It embeds the installer
+    channel KELF and both generation-specific game launchers, and writes them
+    to the HDD when you install the installer/game channels. No loose KELF
+    files or separate app ELF are needed on the USB drive.
+
   PC\udpfsd\                             the server, runs on the PC
     udpfsd-windows-amd64.exe             server for Windows
     udpfsd-linux-amd64                   server for Linux
