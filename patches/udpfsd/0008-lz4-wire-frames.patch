@@ -1,0 +1,830 @@
+diff --git a/internal/fs/compression/compression.go b/internal/fs/compression/compression.go
+index f57370b..6041e4a 100644
+--- a/internal/fs/compression/compression.go
++++ b/internal/fs/compression/compression.go
+@@ -28,7 +28,6 @@ type BlockReader interface {
+ func Open(path string, cacheSize int) interfaces.FileObject {
+ 	var br BlockReader
+ 	var err error
+-	info := &common.CompressedInfo{}
+ 	ext := strings.ToLower(filepath.Ext(path))
+ 	switch {
+ 	case slices.Contains(zso.Extensions, ext):
+@@ -57,7 +56,12 @@ func Open(path string, cacheSize int) interfaces.FileObject {
+ 	if cacheSize <= 0 {
+ 		cacheSize = 32
+ 	}
+-
++	// The format's own stat: name and uncompressed size (stat and the
++	// /.lz4f frames report the image size).
++	var info os.FileInfo = &common.CompressedInfo{}
++	if st := br.Stat(); st != nil {
++		info = st
++	}
+ 	return NewCachedReader(br, cacheSize, info)
+ }
+ 
+diff --git a/internal/fs/compression/cso/cso.go b/internal/fs/compression/cso/cso.go
+index 1c6f429..434662a 100644
+--- a/internal/fs/compression/cso/cso.go
++++ b/internal/fs/compression/cso/cso.go
+@@ -186,6 +186,7 @@ func GetStat(path string) *common.CompressedInfo {
+ 	if err != nil {
+ 		return nil
+ 	}
++	defer f.Close()
+ 
+ 	b := make([]byte, 16)
+ 	if _, err := io.ReadFull(f, b); err != nil {
+diff --git a/internal/fs/compression/zso/zso.go b/internal/fs/compression/zso/zso.go
+index 4eade2c..93d50fb 100644
+--- a/internal/fs/compression/zso/zso.go
++++ b/internal/fs/compression/zso/zso.go
+@@ -171,6 +171,7 @@ func GetStat(path string) *common.CompressedInfo {
+ 	if err != nil {
+ 		return nil
+ 	}
++	defer f.Close()
+ 
+ 	b := make([]byte, 16)
+ 	if _, err := io.ReadFull(f, b); err != nil {
+diff --git a/internal/fs/fileops.go b/internal/fs/fileops.go
+index 8ec1869..9a14588 100644
+--- a/internal/fs/fileops.go
++++ b/internal/fs/fileops.go
+@@ -7,13 +7,18 @@ import (
+ 	"os"
+ 	"path/filepath"
+ 	"slices"
+-	"strings"
+ 
+ 	"github.com/pcm720/udpfsd/internal/fs/compression"
++	"github.com/pcm720/udpfsd/internal/fs/wire"
+ 	"github.com/pcm720/udpfsd/udpfs"
+ )
+ 
+ func (s *Backend) Open(path string, flag int, isDir bool) (handle int32, stat udpfs.StatInfo, err error) {
++	// "/.lz4f/<path>": <path> served as LZ4 wire frames
++	if inner, ok := cutVirtualPrefix(path, wire.PathPrefix); ok {
++		return s.openWire(inner, flag, isDir)
++	}
++
+ 	// Get full path
+ 	fullPath, ok := s.resolvePath(path)
+ 	if !ok {
+@@ -75,28 +80,17 @@ func (s *Backend) Open(path string, flag int, isDir bool) (handle int32, stat ud
+ 	// Check if file exists
+ 	exists := fullPath != "" && s.pathExists(fullPath)
+ 
+-	if s.enableCompression {
+-		if !exists {
+-			// If requested file doesn't exist and decompression is enabled,
+-			// check if any of supported compressed ISO types are present
+-			if strings.ToLower(filepath.Ext(fullPath)) == ".iso" {
+-				// If path has .iso extension, trim it and probe every supported extension
+-				compressedPath := strings.TrimSuffix(fullPath, filepath.Ext(fullPath))
+-				if s.pathExists(compressedPath) {
+-					// Handle compressed image
+-					log.Printf("fs: decompressing %s\n", compressedPath)
+-					wrapper := compression.Open(compressedPath, s.compressionCacheSize)
+-					if wrapper != nil {
+-						st, _ := wrapper.Stat()
+-						handle := s.allocHandle(s.newFileHandle(wrapper, true))
+-						if handle < 0 {
+-							wrapper.Close()
+-							return handle, udpfs.StatInfo{}, nil
+-						}
+-						return handle, udpfs.StatInfoFromFile(st), nil
+-					}
+-				}
++	if !exists {
++		// A file that only exists virtually (always read-only): a
++		// compressed image as <name>.<ext>.iso, ...
++		if wrapper := s.openVirtual(fullPath); wrapper != nil {
++			st, _ := wrapper.Stat()
++			handle := s.allocHandle(s.newFileHandle(wrapper, true))
++			if handle < 0 {
++				wrapper.Close()
++				return handle, udpfs.StatInfo{}, nil
+ 			}
++			return handle, udpfs.StatInfoFromFile(st), nil
+ 		}
+ 	}
+ 
+@@ -290,23 +284,33 @@ func (s *Backend) Getstat(path string) (stat udpfs.StatInfo, err error) {
+ 		}
+ 	}
+ 
++	if inner, ok := cutVirtualPrefix(path, wire.PathPrefix); ok {
++		path = inner // a framed file has its raw file's size
++	}
++
+ 	resolved, ok := s.resolvePath(path)
+ 	if !ok {
+ 		return stat, os.ErrInvalid
+ 	}
+ 
+-	f := s.getFileByPath(resolved)
+-	if f == nil {
+-		return stat, os.ErrInvalid
+-	}
+-	f.Lock()
+-	defer f.Unlock()
++	if f := s.getFileByPath(resolved); f != nil {
++		f.Lock()
++		defer f.Unlock()
+ 
+-	st, err := f.Stat()
+-	if err != nil {
+-		return stat, err
++		st, err := f.Stat()
++		if err != nil {
++			return stat, err
++		}
++		return udpfs.StatInfoFromFile(st), nil
+ 	}
+-	return udpfs.StatInfoFromFile(st), nil
++	// Not open: the file itself, or the image it stands for.
++	if st, err := os.Stat(resolved); err == nil {
++		return udpfs.StatInfoFromFile(st), nil
++	}
++	if st := s.statVirtual(resolved); st != nil {
++		return udpfs.StatInfoFromFile(st), nil
++	}
++	return stat, os.ErrNotExist
+ }
+ 
+ func (s *Backend) Mkdir(path string) error {
+@@ -352,6 +356,9 @@ func (s *Backend) Bread(handle int32, sectorNr int64, sectorCount uint16, readBu
+ 	}
+ 	f.Lock()
+ 	defer f.Unlock()
++	if _, framed := f.obj.(*wire.Reader); framed {
++		return nil, os.ErrInvalid // frames have no sectors
++	}
+ 
+ 	sectorSize := s.sectorSize
+ 	if handle != udpfs.BlockDeviceHandle {
+diff --git a/internal/fs/virtual.go b/internal/fs/virtual.go
+new file mode 100644
+index 0000000..050d577
+--- /dev/null
++++ b/internal/fs/virtual.go
+@@ -0,0 +1,105 @@
++package fs
++
++import (
++	"log"
++	"os"
++	"path/filepath"
++	"strings"
++
++	"github.com/pcm720/udpfsd/internal/fs/compression"
++	"github.com/pcm720/udpfsd/internal/fs/interfaces"
++	"github.com/pcm720/udpfsd/internal/fs/wire"
++	"github.com/pcm720/udpfsd/udpfs"
++)
++
++// writeFlags are open flags that would change a file.
++const writeFlags = os.O_WRONLY | os.O_RDWR | os.O_CREATE | os.O_TRUNC | os.O_APPEND
++
++// cutVirtualPrefix reports whether a client path starts with the top-level
++// component prefix (".lz4f", ...) and returns the rest ("/DVD/x.iso").
++func cutVirtualPrefix(clientPath, prefix string) (string, bool) {
++	p := strings.TrimLeft(strings.ReplaceAll(clientPath, "\\", "/"), "/")
++	rest, ok := strings.CutPrefix(p, prefix)
++	if !ok || (rest != "" && rest[0] != '/') {
++		return "", false
++	}
++	return "/" + strings.TrimLeft(rest, "/"), true
++}
++
++// openWire opens "/.lz4f/<path>": <path> read-only, served as LZ4 frames.
++func (s *Backend) openWire(inner string, flag int, isDir bool) (int32, udpfs.StatInfo, error) {
++	if isDir || inner == "/" {
++		return 0, udpfs.StatInfo{}, os.ErrNotExist
++	}
++	if flag&writeFlags != 0 {
++		return 0, udpfs.StatInfo{}, os.ErrPermission
++	}
++	fo, err := s.openReadOnly(inner)
++	if err != nil {
++		return 0, udpfs.StatInfo{}, err
++	}
++	st, err := fo.Stat()
++	if err != nil {
++		fo.Close()
++		return 0, udpfs.StatInfo{}, err
++	}
++	h := s.allocHandle(s.newFileHandle(wire.New(fo), true))
++	if h < 0 {
++		fo.Close()
++		return h, udpfs.StatInfo{}, nil
++	}
++	return h, udpfs.StatInfoFromFile(st), nil
++}
++
++// openReadOnly opens a client path for reading: a real file, or an image
++// the server presents virtually (see openVirtual).
++func (s *Backend) openReadOnly(clientPath string) (interfaces.FileObject, error) {
++	fullPath, ok := s.resolvePath(clientPath)
++	if !ok || fullPath == "" || fullPath == virtualRoot {
++		return nil, os.ErrNotExist
++	}
++	if open, readOnly := s.getFileState(fullPath); open && !readOnly {
++		return nil, os.ErrPermission // being written
++	}
++	if st, err := os.Stat(fullPath); err == nil {
++		if st.IsDir() {
++			return nil, os.ErrNotExist
++		}
++		f, err := os.Open(fullPath)
++		if err != nil {
++			return nil, err
++		}
++		return f, nil
++	}
++	if fo := s.openVirtual(fullPath); fo != nil {
++		return fo, nil
++	}
++	return nil, os.ErrNotExist
++}
++
++// openVirtual opens a file that does not exist on the host but stands for
++// an image: <name>.<zso|cso|chd>.iso, the decompressed image. nil if
++// fullPath is none of these.
++func (s *Backend) openVirtual(fullPath string) interfaces.FileObject {
++	if s.enableCompression && strings.EqualFold(filepath.Ext(fullPath), ".iso") {
++		// If path has .iso extension, trim it and probe every supported extension
++		compressedPath := strings.TrimSuffix(fullPath, filepath.Ext(fullPath))
++		if s.pathExists(compressedPath) {
++			log.Printf("fs: decompressing %s\n", compressedPath)
++			if w := compression.Open(compressedPath, s.compressionCacheSize); w != nil {
++				return w
++			}
++		}
++	}
++	return nil
++}
++
++// statVirtual is os.Stat for the files openVirtual opens (nil if none).
++func (s *Backend) statVirtual(fullPath string) os.FileInfo {
++	if s.enableCompression && strings.EqualFold(filepath.Ext(fullPath), ".iso") {
++		if st := compression.GetStat(strings.TrimSuffix(fullPath, filepath.Ext(fullPath))); st != nil {
++			return st
++		}
++	}
++	return nil
++}
+diff --git a/internal/fs/wire/wire.go b/internal/fs/wire/wire.go
+new file mode 100644
+index 0000000..6f43376
+--- /dev/null
++++ b/internal/fs/wire/wire.go
+@@ -0,0 +1,99 @@
++// Package wire serves a file as LZ4 wire frames (the PSX DESR installer's
++// "/.lz4f" paths): each read of N bytes returns one frame carrying the next
++// raw bytes of the file. Seeks and the size stay in raw bytes.
++//
++// A frame, all little-endian:
++//
++//	u32 magic     Magic ("LZF1")
++//	u32 raw_len   raw bytes it carries
++//	u32 data_len  bytes of data after this header
++//	u32 flags     FlagLZ4: data is one LZ4 block, else raw_len stored bytes
++//	data, zero-padded to a multiple of 16
++//
++// Same format as the installer's src/wire_frame.h.
++package wire
++
++import (
++	"encoding/binary"
++	"io"
++	"os"
++
++	"github.com/pcm720/udpfsd/internal/fs/interfaces"
++	"github.com/pcm720/udpfsd/udpfs"
++	"github.com/pierrec/lz4/v4"
++)
++
++const (
++	Magic      = 0x31465A4C // "LZF1"
++	HeaderSize = 16
++	FlagLZ4    = 1
++	// PathPrefix is the first client path component of a framed file:
++	// "/.lz4f/DVD/x.iso" serves "/DVD/x.iso" as frames.
++	PathPrefix = ".lz4f"
++	unit       = 2048 // raw bytes per frame are whole 2048-byte sectors
++)
++
++// RawFor returns the raw bytes one frame carries for a read of n bytes
++// (0 if n is too small for a header and one sector).
++func RawFor(n int) int {
++	if n <= HeaderSize {
++		return 0
++	}
++	return (n - HeaderSize) / unit * unit
++}
++
++// Reader wraps a file: Read returns frames, everything else is raw.
++type Reader struct {
++	interfaces.FileObject
++	raw  []byte
++	comp []byte
++	c    lz4.Compressor
++}
++
++// New serves inner as frames. Closing the Reader closes inner.
++func New(inner interfaces.FileObject) *Reader { return &Reader{FileObject: inner} }
++
++// Read fills p with one frame for the next RawFor(len(p)) raw bytes (fewer
++// at the end of the file) and returns its size: 0 at EOF, EINVAL if p
++// cannot hold a frame.
++func (r *Reader) Read(p []byte) (int, error) {
++	want := RawFor(len(p))
++	if want == 0 {
++		return 0, udpfs.Errno(-udpfs.EINVAL)
++	}
++	if cap(r.raw) < want {
++		r.raw = make([]byte, want)
++		r.comp = make([]byte, lz4.CompressBlockBound(want))
++	}
++	raw := r.raw[:want]
++	n, err := io.ReadFull(r.FileObject, raw)
++	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
++		return 0, err
++	}
++	if n == 0 {
++		return 0, io.EOF
++	}
++	return Encode(p, raw[:n], &r.c, r.comp), nil
++}
++
++// Encode writes the frame for raw into dst and returns its size
++// (HeaderSize + data padded to 16). dst must hold HeaderSize + len(raw)
++// rounded up to 16; scratch must hold lz4.CompressBlockBound(len(raw)).
++// The frame is stored unless LZ4 makes the data smaller.
++func Encode(dst, raw []byte, c *lz4.Compressor, scratch []byte) int {
++	data, flags := raw, uint32(0)
++	if n, err := c.CompressBlock(raw, scratch); err == nil && n > 0 && n < len(raw) {
++		data, flags = scratch[:n], FlagLZ4
++	}
++	binary.LittleEndian.PutUint32(dst[0:], Magic)
++	binary.LittleEndian.PutUint32(dst[4:], uint32(len(raw)))
++	binary.LittleEndian.PutUint32(dst[8:], uint32(len(data)))
++	binary.LittleEndian.PutUint32(dst[12:], flags)
++	copy(dst[HeaderSize:], data)
++	end := HeaderSize + (len(data)+15)&^15
++	clear(dst[HeaderSize+len(data) : end])
++	return end
++}
++
++// Write: framed files are read-only.
++func (r *Reader) Write([]byte) (int, error) { return 0, os.ErrPermission }
+diff --git a/internal/fs/wire/wire_test.go b/internal/fs/wire/wire_test.go
+new file mode 100644
+index 0000000..a14576b
+--- /dev/null
++++ b/internal/fs/wire/wire_test.go
+@@ -0,0 +1,210 @@
++package wire
++
++import (
++	"bytes"
++	"encoding/binary"
++	"io"
++	"math/rand"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/pcm720/udpfsd/udpfs"
++	"github.com/pierrec/lz4/v4"
++)
++
++type frame struct {
++	raw          []byte
++	flags, total int
++}
++
++// parse checks one frame against the format and decodes it.
++func parse(t *testing.T, b []byte, n int) frame {
++	t.Helper()
++	if len(b) < HeaderSize || binary.LittleEndian.Uint32(b) != Magic || string(b[:4]) != "LZF1" {
++		t.Fatalf("bad header % x", b[:min(len(b), 16)])
++	}
++	rawLen := int(binary.LittleEndian.Uint32(b[4:]))
++	dataLen := int(binary.LittleEndian.Uint32(b[8:]))
++	flags := int(binary.LittleEndian.Uint32(b[12:]))
++	total := HeaderSize + (dataLen+15)&^15
++	if total != len(b) || total%16 != 0 || total > n {
++		t.Fatalf("frame %d bytes, data %d, read size %d", len(b), dataLen, n)
++	}
++	for _, p := range b[HeaderSize+dataLen:] {
++		if p != 0 {
++			t.Fatal("padding not zero")
++		}
++	}
++	data := b[HeaderSize : HeaderSize+dataLen]
++	switch flags {
++	case FlagLZ4:
++		if dataLen >= rawLen {
++			t.Fatalf("LZ4 frame not smaller: %d >= %d", dataLen, rawLen)
++		}
++		out := make([]byte, rawLen)
++		got, err := lz4.UncompressBlock(data, out)
++		if err != nil || got != rawLen {
++			t.Fatalf("UncompressBlock: %d %v", got, err)
++		}
++		return frame{out, flags, total}
++	case 0:
++		if dataLen != rawLen {
++			t.Fatalf("stored frame data %d != raw %d", dataLen, rawLen)
++		}
++		return frame{append([]byte(nil), data...), flags, total}
++	}
++	t.Fatalf("flags %#x", flags)
++	return frame{}
++}
++
++func open(t *testing.T, data []byte) *Reader {
++	t.Helper()
++	p := filepath.Join(t.TempDir(), "img.iso")
++	if err := os.WriteFile(p, data, 0644); err != nil {
++		t.Fatal(err)
++	}
++	f, err := os.Open(p)
++	if err != nil {
++		t.Fatal(err)
++	}
++	r := New(f)
++	t.Cleanup(func() { r.Close() })
++	return r
++}
++
++// readAll reads frames of n bytes until EOF and returns the raw stream.
++func readAll(t *testing.T, r *Reader, n int, wantFlags int) []byte {
++	t.Helper()
++	var out []byte
++	buf := make([]byte, n)
++	for {
++		got, err := r.Read(buf)
++		if err == io.EOF && got == 0 {
++			return out
++		}
++		if err != nil {
++			t.Fatal(err)
++		}
++		f := parse(t, buf[:got], n)
++		if wantFlags >= 0 && f.flags != wantFlags {
++			t.Fatalf("flags %d, want %d", f.flags, wantFlags)
++		}
++		if len(f.raw) > RawFor(n) {
++			t.Fatalf("raw %d > %d", len(f.raw), RawFor(n))
++		}
++		out = append(out, f.raw...)
++	}
++}
++
++func TestRawFor(t *testing.T) {
++	for n, want := range map[int]int{131072: 129024, 65536: 63488, 2064: 2048, 2063: 0, 16: 0, 0: 0, -5: 0} {
++		if got := RawFor(n); got != want {
++			t.Errorf("RawFor(%d) = %d, want %d", n, got, want)
++		}
++	}
++}
++
++func TestCompressibleRoundTrip(t *testing.T) {
++	data := bytes.Repeat([]byte("PlayStation 2 sector data. "), 20000) // 540000 bytes, not a sector multiple
++	r := open(t, data)
++	if got := readAll(t, r, 131072, FlagLZ4); !bytes.Equal(got, data) {
++		t.Fatalf("round trip: %d bytes, want %d", len(got), len(data))
++	}
++}
++
++func TestRandomDataIsStored(t *testing.T) {
++	data := make([]byte, 300*1024+100)
++	rand.New(rand.NewSource(1)).Read(data)
++	r := open(t, data)
++	if got := readAll(t, r, 131072, 0); !bytes.Equal(got, data) {
++		t.Fatal("stored round trip differs")
++	}
++}
++
++func TestFrameSizesForOddReadSizes(t *testing.T) {
++	data := make([]byte, 200*1024)
++	rng := rand.New(rand.NewSource(2))
++	for i := 0; i < len(data); i += 4096 { // half random, half zero sectors
++		rng.Read(data[i : i+2048])
++	}
++	for _, n := range []int{2064, 2065, 4096, 65536, 100000, 131072} {
++		r := open(t, data)
++		if got := readAll(t, r, n, -1); !bytes.Equal(got, data) {
++			t.Fatalf("read size %d: round trip differs", n)
++		}
++	}
++}
++
++func TestSeekThenRead(t *testing.T) {
++	data := make([]byte, 64*2048)
++	for i := range data {
++		data[i] = byte(i / 2048)
++	}
++	r := open(t, data)
++	if pos, err := r.Seek(0, io.SeekEnd); err != nil || pos != int64(len(data)) {
++		t.Fatalf("SEEK_END = %d %v (raw size)", pos, err)
++	}
++	if st, _ := r.Stat(); st.Size() != int64(len(data)) {
++		t.Fatalf("stat size %d", st.Size())
++	}
++	off := int64(10*2048 + 7)
++	if pos, err := r.Seek(off, io.SeekStart); err != nil || pos != off {
++		t.Fatalf("seek %d %v", pos, err)
++	}
++	buf := make([]byte, 4096+16)
++	n, err := r.Read(buf)
++	if err != nil {
++		t.Fatal(err)
++	}
++	f := parse(t, buf[:n], len(buf))
++	if !bytes.Equal(f.raw, data[off:off+4096]) {
++		t.Fatal("frame after seek has the wrong bytes")
++	}
++	if pos, _ := r.Seek(0, io.SeekCurrent); pos != off+4096 {
++		t.Fatalf("position %d after one frame, want %d (raw)", pos, off+4096)
++	}
++}
++
++func TestEOF(t *testing.T) {
++	data := bytes.Repeat([]byte{7}, 5000)
++	r := open(t, data)
++	buf := make([]byte, 131072)
++	n, err := r.Read(buf)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if f := parse(t, buf[:n], len(buf)); len(f.raw) != 5000 {
++		t.Fatalf("last frame raw %d", len(f.raw))
++	}
++	for i := 0; i < 2; i++ {
++		if n, err := r.Read(buf); n != 0 || err != io.EOF {
++			t.Fatalf("at EOF: %d %v", n, err)
++		}
++	}
++	r.Seek(4999, io.SeekStart)
++	n, _ = r.Read(buf)
++	if f := parse(t, buf[:n], len(buf)); len(f.raw) != 1 || f.raw[0] != 7 {
++		t.Fatalf("one byte before EOF: %v", f.raw)
++	}
++}
++
++func TestReadTooSmall(t *testing.T) {
++	r := open(t, make([]byte, 8192))
++	for _, n := range []int{0, 1, 16, 17, 2063} {
++		got, err := r.Read(make([]byte, n))
++		if got != 0 || err != udpfs.Errno(-udpfs.EINVAL) {
++			t.Fatalf("read %d: %d %v, want EINVAL", n, got, err)
++		}
++	}
++	if pos, _ := r.Seek(0, io.SeekCurrent); pos != 0 {
++		t.Fatalf("a refused read moved the position to %d", pos)
++	}
++}
++
++func TestReadOnly(t *testing.T) {
++	r := open(t, make([]byte, 10))
++	if _, err := r.Write([]byte("x")); err == nil {
++		t.Fatal("write accepted")
++	}
++}
+diff --git a/internal/fs/wire_backend_test.go b/internal/fs/wire_backend_test.go
+new file mode 100644
+index 0000000..526d9b6
+--- /dev/null
++++ b/internal/fs/wire_backend_test.go
+@@ -0,0 +1,128 @@
++package fs
++
++import (
++	"bytes"
++	"encoding/binary"
++	"io"
++	"os"
++	"path/filepath"
++	"slices"
++	"testing"
++
++	"github.com/pcm720/udpfsd/internal/fs/wire"
++	"github.com/pcm720/udpfsd/udpfs"
++	"github.com/pierrec/lz4/v4"
++)
++
++// readFrames reads a framed handle to EOF with n-byte reads and decodes it.
++func readFrames(t *testing.T, b *Backend, h int32, n uint32) []byte {
++	t.Helper()
++	var out []byte
++	buf := make([]byte, 128*1024)
++	for {
++		got, data, err := b.Read(h, n, buf)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if got == 0 {
++			return out
++		}
++		if int(got) != len(data) || got%16 != 0 || uint32(got) > n || binary.LittleEndian.Uint32(data) != wire.Magic {
++			t.Fatalf("frame of %d bytes for a read of %d", got, n)
++		}
++		raw := make([]byte, binary.LittleEndian.Uint32(data[4:]))
++		dl := binary.LittleEndian.Uint32(data[8:])
++		if binary.LittleEndian.Uint32(data[12:])&wire.FlagLZ4 != 0 {
++			if m, err := lz4.UncompressBlock(data[16:16+dl], raw); err != nil || m != len(raw) {
++				t.Fatalf("lz4: %d %v", m, err)
++			}
++		} else {
++			copy(raw, data[16:16+dl])
++		}
++		out = append(out, raw...)
++	}
++}
++
++func TestWireFramesThroughBackend(t *testing.T) {
++	dir := t.TempDir()
++	plain := bytes.Repeat([]byte("frames over UDPFS "), 300*1024/18)
++	mkfile(t, filepath.Join(dir, "a.iso"), string(plain))
++	zso, err := os.ReadFile(filepath.Join("compression", "test", "test.zso"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	ref, err := os.ReadFile(filepath.Join("compression", "test", "test.iso"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	mkfile(t, filepath.Join(dir, "g.zso"), string(zso))
++	b, err := NewBackend(WithMount("DVD", dir), WithReadOnly(), WithCompression())
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	for path, want := range map[string][]byte{"/.lz4f/DVD/a.iso": plain, "/.lz4f/DVD/g.zso.iso": ref, "\\.lz4f\\DVD\\a.iso": plain} {
++		h, st, err := b.Open(path, os.O_RDONLY, false)
++		if err != nil || h <= 0 {
++			t.Fatalf("open %s: %d %v", path, h, err)
++		}
++		if int64(st.Size)|int64(st.Hisize)<<32 != int64(len(want)) {
++			t.Fatalf("%s: open size %d, want raw %d", path, st.Size, len(want))
++		}
++		if gs, err := b.Getstat(path); err != nil || int(gs.Size) != len(want) {
++			t.Fatalf("%s: getstat %d %v", path, gs.Size, err)
++		}
++		if got := readFrames(t, b, h, 131072); !bytes.Equal(got, want) {
++			t.Fatalf("%s: frames decode to %d bytes, want %d", path, len(got), len(want))
++		}
++		if pos, err := b.Lseek(h, 0, io.SeekEnd); err != nil || pos != int64(len(want)) {
++			t.Fatalf("%s: SEEK_END %d %v", path, pos, err)
++		}
++		if n, data, err := b.Read(h, 131072, make([]byte, 128*1024)); n != 0 || len(data) != 0 || err != nil {
++			t.Fatalf("%s: at EOF: %d %v", path, n, err)
++		}
++		if pos, _ := b.Lseek(h, 4096, io.SeekStart); pos != 4096 {
++			t.Fatal("seek")
++		}
++		if got := readFrames(t, b, h, 4096+16); !bytes.Equal(got, want[4096:]) {
++			t.Fatalf("%s: after seek", path)
++		}
++		if n, _, err := b.Read(h, 2063, make([]byte, 128*1024)); n != 0 || err != udpfs.Errno(-udpfs.EINVAL) {
++			t.Fatalf("%s: read too small: %d %v", path, n, err)
++		}
++		if _, err := b.Bread(h, 0, 4, make([]byte, 4096)); err == nil {
++			t.Fatalf("%s: block read on frames", path)
++		}
++		b.Close(h)
++		if gs, err := b.Getstat(path); err != nil || int(gs.Size) != len(want) {
++			t.Fatalf("%s: getstat when closed %d %v", path, gs.Size, err)
++		}
++	}
++
++	if _, _, err := b.Open("/.lz4f/DVD/a.iso", os.O_RDWR, false); !os.IsPermission(err) {
++		t.Fatalf("framed file opened for writing: %v", err)
++	}
++	if _, _, err := b.Open("/.lz4f/DVD/missing.iso", os.O_RDONLY, false); !os.IsNotExist(err) {
++		t.Fatalf("missing file: %v", err)
++	}
++	if _, _, err := b.Open("/.lz4f/DVD", os.O_RDONLY, true); err == nil {
++		t.Fatal("framed directory opened")
++	}
++	if _, _, err := b.Open("/.lz4f/DVD", os.O_RDONLY, false); err == nil {
++		t.Fatal("framed directory opened as a file")
++	}
++	if names := listDir(t, b, "/"); slices.Contains(names, wire.PathPrefix) {
++		t.Fatalf("root lists %v", names)
++	}
++}
++
++func TestGetstatWithoutOpen(t *testing.T) {
++	f := newFixture(t)
++	b := f.backend(t, true, true)
++	if st, err := b.Getstat("/DVD/A.iso"); err != nil || st.Size != 5 || st.Mode != udpfs.FIO_S_IFREG {
++		t.Fatalf("getstat %+v %v", st, err)
++	}
++	if _, err := b.Getstat("/DVD/missing.iso"); !os.IsNotExist(err) {
++		t.Fatalf("missing: %v", err)
++	}
++}
+diff --git a/internal/prep/scan.go b/internal/prep/scan.go
+index 509ee25..a6c590c 100644
+--- a/internal/prep/scan.go
++++ b/internal/prep/scan.go
+@@ -74,6 +74,11 @@ func writeAtomic(path string, data []byte) error {
+ 
+ var renameFile = os.Rename // test hook
+ 
++// Features is what this server offers beyond plain UDPFS, as manifest
++// header tokens. wire=lz4f: every file is also served as LZ4 frames under
++// /.lz4f (internal/fs/wire).
++const Features = " wire=lz4f"
++
+ // Begin replaces the manifest with an empty "scanning=1" one, so the
+ // console never acts on a previous run's list while a scan runs.
+ func Begin(o Options) error {
+@@ -82,7 +87,7 @@ func Begin(o Options) error {
+ 		auto = 1
+ 	}
+ 	return writeAtomic(filepath.Join(ServedDir(o.CacheDir), "manifest.txt"),
+-		[]byte(fmt.Sprintf("udpfsd-manifest 1 auto=%d scanning=1\n", auto)))
++		[]byte(fmt.Sprintf("udpfsd-manifest 1 auto=%d%s scanning=1\n", auto, Features)))
+ }
+ 
+ func clientPath(mount, rel string) string {
+@@ -191,7 +196,7 @@ func (o *Options) manifest(entries []entry, launcher string) []byte {
+ 	if o.PowerOff {
+ 		poweroff = " poweroff=1"
+ 	}
+-	fmt.Fprintf(&b, "udpfsd-manifest 1%s auto=%d%s\n", launcher, auto, poweroff)
++	fmt.Fprintf(&b, "udpfsd-manifest 1%s auto=%d%s%s\n", launcher, auto, poweroff, Features)
+ 	for _, e := range entries {
+ 		if e.Err != "" {
+ 			fmt.Fprintf(&b, "%s\tinvalid:%s\t-\t-\t%d\t-\t0\t-\t-\n", e.Path, Sanitize(e.Err, 40), e.Size)
+diff --git a/internal/prep/scan_test.go b/internal/prep/scan_test.go
+index f5109c3..1283b36 100644
+--- a/internal/prep/scan_test.go
++++ b/internal/prep/scan_test.go
+@@ -68,7 +68,7 @@ func TestRunFullScan(t *testing.T) {
+ 	}
+ 	head, lines := readManifest(t, cache)
+ 	sum := sha256.Sum256(kelf)
+-	if head != fmt.Sprintf("udpfsd-manifest 1 launcher=%x:%d auto=1", sum, len(kelf)) {
++	if head != fmt.Sprintf("udpfsd-manifest 1 launcher=%x:%d auto=1"+Features, sum, len(kelf)) {
+ 		t.Fatalf("header %q", head)
+ 	}
+ 	want := []string{
+@@ -114,7 +114,7 @@ func TestManifestLinesNeverSplit(t *testing.T) {
+ 		t.Fatal(err)
+ 	}
+ 	head, lines := readManifest(t, cache)
+-	if head != "udpfsd-manifest 1 auto=0" || len(lines) != 1 {
++	if head != "udpfsd-manifest 1 auto=0"+Features || len(lines) != 1 {
+ 		t.Fatalf("%q %q", head, lines)
+ 	}
+ 	cols := strings.Split(lines[0], "\t")
+@@ -185,11 +185,11 @@ func TestPlaceholderWhileScanning(t *testing.T) {
+ 	if _, err := Run(o); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if during != "udpfsd-manifest 1 auto=1 scanning=1\n" {
++	if during != "udpfsd-manifest 1 auto=1"+Features+" scanning=1\n" {
+ 		t.Fatalf("manifest during scan = %q", during)
+ 	}
+ 	head, lines := readManifest(t, cache)
+-	if head != "udpfsd-manifest 1 auto=1" || len(lines) != 2 {
++	if head != "udpfsd-manifest 1 auto=1"+Features || len(lines) != 2 {
+ 		t.Fatalf("after scan: %q %q", head, lines)
+ 	}
+ }
+@@ -200,7 +200,7 @@ func TestBeginWritesPlaceholder(t *testing.T) {
+ 		t.Fatal(err)
+ 	}
+ 	head, lines := readManifest(t, cache)
+-	if head != "udpfsd-manifest 1 auto=0 scanning=1" || len(lines) != 0 {
++	if head != "udpfsd-manifest 1 auto=0"+Features+" scanning=1" || len(lines) != 0 {
+ 		t.Fatalf("%q %q", head, lines)
+ 	}
+ }
+@@ -243,7 +243,7 @@ func TestServesOPLRuntime(t *testing.T) {
+ 	}
+ 	head, _ := readManifest(t, cache)
+ 	ls, os2 := sha256.Sum256(kelf), sha256.Sum256(elf)
+-	want := fmt.Sprintf("udpfsd-manifest 1 launcher=%x:%d opl=%x:%d auto=1", ls, len(kelf), os2, len(elf))
++	want := fmt.Sprintf("udpfsd-manifest 1 launcher=%x:%d opl=%x:%d auto=1"+Features, ls, len(kelf), os2, len(elf))
+ 	if head != want {
+ 		t.Fatalf("header\n%q\nwant\n%q", head, want)
+ 	}
+@@ -272,7 +272,7 @@ func TestManifestPowerOffFlag(t *testing.T) {
+ 		PowerOff: true}); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if head, _ := readManifest(t, cache); head != "udpfsd-manifest 1 auto=1 poweroff=1" {
++	if head, _ := readManifest(t, cache); head != "udpfsd-manifest 1 auto=1 poweroff=1"+Features {
+ 		t.Fatalf("%q", head)
+ 	}
+ }

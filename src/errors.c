@@ -46,6 +46,7 @@ static const struct {
                               "partition rename failed (game shown/hidden in the XMB)"},
     [ERR_DATA_LIMIT] = {"ERR_DATA_LIMIT",
                         "past the 128 GiB safe limit for games and data; the warning was declined"},
+ [ERR_CONSOLE_UNKNOWN] = {"ERR_CONSOLE_UNKNOWN", "select the DESR console generation in Settings"},
 };
 
 const char *err_name(inst_err_t err) {

@@ -1,0 +1,704 @@
+diff --git a/cmd/udpfsd/main.go b/cmd/udpfsd/main.go
+index 7bd82fa..6941015 100644
+--- a/cmd/udpfsd/main.go
++++ b/cmd/udpfsd/main.go
+@@ -88,6 +88,8 @@ func main() {
+ 	if cfg.ART != "" {
+ 		fsopts = append(fsopts, fs.WithMount("ART", cfg.ART))
+ 	}
++	// /.oplart: the art folder as OPL reads it (PNG only)
++	fsopts = append(fsopts, fs.WithOPLArt(cfg.ART))
+ 	if cfg.POPS != "" {
+ 		fsopts = append(fsopts, fs.WithMount("POPS", cfg.POPS))
+ 	}
+diff --git a/internal/fs/backend.go b/internal/fs/backend.go
+index 7735bc8..a01f7f4 100644
+--- a/internal/fs/backend.go
++++ b/internal/fs/backend.go
+@@ -8,6 +8,7 @@ import (
+ 	"sync"
+ 	"time"
+ 
++	"github.com/pcm720/udpfsd/internal/fs/oplart"
+ 	"github.com/pcm720/udpfsd/udpfs"
+ )
+ 
+@@ -28,6 +29,7 @@ type Backend struct {
+ 	mounts               []mount         // read-only top-level mounts
+ 	splitMounts          map[string]bool // mounts with split images (Name.iso.001...)
+ 	cueMounts            map[string]bool // mounts with BIN/CUE served as Name.VCD
++	art                  *oplart.Server  // /.oplart: the art folder as OPL reads it
+ 	blockDevice          string
+ 	sectorSize           int
+ 	compressionCacheSize int
+diff --git a/internal/fs/fileops.go b/internal/fs/fileops.go
+index 065ead7..895eb06 100644
+--- a/internal/fs/fileops.go
++++ b/internal/fs/fileops.go
+@@ -9,6 +9,7 @@ import (
+ 	"slices"
+ 
+ 	"github.com/pcm720/udpfsd/internal/fs/compression"
++	"github.com/pcm720/udpfsd/internal/fs/oplart"
+ 	"github.com/pcm720/udpfsd/internal/fs/wire"
+ 	"github.com/pcm720/udpfsd/udpfs"
+ )
+@@ -18,6 +19,10 @@ func (s *Backend) Open(path string, flag int, isDir bool) (handle int32, stat ud
+ 	if inner, ok := cutVirtualPrefix(path, wire.PathPrefix); ok {
+ 		return s.openWire(inner, flag, isDir)
+ 	}
++	// "/.oplart/<STARTUP>_<SUFFIX>.png": art as OPL reads it
++	if rest, ok := cutVirtualPrefix(path, oplart.PathPrefix); ok {
++		return s.openOPLArt(rest, flag, isDir)
++	}
+ 
+ 	// Get full path
+ 	fullPath, ok := s.resolvePath(path)
+@@ -288,6 +293,9 @@ func (s *Backend) Getstat(path string) (stat udpfs.StatInfo, err error) {
+ 	if inner, ok := cutVirtualPrefix(path, wire.PathPrefix); ok {
+ 		path = inner // a framed file has its raw file's size
+ 	}
++	if rest, ok := cutVirtualPrefix(path, oplart.PathPrefix); ok {
++		return s.statOPLArt(rest)
++	}
+ 
+ 	resolved, ok := s.resolvePath(path)
+ 	if !ok {
+diff --git a/internal/fs/oplart.go b/internal/fs/oplart.go
+new file mode 100644
+index 0000000..22b6c46
+--- /dev/null
++++ b/internal/fs/oplart.go
+@@ -0,0 +1,76 @@
++package fs
++
++import (
++	"os"
++	"strings"
++
++	"github.com/pcm720/udpfsd/internal/fs/oplart"
++	"github.com/pcm720/udpfsd/udpfs"
++)
++
++// WithOPLArt serves the art folder (udpfsd.cfg "art") as Open PS2 Loader
++// reads art: /.oplart/<STARTUP>_<SUFFIX>.png, always PNG.
++func WithOPLArt(artDir string) func(s *Backend) {
++	return func(s *Backend) {
++		s.art = oplart.New(artDir)
++	}
++}
++
++// oplArt is the art server; without an art folder it finds nothing.
++func (s *Backend) oplArt() *oplart.Server {
++	if s.art == nil {
++		return noArt
++	}
++	return s.art
++}
++
++var noArt = oplart.New("")
++
++// artName returns the file name in "/.oplart/<name>" ("" for the folder),
++// ok=false for deeper paths.
++func artName(rest string) (string, bool) {
++	name := strings.TrimPrefix(rest, "/")
++	return name, !strings.Contains(name, "/")
++}
++
++// openOPLArt opens "/.oplart" (an empty, read-only folder) or an art file
++// in it.
++func (s *Backend) openOPLArt(rest string, flag int, isDir bool) (int32, udpfs.StatInfo, error) {
++	if flag&writeFlags != 0 {
++		return 0, udpfs.StatInfo{}, os.ErrPermission
++	}
++	name, ok := artName(rest)
++	if !ok || isDir != (name == "") {
++		return 0, udpfs.StatInfo{}, os.ErrNotExist
++	}
++	if isDir {
++		h := s.allocHandle(&dirHandle{dirPath: "\x00" + oplart.PathPrefix})
++		return h, udpfs.StatInfo{Mode: udpfs.FIO_S_IFDIR}, nil
++	}
++	f, err := s.oplArt().Open(name)
++	if err != nil {
++		return 0, udpfs.StatInfo{}, os.ErrNotExist
++	}
++	st, _ := f.Stat()
++	h := s.allocHandle(s.newFileHandle(f, true))
++	if h < 0 {
++		return h, udpfs.StatInfo{}, nil
++	}
++	return h, udpfs.StatInfoFromFile(st), nil
++}
++
++// statOPLArt is Getstat for "/.oplart" and the art files in it.
++func (s *Backend) statOPLArt(rest string) (udpfs.StatInfo, error) {
++	name, ok := artName(rest)
++	if !ok {
++		return udpfs.StatInfo{}, os.ErrNotExist
++	}
++	if name == "" {
++		return udpfs.StatInfo{Mode: udpfs.FIO_S_IFDIR}, nil
++	}
++	st, err := s.oplArt().Stat(name)
++	if err != nil {
++		return udpfs.StatInfo{}, os.ErrNotExist
++	}
++	return udpfs.StatInfoFromFile(st), nil
++}
+diff --git a/internal/fs/oplart/oplart.go b/internal/fs/oplart/oplart.go
+new file mode 100644
+index 0000000..556b37b
+--- /dev/null
++++ b/internal/fs/oplart/oplart.go
+@@ -0,0 +1,218 @@
++// Package oplart serves a game art folder (the "art" folder, /ART) the way
++// Open PS2 Loader reads it: OPL loads only PNG files named
++// <STARTUP>_<SUFFIX>.png. "/.oplart/<STARTUP>_<SUFFIX>.png" returns the
++// art for that name: a PNG as it is, a JPEG converted to PNG.
++package oplart
++
++import (
++	"bytes"
++	"image"
++	"image/draw"
++	"image/jpeg"
++	"image/png"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/pcm720/udpfsd/internal/fs/compression/common"
++)
++
++// PathPrefix is the first client path component of the art folder.
++const PathPrefix = ".oplart"
++
++// sources lists, per OPL suffix, the art names it is made from, in order.
++var sources = map[string][]string{
++	"COV":  {"COV"},
++	"COV2": {"COV2"},
++	"ICO":  {"ICO"},
++	"LAB":  {"LAB"},
++	"LGO":  {"LGO"},
++	"BG":   {"BG", "BG_00"},
++	"SCR":  {"SCR", "SCR_00"},
++	"SCR2": {"SCR2", "SCR_01"},
++}
++
++var exts = []string{".png", ".jpg", ".jpeg"}
++
++var pngMagic = []byte("\x89PNG\r\n\x1a\n")
++
++// maxSource: art files are small; a bigger file is not served.
++const maxSource = 32 << 20
++
++// Parse splits an OPL art file name "<STARTUP>_<SUFFIX>.png" (case of the
++// suffix and extension ignored). ok is false for anything OPL never asks.
++func Parse(name string) (startup, suffix string, ok bool) {
++	if !strings.EqualFold(filepath.Ext(name), ".png") {
++		return "", "", false
++	}
++	stem := strings.TrimSuffix(name, filepath.Ext(name))
++	i := strings.LastIndexByte(stem, '_')
++	if i <= 0 {
++		return "", "", false
++	}
++	startup, suffix = stem[:i], strings.ToUpper(stem[i+1:])
++	if _, known := sources[suffix]; !known || strings.ContainsAny(startup, `/\:`) || startup == "." || startup == ".." {
++		return "", "", false
++	}
++	return startup, suffix, true
++}
++
++type key struct {
++	path string
++	mod  time.Time
++	size int64
++}
++
++// Server finds and converts art in one folder, caching converted JPEGs.
++type Server struct {
++	dir string
++
++	mu       sync.Mutex
++	cache    map[key][]byte
++	order    []key
++	bytes    int
++	maxBytes int
++}
++
++// New serves the art in dir ("" = no art folder: nothing is found).
++func New(dir string) *Server {
++	return &Server{dir: dir, cache: map[key][]byte{}, maxBytes: 64 << 20}
++}
++
++// find returns the source file for name, looking up each candidate name
++// with each extension; letter case does not matter.
++func (s *Server) find(startup, suffix string) (string, os.FileInfo, error) {
++	if s.dir == "" {
++		return "", nil, os.ErrNotExist
++	}
++	var listing []os.DirEntry
++	listed := false
++	for _, src := range sources[suffix] {
++		for _, ext := range exts {
++			want := startup + "_" + src + ext
++			for _, n := range []string{want, startup + "_" + src + strings.ToUpper(ext)} {
++				p := filepath.Join(s.dir, n)
++				if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
++					return p, st, nil
++				}
++			}
++			if !listed {
++				listing, _ = os.ReadDir(s.dir)
++				listed = true
++			}
++			for _, e := range listing {
++				if strings.EqualFold(e.Name(), want) && e.Type().IsRegular() {
++					p := filepath.Join(s.dir, e.Name())
++					if st, err := os.Stat(p); err == nil {
++						return p, st, nil
++					}
++				}
++			}
++		}
++	}
++	return "", nil, os.ErrNotExist
++}
++
++// Get returns the PNG for an OPL art file name, and the time of its source.
++func (s *Server) Get(name string) ([]byte, time.Time, error) {
++	startup, suffix, ok := Parse(name)
++	if !ok {
++		return nil, time.Time{}, os.ErrNotExist
++	}
++	p, st, err := s.find(startup, suffix)
++	if err != nil {
++		return nil, time.Time{}, err
++	}
++	if st.Size() > maxSource {
++		return nil, time.Time{}, os.ErrNotExist
++	}
++	k := key{p, st.ModTime(), st.Size()}
++	s.mu.Lock()
++	b, hit := s.cache[k]
++	s.mu.Unlock()
++	if hit {
++		return b, st.ModTime(), nil
++	}
++	raw, err := os.ReadFile(p)
++	if err != nil {
++		return nil, time.Time{}, err
++	}
++	if bytes.HasPrefix(raw, pngMagic) {
++		return raw, st.ModTime(), nil // PNG: unchanged (read again each time: no copy kept)
++	}
++	b, err = toPNG(raw)
++	if err != nil {
++		return nil, time.Time{}, os.ErrNotExist
++	}
++	s.put(k, b)
++	return b, st.ModTime(), nil
++}
++
++// toPNG converts a JPEG to an opaque 8-bit RGB PNG.
++func toPNG(raw []byte) ([]byte, error) {
++	img, err := jpeg.Decode(bytes.NewReader(raw))
++	if err != nil {
++		return nil, err
++	}
++	rgba := image.NewRGBA(img.Bounds())
++	draw.Draw(rgba, rgba.Bounds(), img, img.Bounds().Min, draw.Src)
++	var out bytes.Buffer
++	if err := png.Encode(&out, rgba); err != nil {
++		return nil, err
++	}
++	return out.Bytes(), nil
++}
++
++func (s *Server) put(k key, b []byte) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if _, ok := s.cache[k]; ok || len(b) > s.maxBytes {
++		return
++	}
++	for s.bytes+len(b) > s.maxBytes && len(s.order) > 0 {
++		old := s.order[0]
++		s.order = s.order[1:]
++		s.bytes -= len(s.cache[old])
++		delete(s.cache, old)
++	}
++	s.cache[k] = b
++	s.order = append(s.order, k)
++	s.bytes += len(b)
++}
++
++// Stat returns the stat of the art file name (its PNG size).
++func (s *Server) Stat(name string) (os.FileInfo, error) {
++	b, mt, err := s.Get(name)
++	if err != nil {
++		return nil, err
++	}
++	return common.NewCompressedInfo(name, int64(len(b)), mt), nil
++}
++
++// Open returns the art file name as a read-only file.
++func (s *Server) Open(name string) (*File, error) {
++	b, mt, err := s.Get(name)
++	if err != nil {
++		return nil, err
++	}
++	return &File{Reader: bytes.NewReader(b), name: "\x00" + PathPrefix + "/" + name,
++		info: common.NewCompressedInfo(name, int64(len(b)), mt)}, nil
++}
++
++// File is one served art file (interfaces.FileObject).
++type File struct {
++	*bytes.Reader
++	name string
++	info os.FileInfo
++}
++
++// Write: the art folder is read-only.
++func (f *File) Write([]byte) (int, error) { return 0, os.ErrPermission }
++
++func (f *File) Stat() (os.FileInfo, error) { return f.info, nil }
++
++// Name is a marker that no host path can equal.
++func (f *File) Name() string { return f.name }
++func (f *File) Close() error { return nil }
+diff --git a/internal/fs/oplart/oplart_test.go b/internal/fs/oplart/oplart_test.go
+new file mode 100644
+index 0000000..a10f7fc
+--- /dev/null
++++ b/internal/fs/oplart/oplart_test.go
+@@ -0,0 +1,184 @@
++package oplart
++
++import (
++	"bytes"
++	"image"
++	"image/color"
++	"image/jpeg"
++	"image/png"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++)
++
++func picture(w, h int, c color.RGBA) *image.RGBA {
++	img := image.NewRGBA(image.Rect(0, 0, w, h))
++	for y := 0; y < h; y++ {
++		for x := 0; x < w; x++ {
++			img.Set(x, y, c)
++		}
++	}
++	return img
++}
++
++func writeJPEG(t *testing.T, path string, w, h int, c color.RGBA) {
++	t.Helper()
++	var b bytes.Buffer
++	if err := jpeg.Encode(&b, picture(w, h, c), &jpeg.Options{Quality: 95}); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, b.Bytes(), 0644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func writePNG(t *testing.T, path string, w, h int, c color.RGBA) []byte {
++	t.Helper()
++	var b bytes.Buffer
++	if err := png.Encode(&b, picture(w, h, c)); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, b.Bytes(), 0644); err != nil {
++		t.Fatal(err)
++	}
++	return b.Bytes()
++}
++
++// decodePNG checks b is a PNG of w x h close to c.
++func decodePNG(t *testing.T, b []byte, w, h int, c color.RGBA) {
++	t.Helper()
++	img, format, err := image.Decode(bytes.NewReader(b))
++	if err != nil || format != "png" {
++		t.Fatalf("not a PNG: %s %v", format, err)
++	}
++	if img.Bounds().Dx() != w || img.Bounds().Dy() != h {
++		t.Fatalf("size %v, want %dx%d", img.Bounds(), w, h)
++	}
++	r, g, bl, a := img.At(w/2, h/2).RGBA()
++	near := func(v uint32, want uint8) bool { d := int(v>>8) - int(want); return d > -8 && d < 8 }
++	if !near(r, c.R) || !near(g, c.G) || !near(bl, c.B) || a>>8 != 255 {
++		t.Fatalf("colour %d %d %d %d, want %v", r>>8, g>>8, bl>>8, a>>8, c)
++	}
++}
++
++func TestParse(t *testing.T) {
++	for name, want := range map[string][2]string{
++		"SLUS_200.66_COV.png": {"SLUS_200.66", "COV"}, "SLUS_200.66_COV2.png": {"SLUS_200.66", "COV2"},
++		"SCES_500.51_SCR2.PNG": {"SCES_500.51", "SCR2"}, "SLPM_123.45_bg.png": {"SLPM_123.45", "BG"},
++		"SLUS_200.66_ICO.png": {"SLUS_200.66", "ICO"}, "SLUS_200.66_LAB.png": {"SLUS_200.66", "LAB"},
++		"SLUS_200.66_LGO.png": {"SLUS_200.66", "LGO"}, "SLUS_200.66_SCR.png": {"SLUS_200.66", "SCR"},
++	} {
++		s, x, ok := Parse(name)
++		if !ok || s != want[0] || x != want[1] {
++			t.Errorf("Parse(%q) = %q %q %v", name, s, x, ok)
++		}
++	}
++	for _, name := range []string{"SLUS_200.66_COV.jpg", "SLUS_200.66_BG_00.png", "SLUS_200.66_XYZ.png", "_COV.png",
++		"SLUS_200.66.png", "../x_COV.png", "a/b_COV.png", "SLUS_200.66_SCR_01.png"} {
++		if _, _, ok := Parse(name); ok {
++			t.Errorf("Parse(%q) accepted", name)
++		}
++	}
++}
++
++func TestPNGUnchangedJPEGConverted(t *testing.T) {
++	dir := t.TempDir()
++	cov := writePNG(t, filepath.Join(dir, "SLUS_200.66_COV.png"), 14, 20, color.RGBA{200, 10, 10, 255})
++	writeJPEG(t, filepath.Join(dir, "SLUS_200.66_COV2.jpg"), 16, 24, color.RGBA{10, 200, 10, 255})
++	writeJPEG(t, filepath.Join(dir, "SLUS_200.66_BG_00.jpg"), 64, 48, color.RGBA{10, 10, 200, 255})
++	writePNG(t, filepath.Join(dir, "SLUS_200.66_SCR_00.png"), 32, 24, color.RGBA{50, 50, 50, 255})
++	writeJPEG(t, filepath.Join(dir, "SLUS_200.66_SCR_01.jpeg"), 32, 24, color.RGBA{250, 250, 0, 255})
++	writeJPEG(t, filepath.Join(dir, "slus_200.66_ico.JPG"), 8, 8, color.RGBA{0, 250, 250, 255})
++	writeJPEG(t, filepath.Join(dir, "SLUS_200.66_LGO.png"), 8, 8, color.RGBA{250, 0, 250, 255}) // a JPEG named .png
++	s := New(dir)
++
++	b, _, err := s.Get("SLUS_200.66_COV.png")
++	if err != nil || !bytes.Equal(b, cov) {
++		t.Fatalf("PNG not served unchanged: %v", err)
++	}
++	for name, want := range map[string]struct {
++		w, h int
++		c    color.RGBA
++	}{
++		"SLUS_200.66_COV2.png": {16, 24, color.RGBA{10, 200, 10, 255}},
++		"SLUS_200.66_BG.png":   {64, 48, color.RGBA{10, 10, 200, 255}}, // <- BG_00.jpg
++		"SLUS_200.66_SCR.png":  {32, 24, color.RGBA{50, 50, 50, 255}},  // <- SCR_00.png
++		"SLUS_200.66_SCR2.png": {32, 24, color.RGBA{250, 250, 0, 255}}, // <- SCR_01.jpeg
++		"SLUS_200.66_ICO.png":  {8, 8, color.RGBA{0, 250, 250, 255}},   // letter case
++		"SLUS_200.66_LGO.png":  {8, 8, color.RGBA{250, 0, 250, 255}},   // content, not extension
++		"slus_200.66_cov2.PNG": {16, 24, color.RGBA{10, 200, 10, 255}}, // request case
++	} {
++		b, _, err := s.Get(name)
++		if err != nil {
++			t.Fatalf("%s: %v", name, err)
++		}
++		decodePNG(t, b, want.w, want.h, want.c)
++		st, err := s.Stat(name)
++		if err != nil || st.Size() != int64(len(b)) {
++			t.Fatalf("%s: stat %v %v, want the PNG size %d", name, st, err, len(b))
++		}
++		f, err := s.Open(name)
++		if err != nil {
++			t.Fatal(err)
++		}
++		got := make([]byte, len(b)+10)
++		n, _ := f.Read(got)
++		if n != len(b) || !bytes.Equal(got[:n], b) {
++			t.Fatalf("%s: open/read %d bytes", name, n)
++		}
++		if _, err := f.Write([]byte("x")); err == nil {
++			t.Fatal("write accepted")
++		}
++		f.Close()
++	}
++	for _, name := range []string{"SLUS_200.66_LAB.png", "SLUS_999.99_COV.png", "SLUS_200.66_XYZ.png", "SLUS_200.66_COV.jpg"} {
++		if _, _, err := s.Get(name); !os.IsNotExist(err) {
++			t.Fatalf("%s: %v", name, err)
++		}
++	}
++	if _, _, err := New("").Get("SLUS_200.66_COV.png"); !os.IsNotExist(err) {
++		t.Fatal("art without an art folder")
++	}
++}
++
++func TestPreferenceAndCache(t *testing.T) {
++	dir := t.TempDir()
++	writeJPEG(t, filepath.Join(dir, "X_BG_00.jpg"), 4, 4, color.RGBA{0, 0, 255, 255})
++	s := New(dir)
++	b1, _, err := s.Get("X_BG.png")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if b2, _, _ := s.Get("X_BG.png"); &b1[0] != &b2[0] {
++		t.Fatal("converted art not cached")
++	}
++	// BG wins over BG_00; PNG over JPEG for the same name.
++	writeJPEG(t, filepath.Join(dir, "X_BG.jpg"), 6, 6, color.RGBA{255, 0, 0, 255})
++	b, _, _ := s.Get("X_BG.png")
++	decodePNG(t, b, 6, 6, color.RGBA{255, 0, 0, 255})
++	writePNG(t, filepath.Join(dir, "X_BG.png"), 2, 2, color.RGBA{0, 255, 0, 255})
++	b, _, _ = s.Get("X_BG.png")
++	decodePNG(t, b, 2, 2, color.RGBA{0, 255, 0, 255})
++	// A changed source is converted again (cache key: path, time, size).
++	p := filepath.Join(dir, "X_BG.jpg")
++	os.Remove(filepath.Join(dir, "X_BG.png"))
++	writeJPEG(t, p, 10, 10, color.RGBA{255, 255, 255, 255})
++	os.Chtimes(p, time.Now().Add(time.Hour), time.Now().Add(time.Hour))
++	b, _, _ = s.Get("X_BG.png")
++	decodePNG(t, b, 10, 10, color.RGBA{255, 255, 255, 255})
++}
++
++func TestCacheBounded(t *testing.T) {
++	s := New(t.TempDir())
++	s.maxBytes = 100
++	for i := 0; i < 5; i++ {
++		s.put(key{path: string(rune('a' + i))}, make([]byte, 40))
++	}
++	if s.bytes > 100 || len(s.cache) != 2 || len(s.order) != 2 {
++		t.Fatalf("cache %d bytes, %d entries", s.bytes, len(s.cache))
++	}
++	if _, ok := s.cache[key{path: "e"}]; !ok {
++		t.Fatal("newest entry evicted")
++	}
++}
+diff --git a/internal/fs/oplart_backend_test.go b/internal/fs/oplart_backend_test.go
+new file mode 100644
+index 0000000..2a7f0cf
+--- /dev/null
++++ b/internal/fs/oplart_backend_test.go
+@@ -0,0 +1,93 @@
++package fs
++
++import (
++	"bytes"
++	"image"
++	"image/color"
++	"image/jpeg"
++	"os"
++	"path/filepath"
++	"slices"
++	"testing"
++
++	"github.com/pcm720/udpfsd/internal/fs/oplart"
++	"github.com/pcm720/udpfsd/udpfs"
++)
++
++func TestOPLArtFolder(t *testing.T) {
++	art := t.TempDir()
++	img := image.NewRGBA(image.Rect(0, 0, 20, 30))
++	for i := range img.Pix {
++		img.Pix[i] = 0x80
++	}
++	img.Set(0, 0, color.RGBA{255, 0, 0, 255})
++	var jb bytes.Buffer
++	jpeg.Encode(&jb, img, nil)
++	mkfile(t, filepath.Join(art, "SLUS_200.66_COV.jpg"), jb.String())
++	want, _, err := oplart.New(art).Get("SLUS_200.66_COV.png")
++	if err != nil {
++		t.Fatal(err)
++	}
++	b, err := NewBackend(WithMount("ART", art), WithOPLArt(art), WithReadOnly())
++	if err != nil {
++		t.Fatal(err)
++	}
++	const p = "/.oplart/SLUS_200.66_COV.png"
++	if st, err := b.Getstat(p); err != nil || int(st.Size) != len(want) || st.Mode != udpfs.FIO_S_IFREG {
++		t.Fatalf("getstat %+v %v, want size %d", st, err, len(want))
++	}
++	h, st, err := b.Open(p, os.O_RDONLY, false)
++	if err != nil || int(st.Size) != len(want) {
++		t.Fatalf("open %d %v", st.Size, err)
++	}
++	n, got, err := b.Read(h, 128*1024, make([]byte, 128*1024))
++	if err != nil || int(n) != len(want) || !bytes.Equal(got, want) {
++		t.Fatalf("read %d %v", n, err)
++	}
++	if _, f, err := image.Decode(bytes.NewReader(got)); err != nil || f != "png" {
++		t.Fatalf("served %s %v", f, err)
++	}
++	if st, err := b.Getstat(p); err != nil || int(st.Size) != len(want) {
++		t.Fatalf("getstat while open %d %v", st.Size, err)
++	}
++	b.Close(h)
++
++	h, _, err = b.Open("/.lz4f"+p, os.O_RDONLY, false)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := readFrames(t, b, h, 4096); !bytes.Equal(got, want) {
++		t.Fatal("framed art differs")
++	}
++	b.Close(h)
++
++	for _, bad := range []string{"/.oplart/SLUS_200.66_LAB.png", "/.oplart/SLUS_200.66_COV.jpg", "/.oplart/x/SLUS_200.66_COV.png", "/.oplart/../ART/SLUS_200.66_COV.jpg"} {
++		if _, _, err := b.Open(bad, os.O_RDONLY, false); !os.IsNotExist(err) {
++			t.Fatalf("%s: %v", bad, err)
++		}
++		if _, err := b.Getstat(bad); err == nil {
++			t.Fatalf("%s: getstat succeeded", bad)
++		}
++	}
++	if _, _, err := b.Open(p, os.O_RDWR, false); !os.IsPermission(err) {
++		t.Fatalf("art opened for writing: %v", err)
++	}
++	if got := listDir(t, b, "/.oplart"); len(got) != 0 {
++		t.Fatalf("/.oplart lists %v", got)
++	}
++	if st, err := b.Getstat("/.oplart"); err != nil || st.Mode != udpfs.FIO_S_IFDIR {
++		t.Fatalf("getstat folder %+v %v", st, err)
++	}
++	if names := listDir(t, b, "/"); slices.Contains(names, oplart.PathPrefix) || !eq(names, []string{"ART"}) {
++		t.Fatalf("root lists %v", names)
++	}
++
++	// Without an art folder nothing is found.
++	nb, err := NewBackend(WithMount("ART", art), WithReadOnly())
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, _, err := nb.Open(p, os.O_RDONLY, false); !os.IsNotExist(err) {
++		t.Fatalf("art without WithOPLArt: %v", err)
++	}
++}
+diff --git a/internal/fs/virtual.go b/internal/fs/virtual.go
+index f7ae6ad..32bfc9e 100644
+--- a/internal/fs/virtual.go
++++ b/internal/fs/virtual.go
+@@ -10,6 +10,7 @@ import (
+ 
+ 	"github.com/pcm720/udpfsd/internal/fs/compression"
+ 	"github.com/pcm720/udpfsd/internal/fs/interfaces"
++	"github.com/pcm720/udpfsd/internal/fs/oplart"
+ 	"github.com/pcm720/udpfsd/internal/fs/split"
+ 	"github.com/pcm720/udpfsd/internal/fs/vcd"
+ 	"github.com/pcm720/udpfsd/internal/fs/wire"
+@@ -58,6 +59,14 @@ func (s *Backend) openWire(inner string, flag int, isDir bool) (int32, udpfs.Sta
+ // openReadOnly opens a client path for reading: a real file, or an image
+ // the server presents virtually (see openVirtual).
+ func (s *Backend) openReadOnly(clientPath string) (interfaces.FileObject, error) {
++	if rest, ok := cutVirtualPrefix(clientPath, oplart.PathPrefix); ok {
++		if name, ok := artName(rest); ok && name != "" {
++			if f, err := s.oplArt().Open(name); err == nil {
++				return f, nil
++			}
++		}
++		return nil, os.ErrNotExist
++	}
+ 	fullPath, ok := s.resolvePath(clientPath)
+ 	if !ok || fullPath == "" || fullPath == virtualRoot {
+ 		return nil, os.ErrNotExist
+diff --git a/internal/prep/scan.go b/internal/prep/scan.go
+index f6f335c..5b99687 100644
+--- a/internal/prep/scan.go
++++ b/internal/prep/scan.go
+@@ -80,8 +80,9 @@ var renameFile = os.Rename // test hook
+ 
+ // Features is what this server offers beyond plain UDPFS, as manifest
+ // header tokens. wire=lz4f: every file is also served as LZ4 frames under
+-// /.lz4f (internal/fs/wire).
+-const Features = " wire=lz4f"
++// /.lz4f (internal/fs/wire). extras=1: /.oplart serves the art folder as
++// OPL reads it (internal/fs/oplart).
++const Features = " wire=lz4f extras=1"
+ 
+ // Begin replaces the manifest with an empty "scanning=1" one, so the
+ // console never acts on a previous run's list while a scan runs.

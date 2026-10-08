@@ -9,12 +9,14 @@
 #include "app_state.h"
 #include "hdd_partitions.h"
 #include "hdl_header.h"
+#include "extras_install.h"
 #include "hdl_install.h"
 #include "manifest.h"
 #include "opl_dependency.h"
 #include "opl_launcher_payload.h"
 #include "pfs_channel.h"
 #include "server_assets.h"
+#include "source_wire.h"
 #include "source_udpfs.h"
 #include "source_zso.h"
 #include "transaction.h"
@@ -49,12 +51,15 @@ int game_source_is_server(const char *path) { return !strncmp(path, "udpfs:", 6)
 static GameSource g_src, g_inner, g_fallback;
 static udpfs_src_t g_usrc, g_ufb;
 static zso_src_t g_zso;
+static wire_src_t g_wire;
 
 /* Any fileXio device (udpfs:, mass0:). ZSO is decompressed here: a raw
  * .zso (USB), and udpfsd's virtual "<x>.zso.iso" too - the raw .zso next
  * to it is read instead, so only the compressed bytes cross the network.
  * Same logical ISO bytes either way (CRC, resume, verify unchanged). */
-static void source_init_for(const char *path, int zso_on_ps2) {
+static void source_init_for(const char *path, int mode) {
+  int zso_on_ps2 = mode >= 1;
+  if (mode == 2) { source_wire_init(&g_src, &g_wire); return; }
   int virt = zso_on_ps2 && game_source_is_server(path) && source_classify(path) == SRC_TYPE_ZSO;
   if (source_is_raw_zso(path) || virt) {
     source_udpfs_init(&g_inner, &g_usrc);
@@ -72,6 +77,10 @@ static void source_init_for(const char *path, int zso_on_ps2) {
 /* Open with PS2-side ZSO decompression; if that fails (a ZSO variant this
  * reader does not support), fall back to udpfsd's decompression. */
 static inst_err_t game_source_open(const char *path) {
+  if (game_source_is_server(path) && g_manifest_loaded && g_manifest.wire_lz4f && !source_is_raw_zso(path)) {
+    source_init_for(path, 2);
+    if (source_open(&g_src, path) == ERR_OK) return ERR_OK;
+  }
   source_init_for(path, 1);
   inst_err_t e = source_open(&g_src, path);
   if (e && game_source_is_server(path) && source_classify(path) == SRC_TYPE_ZSO) {
@@ -164,6 +173,24 @@ int game_data_partition(const char *hidden, char out[APA_NAME_MAX + 1]) {
   return -1;
 }
 
+static int psx1_launcher_matches(const char *visible) {
+  payload_t expected;
+  if (payload_opl_launcher(&expected, 0) != ERR_OK)
+    return 0;
+  if (pfs_mount(PFS_WORK, visible, FIO_MT_RDONLY) < 0) {
+    payload_release(&expected);
+    return 0;
+  }
+  void *bytes = NULL;
+  int n = file_load(PFS_WORK "EXECUTE.KELF", &bytes, expected.size);
+  int matches = n > 0 && (uint32_t)n == expected.size &&
+                !memcmp(bytes, expected.data, expected.size);
+  free(bytes);
+  pfs_umount(PFS_WORK);
+  payload_release(&expected);
+  return matches;
+}
+
 void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
   memset(f, 0, sizeof(*f));
   hdl_header_info_t h;
@@ -186,10 +213,8 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
     f->resumable = tx_resumable(&j) && f->journal_matches_partition && !f->data_visible;
     f->resume_bytes = f->resumable ? j.bytes_written : 0;
   }
-  /* In the XMB: the game partition itself under its PP. name with a boot
-   * header (PFS-BatchKit-Manager's layout, ours since 2.0), or an older
-   * release's PFS channel next to the hidden game, which "Rebuild XMB
-   * channel" converts. */
+  /* Existing games may still use a visible HDL PATINFO entry. New
+   * installs use a PFS launch/resource channel beside hidden HDL data. */
   uint16_t vtype = 0;
   f->legacy_channel = !f->data_visible && hdd_exists(visible) > 0 &&
                       hdd_stat(visible, &vtype, NULL, NULL) == 0 &&
@@ -198,8 +223,12 @@ void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f) {
   /* Shown game: its boot header. Cover partition (PFS PP.X next to the
    * hidden game, PFS-BatchKit-Manager's "resource partition"): its files
    * and header. */
-  f->visible_valid = f->data_visible ? game_header_check(data) == ERR_OK
+  f->visible_valid = f->data_visible ? g_app.settings.console == CONSOLE_PSX2 && game_header_check(data) == ERR_OK
                                      : f->legacy_channel && channel_quick_check(visible) == ERR_OK;
+  if (f->legacy_channel)
+    f->cover_missing = game_cover_status(visible) != GAME_COVER_READY;
+  if (f->visible_valid && !f->data_visible && g_app.settings.console == CONSOLE_PSX1)
+    f->visible_valid = psx1_launcher_matches(visible);
 }
 
 static int count_journals(void) {
@@ -287,7 +316,7 @@ size_t game_pair_details(const char *visible, const char *hidden, char *out, siz
                     "  %s  stat %d  type 0x%04x  boot header %s\n",
                     visible,
                     f.data_visible     ? "shown (game partition, PATINFO boot)"
-                    : f.legacy_channel ? "OLD PFS channel: Rebuild converts it"
+                    : f.legacy_channel ? "PFS launch channel"
                                        : "not shown (hidden game)",
                     vst, vtype,
                     !f.data_visible ? "-" : f.visible_valid ? "valid" : "INVALID");
@@ -433,72 +462,35 @@ static void finish_report(install_report_t *rep, const char *visible,
  * partition's CFG folder, where OPL reads it when OPL-Launcher boots the
  * game - only if OPL has none yet. Best effort: written as .tmp, read
  * back, renamed. Returns "copied" | "kept" | "failed" | "none". */
-static const char *copy_opl_cfg(const char *boot_id) {
-  const manifest_entry_t *me = g_manifest_loaded ? manifest_find_id(&g_manifest, boot_id) : NULL;
-  if (g_app.net != NETWORK_READY || !me || !me->cfg[0])
+static const char *install_ps2_extras(const char *boot_id, const char *source_path, const char **desc) {
+  static char text[220];
+  extras_opts_t o = {0, 0};
+  extras_report_t r;
+  char root[16];
+  const char *colon = strchr(source_path, ':');
+  snprintf(root, sizeof(root), "%.*s:", colon ? (int)(colon - source_path) : 5, source_path);
+  extras_install_ps2_from(root, boot_id, &o, &r);
+  *desc = NULL;
+  if (!r.found)
     return "none";
-  opl_runtime_t opl;
-  int rc;
-  if (opl_check_runtime(&opl, &rc) != ERR_OK)
+  snprintf(text, sizeof(text), "%.80s%s%.80s%s", r.installed ? r.what : "already there",
+           r.failed ? "; not all: " : "", r.failed ? r.note : "",
+           r.kept && r.installed ? " (some kept)" : "");
+  *desc = text;
+  if (r.failed && !r.installed)
     return "failed";
-  char src[SOURCE_PATH_MAX];
-  snprintf(src, sizeof(src), "udpfs:%s", me->cfg);
-  void *data = NULL;
-  int n = file_load(src, &data, 64 * 1024);
-  if (n <= 0) {
-    free(data);
-    return "failed";
-  }
-  const char *result = "failed";
-  if (pfs_mount(PFS_WORK, opl.partition, FIO_MT_RDWR) == 0) {
-    const char *dir = opl_cfg_dir(opl.partition); /* "pfs1:CFG/" or "pfs1:OPL/CFG/" */
-    char dst[64], tmp[72], d[32];
-    snprintf(dst, sizeof(dst), "%s%s.cfg", dir, boot_id);
-    snprintf(tmp, sizeof(tmp), "%s.tmp", dst);
-    switch (opl_cfg_decide(1, file_size(dst) >= 0)) {
-    case OPL_CFG_KEEP:
-      result = "kept";
-      break;
-    case OPL_CFG_COPY: {
-      if (opl.partition[0] != '+')
-        fileXioMkdir(PFS_WORK "OPL", 0777);
-      snprintf(d, sizeof(d), "%.*s", (int)strlen(dir) - 1, dir);
-      fileXioMkdir(d, 0777);
-      void *back = NULL;
-      fileXioRemove(tmp);
-      if (file_write_all(tmp, data, (uint32_t)n) == 0 &&
-          file_load(tmp, &back, (uint32_t)n + 1) == n && !memcmp(back, data, (size_t)n) &&
-          fileXioRename(tmp, dst) >= 0)
-        result = "copied";
-      else
-        fileXioRemove(tmp);
-      free(back);
-      break;
-    }
-    case OPL_CFG_NONE:
-      result = "none";
-      break;
-    }
-    pfs_umount(PFS_WORK);
-  }
-  free(data);
-  return result;
+  return r.installed ? "copied" : "kept";
 }
 
-/* Show a verified game in the XMB the way PFS-BatchKit-Manager does (its
- * games load together on a DESR; separate PFS channels froze the XMB
- * once two existed): the game's own HDL partition gets the boot header
- * (system.cnf "BOOT2 = PATINFO", icon.sys, icon, OPL-Launcher as boot
- * KELF) and is renamed __.X -> PP.X. The header is written and checked
- * while the game is still hidden; an older release's PFS channel PP.X is
- * removed only then. The journal is at TX_HDL_VERIFIED and saved; `kelf`
- * was loaded by the caller and is released here. */
+/* Publish a generation-specific PFS launcher and per-game res resources
+ * beside verified hidden HDL data. Migration never recopies game data. */
 static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
                           const install_ui_t *ui, install_report_t *rep) {
   str_copy(j->launcher_source, !strcmp(kelf->origin, "server") ? "server" : "embedded",
            sizeof(j->launcher_source));
   stage(ui, rep, STAGE_CREATING_CHANNEL);
-  rep->jacket = NULL; /* the XMB shows the header's icon for these games */
+  rep->jacket = NULL;
+  void *jacket_owned[2] = {NULL, NULL};
   char data[APA_NAME_MAX + 1], part_id[PART_ID_LEN + 1] = "";
   boot_id_to_part_id(j->startup_id, part_id);
   int rc = 0, where = game_data_partition(j->hidden_partition, data);
@@ -506,30 +498,48 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
   inst_err_t e;
   if (where < 0)
     cr = (channel_result_t){ERR_HDL_VERIFY, 0, "game partition missing"};
-  if (!cr.err && (e = game_header_write(data, title, part_id, kelf->data, kelf->size, &rc)))
-    cr = (channel_result_t){e, rc, "boot header (PATINFO, icon, OPL-Launcher)"};
-  if (!cr.err && (e = advance(j, TX_CHANNEL_CREATED)))
-    cr = (channel_result_t){e, 0, "journal"};
-  if (!cr.err && where == 0) {
-    uint16_t t = 0;
-    if (hdd_exists(j->visible_partition) > 0) {
-      /* Only an older release's PFS channel may stand in the way. */
-      if (hdd_stat(j->visible_partition, &t, NULL, NULL) == 0 && t == APA_TYPE_PFS_ID) {
-        pfs_umount(PFS_WORK);
-        if ((e = hdd_remove_exact(j->visible_partition, &rc)))
-          cr = (channel_result_t){e, rc, "remove the old PFS channel"};
+  if (!cr.err && g_app.settings.console == CONSOLE_UNKNOWN)
+    cr = (channel_result_t){ERR_CONSOLE_UNKNOWN, 0, "select Console generation in Settings"};
+  if (!cr.err) {
+    /* Both generations use PFS for their covers. A failed migration
+     * leaves verified data hidden for repair. */
+    uint16_t type = 0;
+    int exists = where == 0 ? hdd_exists(j->visible_partition) : 0;
+    if (exists < 0)
+      cr = (channel_result_t){ERR_HDD_MISSING, exists, "inspect PFS channel"};
+    else if (exists && (hdd_stat(j->visible_partition, &type, NULL, NULL) < 0 || type != APA_TYPE_PFS_ID))
+      cr = (channel_result_t){ERR_PARTITION_EXISTS, type, "PP. partition is not a PFS channel"};
+    if (!cr.err && !exists && (e = hdd_space_check(CHANNEL_SIZE_MB)))
+      cr = (channel_result_t){e, 0, "space for PFS launch / cover channel"};
+    char info[1024], today[9];
+    jacket_pair_t jackets;
+    xmb_game_info_t game_info;
+    int have_info = 0;
+    payload_default_jackets(&jackets);
+    if (!cr.err) {
+      have_info = game_load_info(j->startup_id, &game_info);
+      rep->jacket = game_load_jackets(j->startup_id, &jackets, jacket_owned);
+    }
+    install_date(today);
+    uint32_t len = (uint32_t)xmb_game_info_sys_ex(info, sizeof(info), title,
+                                                j->startup_id, have_info ? &game_info : NULL, today);
+    channel_content_t content = {kelf->data, kelf->size, info, len, jackets, title, part_id};
+    if (!cr.err && where == 1) {
+      fileXioUmount("hdl0:");
+      if ((e = hdd_rename_game(data, j->hidden_partition, &rc)))
+        cr = (channel_result_t){e, rc, "hide game before creating PFS launch channel"};
+    }
+    if (!cr.err) {
+      if (exists) {
+        cr = channel_populate(j->visible_partition, &content);
+        if (!cr.err) cr = channel_verify(j->visible_partition, &content);
       } else {
-        cr = (channel_result_t){ERR_PARTITION_EXISTS, t, "a PP. partition of another kind"};
+        cr = channel_create(j->visible_partition, &content);
       }
     }
-    fileXioUmount("hdl0:"); /* an open game partition cannot be renamed (-EBUSY) */
-    if (!cr.err && (e = hdd_rename_game(data, j->visible_partition, &rc)))
-      cr = (channel_result_t){e, rc, "show in the XMB (rename __. to PP.)"};
-    if (!cr.err)
-      str_copy(data, j->visible_partition, sizeof(data));
+    if (!cr.err && (e = advance(j, TX_CHANNEL_CREATED)))
+      cr = (channel_result_t){e, 0, "journal"};
   }
-  if (!cr.err && (e = game_header_verify(data, title, part_id, kelf->data, kelf->size, &rc)))
-    cr = (channel_result_t){e, rc, "boot header read-back"};
   if (!cr.err && (e = advance(j, TX_CHANNEL_VERIFIED)))
     cr = (channel_result_t){e, 0, "journal"};
   if (!cr.err && (e = advance(j, TX_COMPLETE)))
@@ -543,10 +553,12 @@ static void build_channel(tx_journal_t *j, const char *title, payload_t *kelf,
   } else {
     rep->err = ERR_OK;
     /* The game is complete; its OPL settings are a best-effort extra. */
-    rep->opl_cfg = copy_opl_cfg(j->startup_id);
+    rep->opl_cfg = install_ps2_extras(j->startup_id, j->source_path, &rep->extras);
     str_copy(j->opl_cfg, rep->opl_cfg, sizeof(j->opl_cfg));
     persist(j);
   }
+  free(jacket_owned[0]);
+  free(jacket_owned[1]);
   payload_release(kelf);
 }
 
@@ -612,15 +624,21 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
     rep->err = ERR_PARTITION_EXISTS;
     goto out_src;
   }
-  /* 7. free space: the data partitions (a resume already holds them).
-   * The XMB entry is the game partition itself: no extra partition. */
+  /* 7. Data allocation plus the automatic 128 MiB PFS channel.
+   * A resume already holds the HDL data allocation. */
   uint32_t total_mb, free_mb, max_mb;
   if (hdd_space_mb(&total_mb, &free_mb, &max_mb) < 0) {
     rep->err = ERR_HDD_MISSING;
     goto out_src;
   }
   /* HDD free space and the 128 GiB limit for games and data. */
-  if (!p->resume && (rep->err = hdd_space_check(p->alloc.total_mb)))
+  if (g_app.settings.console == CONSOLE_UNKNOWN) {
+    rep->err = ERR_CONSOLE_UNKNOWN;
+    rep->detail = "select DESR generation in Network / Console Settings";
+    goto out_src;
+  }
+  uint32_t required_mb = (p->resume ? 0 : p->alloc.total_mb) + CHANNEL_SIZE_MB;
+  if (required_mb && (rep->err = hdd_space_check(required_mb)))
     goto out_src;
   hdl_alloc_t check;
   if (hdl_plan_alloc((uint64_t)p->iso.sectors * ISO_SECTOR, max_mb, &check) ||
@@ -871,9 +889,7 @@ void game_create_channel(const char *hidden, const install_ui_t *ui,
     goto out;
   }
 
-  /* A title the user set with Rename is kept: from the boot header of a
-   * shown game, or the info.sys of an older release's PFS channel (which
-   * build_channel replaces). */
+  /* Keep a renamed title from the legacy PATINFO header or PFS info.sys. */
   char title[64] = "";
   if (f.data_visible)
     game_header_get_title(data, title, sizeof(title));
@@ -913,6 +929,11 @@ inst_err_t game_remove_channel(const char *visible, int *rc_out) {
  * failure removes the new partition and shows the game again. */
 void game_add_cover(const char *hidden, const install_ui_t *ui, install_report_t *rep) {
   memset(rep, 0, sizeof(*rep));
+  if (g_app.settings.console != CONSOLE_PSX2) {
+    rep->err = g_app.settings.console == CONSOLE_UNKNOWN ? ERR_CONSOLE_UNKNOWN : ERR_INVALID_ARG;
+    rep->detail = "PSX1 uses a PFS launch channel; use Rebuild XMB channel";
+    return;
+  }
   char visible[APA_NAME_MAX + 1], part_id[PART_ID_LEN + 1] = "";
   payload_t kelf;
   memset(&kelf, 0, sizeof(kelf));
@@ -991,8 +1012,19 @@ out:
 inst_err_t game_set_title(const char *hidden, const char *title, int *rc_out) {
   char data[APA_NAME_MAX + 1], clean[64], part_id[PART_ID_LEN + 1];
   *rc_out = 0;
-  if (game_data_partition(hidden, data) != 1)
-    return ERR_INVALID_ARG; /* only a shown game has a title in the XMB */
+  int where = game_data_partition(hidden, data);
+  if (where == 0) {
+    char visible[APA_NAME_MAX + 1];
+    uint16_t type = 0;
+    if (partition_partner(hidden, visible) < 0 ||
+        hdd_stat(visible, &type, NULL, NULL) < 0 || type != APA_TYPE_PFS_ID)
+      return ERR_INVALID_ARG;
+    channel_result_t cr = channel_set_title(visible, title);
+    *rc_out = cr.rc;
+    return cr.err;
+  }
+  if (where != 1 || g_app.settings.console != CONSOLE_PSX2)
+    return ERR_INVALID_ARG;
   xmb_sanitize_value(title, clean, sizeof(clean));
   if (!clean[0] || strlen(hidden) < 3 + PART_ID_LEN)
     return ERR_INVALID_ARG;
@@ -1035,4 +1067,61 @@ inst_err_t game_delete_pair(const char *visible, const char *hidden,
       hdd_exists(any) == 0 && hdd_exists(partner) == 0)
     tx_remove(APP_STATE_DIR, any);
   return ERR_OK;
+}
+
+/* Inspect both on-disk jackets, independently of launch/header validity. */
+game_cover_status_t game_cover_status(const char *partition) {
+  if (pfs_mount(PFS_WORK, partition, FIO_MT_RDONLY) < 0) return GAME_COVER_UNREADABLE;
+  void *large = NULL, *small = NULL;
+  int a = file_load(PFS_WORK "res/jkt_001.png", &large, JACKET_MAX);
+  int b = file_load(PFS_WORK "res/jkt_002.png", &small, JACKET_MAX);
+  game_cover_status_t status = GAME_COVER_READY;
+  if (a <= 0 || b <= 0) status = GAME_COVER_MISSING;
+  else if (!png_is_size(large, (uint32_t)a, JKT_LARGE_W, JKT_LARGE_H) ||
+           !png_is_size(small, (uint32_t)b, JKT_SMALL_W, JKT_SMALL_H)) status = GAME_COVER_INVALID;
+  else {
+    jacket_pair_t defaults;
+    payload_default_jackets(&defaults);
+    if (((uint32_t)a == defaults.large_size && !memcmp(large, defaults.large, (size_t)a)) ||
+        ((uint32_t)b == defaults.small_size && !memcmp(small, defaults.small, (size_t)b)))
+      status = GAME_COVER_DEFAULT;
+  }
+  free(large); free(small); pfs_umount(PFS_WORK);
+  return status;
+}
+
+void game_refresh_resources(const char *visible, install_report_t *rep) {
+  memset(rep, 0, sizeof(*rep));
+  char id[16], title[64], today[9];
+  uint16_t type = 0;
+  if (part_id_from_partition(visible, id) < 0 || hdd_stat(visible, &type, NULL, NULL) < 0 || type != APA_TYPE_PFS_ID) {
+    rep->err = ERR_INVALID_ARG; rep->detail = "a PFS game channel is required"; return;
+  }
+  if (g_app.net != NETWORK_READY || !g_manifest_loaded) { rep->err = ERR_NETWORK; return; }
+  jacket_pair_t jackets; void *owned[2] = {NULL, NULL};
+  rep->jacket = game_load_jackets(id, &jackets, owned);
+  if (strcmp(rep->jacket, "server")) {
+    rep->err = ERR_SOURCE_OPEN;
+    rep->detail = "matching cover is not ready on the server; add <GAME-ID>_COV.png/jpg to ART, restart the server and retry";
+    goto out;
+  }
+  if (channel_get_title(visible, title, sizeof(title)) < 0) str_copy(title, visible + 3 + PART_ID_LEN + 2, sizeof(title));
+  xmb_game_info_t gi;
+  int have_info = game_load_info(id, &gi);
+  char info[1024];
+  install_date(today);
+  uint32_t len = have_info ? (uint32_t)xmb_game_info_sys_ex(info, sizeof(info), title, id, &gi, today) : 0;
+  int rc = pfs_mount(PFS_WORK, visible, FIO_MT_RDWR);
+  if (rc < 0) { rep->err = ERR_PFS_MOUNT; rep->rc = rc; goto out; }
+  rc = fileXioMkdir(PFS_WORK "res", 0777);
+  if (rc < 0 && rc != -17) { rep->err = ERR_XMB_RESOURCE_WRITE; rep->rc = rc; pfs_umount(PFS_WORK); goto out; }
+  if ((rc = extras_write_verified(PFS_WORK "res/jkt_001.png", jackets.large, jackets.large_size)) < 0 ||
+      (rc = extras_write_verified(PFS_WORK "res/jkt_002.png", jackets.small, jackets.small_size)) < 0 ||
+      (len && (rc = extras_write_verified(PFS_WORK "res/info.sys", info, len)) < 0)) {
+    rep->err = ERR_XMB_RESOURCE_WRITE; rep->rc = rc;
+  }
+  pfs_umount(PFS_WORK);
+  if (!rep->err && game_cover_status(visible) != GAME_COVER_READY) rep->err = ERR_XMB_VERIFY;
+out:
+  free(owned[0]); free(owned[1]);
 }

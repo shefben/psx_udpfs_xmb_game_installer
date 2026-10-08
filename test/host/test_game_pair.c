@@ -172,3 +172,14 @@ TEST(cover_partition_is_complete_and_labelled) {
   f.visible_valid = 0; /* broken boot header: repair first */
   CHECK(pair_can_add_cover(&f) == 0);
 }
+
+TEST(complete_channel_without_real_cover_is_flagged) {
+  pair_facts_t f = {0};
+  f.hidden_exists = f.hidden_header_valid = f.has_journal = 1;
+  f.journal_verified = f.journal_matches_partition = f.visible_exists = f.visible_valid = 1;
+  f.legacy_channel = 1; f.cover_missing = 1;
+  CHECK_EQ_INT(pair_classify(&f), PAIR_COMPLETE);
+  CHECK(strstr(pair_label(&f), "IMAGE NEEDED") != NULL);
+  f.cover_missing = 0;
+  CHECK_STR(pair_label(&f), "installed, with cover");
+}

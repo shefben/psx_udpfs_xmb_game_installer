@@ -18,6 +18,7 @@
 #define VCD_HEADER_SIZE 0x100000u /* cue2pops header */
 #define VCD_RAW_SECTOR 2352u
 #define POPS_IMAGE "IMAGE0.VCD"
+#define POPS_DISCS "DISCS.TXT"
 #define POPS_KELF "POPSTARTER.KELF"
 #define POPS_ELF "POPS.ELF"
 #define POPS_IOPRP "IOPRP252.IMG"
@@ -36,10 +37,22 @@ typedef struct {
  * (no SYSTEM.CNF or no valid game ID), ERR_SOURCE_READ. */
 inst_err_t vcd_probe(GameSource *src, vcd_info_t *out);
 
-/* Partition size for a VCD of `vcd_bytes` (+ 8 MiB for the KELF and
- * res/): 128M, 256M, 512M, 1G or 2G. Returns MiB (and the APA size
- * string), or -1 if too big. */
+/* Partition size for VCDs of `vcd_bytes` in all (+ 8 MiB for the KELF
+ * and res/): 128M, 256M, 512M, 1G, 2G or 4G (multi-disc games). Returns
+ * MiB (and the APA size string), or -1 if too big. */
 int pops_partition_mb(uint64_t vcd_bytes, char *size_str, size_t sz);
+
+/* Multi-disc games: every disc in the one partition as IMAGE0..3.VCD,
+ * listed in DISCS.TXT (one name per line), which POPStarter reads to
+ * change discs (Select+L2+R2 with Triangle, Up/Right/Down/Left, Square). */
+#define POPS_MAX_DISCS 4
+const char *pops_image_name(int disc); /* 0 -> "IMAGE0.VCD" */
+/* DISCS.TXT for n (2..4) discs. Length, or -1. */
+int pops_discs_txt(int n, char *out, size_t outsz);
+/* Disc number (1..4) from a file name ("Game (Disc 2).VCD", "Game CD2.VCD"),
+ * 0 if it has none. stem: the name without that word and the extension,
+ * equal for every disc of one game. */
+int pops_disc_number(const char *name, char *stem, size_t stemsz);
 
 /* VMC folder under __common/POPS/: the partition name without "PP.". */
 void pops_vmc_dir(const char *partition, char *out, size_t outsz);

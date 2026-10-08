@@ -72,6 +72,7 @@ typedef struct {
   int resume_checked;    /* resume: checkpoint segments read back */
   /* OPL per-game cfg from the server: "copied" | "kept" | "failed" |
    * "none"; NULL when no channel was built. */
+  const char *extras;
   const char *opl_cfg;
   /* Channel cover: "server" (udpfsd's prepared jacket or an image next
    * to the game) | "missing" (the server listed a cover that could not
@@ -116,11 +117,17 @@ int game_data_partition(const char *hidden, char out[APA_NAME_MAX + 1]);
 
 /* Give a shown game an XMB cover (experimental): PFS-BatchKit-Manager's
  * resource-partition layout, PFS PP.X with res/ + the game hidden as
- * __.X. Rebuild XMB channel undoes it. */
+ * __.X. Rebuild XMB channel refreshes its artwork and launcher. */
 void game_add_cover(const char *hidden, const install_ui_t *ui, install_report_t *rep);
 
 /* Change the XMB title of a shown game (its boot header's icon.sys). */
 inst_err_t game_set_title(const char *hidden, const char *title, int *rc_out);
+
+typedef enum { GAME_COVER_READY, GAME_COVER_MISSING, GAME_COVER_INVALID,
+               GAME_COVER_DEFAULT, GAME_COVER_UNREADABLE } game_cover_status_t;
+game_cover_status_t game_cover_status(const char *partition);
+/* Update only per-game res jackets and available metadata, never launchers/data. */
+void game_refresh_resources(const char *visible, install_report_t *rep);
 
 /* Gather on-disk facts for a pair (exists/valid/journal). */
 void game_pair_facts(const char *visible, const char *hidden, pair_facts_t *f);
@@ -141,10 +148,9 @@ size_t game_pair_details(const char *visible, const char *hidden, char *out, siz
 void game_install(game_plan_t *p, int allow_without_opl,
                   const install_ui_t *ui, install_report_t *rep);
 
-/* Show a verified game in the XMB, or repair/convert its entry: writes
- * the boot header into the game partition (the game data and HDL header
- * stay untouched), removes an older release's PFS channel and renames
- * __.X to PP.X. */
+/* Create/repair the PFS launch/resource partition beside hidden HDL game
+ * data. Fetches server jackets and game info when available; otherwise
+ * writes defaults. Existing PATINFO data is hidden without recopying it. */
 void game_create_channel(const char *hidden, const install_ui_t *ui,
                          install_report_t *rep);
 

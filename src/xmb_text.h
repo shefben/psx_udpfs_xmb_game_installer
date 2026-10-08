@@ -37,6 +37,7 @@ typedef struct {
   char developer[64];
   char publisher[64];
   char genre[32];
+  char description[256];
 } xmb_game_info_t;
 
 /* Parse an info text; unknown keys are ignored, a release date that is

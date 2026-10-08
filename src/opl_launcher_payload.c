@@ -6,11 +6,16 @@
 #include "manifest.h"
 #include "opl_launcher_payload.h"
 #include "server_assets.h"
+#include "app_state.h"
 
 #define KELF_MAX (16 * 1024 * 1024)
 
 #if !defined(VARIANT_APP) && !defined(VARIANT_BOOTSTRAP) && !defined(VARIANT_DEV)
 #error "build with -DVARIANT_APP, -DVARIANT_BOOTSTRAP or -DVARIANT_DEV"
+#endif
+#ifdef HAVE_EMBEDDED_PSX1_LAUNCHER
+extern unsigned char psx1_launcher_kelf[];
+extern unsigned int size_psx1_launcher_kelf;
 #endif
 #if (defined(VARIANT_APP) || defined(VARIANT_BOOTSTRAP)) && !defined(HAVE_EMBEDDED_OPL_LAUNCHER)
 #error "release variants must embed the signed OPL-Launcher KELF"
@@ -105,6 +110,16 @@ __attribute__((unused)) static int try_file(payload_t *out, const char *path) {
 
 inst_err_t payload_opl_launcher(payload_t *out, int udpfs_ok) {
   memset(out, 0, sizeof(*out));
+  if (g_app.settings.console == CONSOLE_UNKNOWN)
+    return ERR_CONSOLE_UNKNOWN;
+  if (g_app.settings.console == CONSOLE_PSX1) {
+    /* A generic server KELF has no PSX1 wrapper provenance. */
+#ifdef HAVE_EMBEDDED_PSX1_LAUNCHER
+    if (use_embedded(out, psx1_launcher_kelf, size_psx1_launcher_kelf))
+      return ERR_OK;
+#endif
+    return ERR_KELF_MISSING;
+  }
   /* udpfsd's copy (udpfsd.cfg opl_launcher), only when its bytes match
    * the size and SHA-256 the manifest announced; else the embedded one. */
   if (udpfs_ok && g_manifest_loaded && g_manifest.has_launcher) {

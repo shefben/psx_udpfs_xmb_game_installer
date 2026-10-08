@@ -25,6 +25,7 @@ REF := $(ROOT)/reference
 
 OPL_ELF := $(BUILD)/opl-launcher/OPL-Launcher.elf
 OPL_KELF := $(BUILD)/kelf/opl-launcher-EXECUTE.KELF
+PSX1_KELF := $(BUILD)/kelf/opl-launcher-PSX1.KELF
 APP_ELF := $(BUILD)/app/desr-udpfs-installer-app.elf
 APP_KELF := $(BUILD)/kelf/installer-EXECUTE.KELF
 LAUNCHER_ELF := $(BUILD)/launcher/app-launcher.elf
@@ -84,6 +85,11 @@ references:
 test:
 	$(MAKE) -C test/host
 	python3 test/host/test_driver.py
+	python3 test/host/test_iop_boot.py
+	python3 test/host/test_channel_layout.py
+	python3 test/host/test_extras_writes.py
+	python3 test/host/test_cover_refresh.py
+	python3 test/host/test_launcher_profile.py
 	bash test/host/test_kelf_sign.sh
 	python3 tools/verify-assets.py
 
@@ -189,6 +195,9 @@ $(OPL_ELF_STRIPPED): $(OPL_ELF)
 $(OPL_KELF): $(OPL_ELF_STRIPPED) tools/kelf-sign.sh $(BUILD)/.kelf-mode
 	bash tools/kelf-sign.sh $(OPL_ELF_STRIPPED) $@
 
+$(PSX1_KELF): $(OPL_ELF_STRIPPED) tools/build-psx1-kelf.py
+	python3 tools/build-psx1-kelf.py $< $@
+
 # ---- 2b. app launcher (launcher/main.c), signed -----------------------
 # The EXECUTE.KELF of every app channel: runs the ELF its APP.CFG names.
 $(LAUNCHER_ELF): $(BUILD)/.sdk-ok FORCE
@@ -208,10 +217,10 @@ define STRIP_IF_CHANGED
 	if cmp -s $(1).new $(1); then rm -f $(1).new; else mv -f $(1).new $(1); fi
 endef
 
-$(APP_ELF): $(OPL_KELF) $(LAUNCHER_KELF) $(EE_DEPS) FORCE
+$(APP_ELF): $(OPL_KELF) $(PSX1_KELF) $(LAUNCHER_KELF) $(EE_DEPS) FORCE
 	$(MAKE) -f Makefile.ee VARIANT=app BUILD=$(BUILD)/app EE_BIN=$(BUILD)/app/app-debug.elf \
 	  IRX_DIR=$(BUILD)/irx GITID_STAMP=$(BUILD)/.gitid \
-	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) app_launcher_kelf=$(LAUNCHER_KELF)"
+	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) psx1_launcher_kelf=$(PSX1_KELF) app_launcher_kelf=$(LAUNCHER_KELF)"
 	$(call STRIP_IF_CHANGED,$@,$(BUILD)/app/app-debug.elf)
 
 # ---- 4. signed app -----------------------------------------------------
@@ -219,11 +228,11 @@ $(APP_KELF): $(APP_ELF) tools/kelf-sign.sh $(BUILD)/.kelf-mode
 	bash tools/kelf-sign.sh $(APP_ELF) $@
 
 # ---- 5. bootstrap ELF (embeds 2 and 4) --------------------------------
-$(BOOT_ELF): $(OPL_KELF) $(LAUNCHER_KELF) $(APP_KELF) $(EE_DEPS) FORCE
+$(BOOT_ELF): $(OPL_KELF) $(PSX1_KELF) $(LAUNCHER_KELF) $(APP_KELF) $(EE_DEPS) FORCE
 	$(MAKE) -f Makefile.ee VARIANT=bootstrap BUILD=$(BUILD)/bootstrap \
 	  EE_BIN=$(BUILD)/bootstrap/bootstrap-debug.elf IRX_DIR=$(BUILD)/irx \
 	  GITID_STAMP=$(BUILD)/.gitid \
-	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) installer_kelf=$(APP_KELF) app_launcher_kelf=$(LAUNCHER_KELF)"
+	  EMBED_KELFS="opl_launcher_kelf=$(OPL_KELF) psx1_launcher_kelf=$(PSX1_KELF) installer_kelf=$(APP_KELF) app_launcher_kelf=$(LAUNCHER_KELF)"
 	$(call STRIP_IF_CHANGED,$@,$(BUILD)/bootstrap/bootstrap-debug.elf)
 
 # ---- POPStarter for PS1 games, shipped in udpfsd/POPS/: the pinned
@@ -242,16 +251,16 @@ $(POPS_KELF): tools/popstarter.env tools/fetch-popstarter.sh $(POPSTARTER_PIN)
 endif
 DIST_POPS := $(POPS_KELF)
 
-kelfs: $(OPL_KELF) $(LAUNCHER_KELF) $(APP_KELF)
+kelfs: $(OPL_KELF) $(PSX1_KELF) $(LAUNCHER_KELF) $(APP_KELF)
 
 # ---- dev (unsigned, nothing embedded) --------------------------------
-dev: $(EE_DEPS) FORCE
+dev: $(EE_DEPS) $(PSX1_KELF) FORCE
 	$(MAKE) -f Makefile.ee VARIANT=dev BUILD=$(BUILD)/dev EE_BIN=$(DEV_ELF) \
-	  IRX_DIR=$(BUILD)/irx GITID_STAMP=$(BUILD)/.gitid
+	  IRX_DIR=$(BUILD)/irx GITID_STAMP=$(BUILD)/.gitid EMBED_KELFS="psx1_launcher_kelf=$(PSX1_KELF)"
 
 # ---- 6. dist -----------------------------------------------------------
 DIST_FILES := desr-udpfs-installer-bootstrap.elf desr-udpfs-installer-app.elf \
-              installer-EXECUTE.KELF opl-launcher-EXECUTE.KELF
+              installer-EXECUTE.KELF opl-launcher-EXECUTE.KELF opl-launcher-PSX1.KELF
 
 dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	@# Empty dist/ rather than delete it: an Explorer window open on a
@@ -268,7 +277,7 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	done
 	mkdir -p $(DIST)/udpfsd-example $(DIST)/docs $(DIST)/udpfsd $(DIST)/udpfsd/POPS
 	$(if $(DIST_POPS),cp $(DIST_POPS) $(DIST)/udpfsd/POPS/)
-	cp $(BOOT_ELF) $(APP_ELF) $(APP_KELF) $(OPL_KELF) $(DIST)/
+	cp $(BOOT_ELF) $(APP_ELF) $(APP_KELF) $(OPL_KELF) $(PSX1_KELF) $(DIST)/
 	for b in $(UDPFSD_BIN); do \
 	  cmp -s "$$b" $(DIST)/udpfsd/$$(basename "$$b") || cp "$$b" $(DIST)/udpfsd/; \
 	done
@@ -281,7 +290,7 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF) $(BUILD)/.kelf-mode
 
 # ---- 7. end-user zip (README, PS2 bootstrap ELF, PC/udpfsd folder) -----
-VERSION := 3.1
+VERSION := 3.2
 PACKAGE := $(ROOT)/PSX-UDPFS-Installer_V$(VERSION).zip
 package: dist
 	bash tools/make-package.sh $(DIST) $(PACKAGE)

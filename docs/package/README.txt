@@ -1,12 +1,12 @@
-UDPFS Game Installer for the PSX DESR - v3.1 hotfix
+UDPFS Game Installer for the PSX DESR - v3.2
 ============================================
 
-Installs PS2 games (.iso / .zso) from your PC onto the PSX DESR's
+Installs PS2 games (.iso / .zso / .cso / .chd, or split .iso.001 sets) from your PC onto the PSX DESR's
 internal hard disk over the network. Every game gets its own icon in the
 XMB with its title and cover. OPL is installed on the DESR automatically
 if it is missing.
 
-Status: tested on the PC side; first tests on a DESR are in progress.
+Status: PC tests/builds pass; the user reports the 3.2 test package worked.
 Back up anything important on the DESR's hard disk before the first run.
 
 
@@ -41,8 +41,8 @@ PC SIDE
 1. Copy the PC\udpfsd folder anywhere on the PC, e.g. C:\udpfsd.
 
 2. Put your games in it:
-     DVD games (.iso or .zso)  ->  udpfsd\DVD
-     CD games  (.iso or .zso)  ->  udpfsd\CD
+     DVD games (.iso, .zso, .cso, .chd or split ISO)  ->  udpfsd\DVD
+     CD games  (.iso, .zso, .cso, .chd or split ISO)  ->  udpfsd\CD
    Optional: game info shown in the XMB (release date, developer,
              genre): copy PFS-BatchKit-Manager's BAT\PS2DB.xml next to
              udpfsd and set gamedb = PS2DB.xml in udpfsd.cfg.
@@ -74,6 +74,10 @@ PC SIDE
 
 DESR SIDE
 ---------
+
+Select Network / Console Settings > DESR generation (PSX1 or PSX2) before
+installing PS2 games. The setting is saved in the installer partition.
+New games get hidden HDL data and a separate 128 MiB cover/launch channel.
 
 1. Copy PS2\desr-udpfs-installer-bootstrap.elf to a USB stick and start
    it on the DESR with wLaunchELF.
@@ -210,3 +214,11 @@ CREDITS
 
 Open PS2 Loader is distributed under the AFL-3.0 licence
 (PC\udpfsd\OPL-LICENSE.txt).
+
+NEW IN 3.2
+LZ4 transfers, CSO/CHD/split images on the server, automatic single-BIN/CUE
+conversion, PS1 multi-disc (Disc 1..4), and Saves, Cheats & Game Extras.
+Existing cards/settings are preserved during automatic installs. Use the
+extras menu for replacement or importing .psu saves to a physical PS2 card.
+Descriptions and matching covers reside in each channel partition res/ folder.
+These new features still need hardware testing.

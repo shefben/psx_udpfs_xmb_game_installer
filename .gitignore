@@ -7,6 +7,8 @@
 /build/
 /dist/
 /PSX-UDPFS-Installer*.zip
+/desr-udpfs-installer-test.zip
+/tools/__pycache__/
 /test/host/build/
 /vendor/irx/neutrino/
 /vendor/opl-launcher/*.ELF
@@ -23,3 +25,5 @@
 /.serena/
 /.claude/
 /.clinerules-*
+
+/PSX-UDPFS-Installer*.zip.sha256

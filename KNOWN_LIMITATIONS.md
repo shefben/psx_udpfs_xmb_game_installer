@@ -1,16 +1,13 @@
 # Known limitations
 
-Status vocabulary: see `docs/HARDWARE_TEST_CHECKLIST.md`. Nothing is
-yet DESR-verified; everything below "works" only at the PC VERIFIED
-level unless stated otherwise.
+The user reports the earlier 3.2 compatibility test package worked. Newly added
+LZ4, image formats, multi-disc and extras features pass host/server tests and
+still need DESR hardware validation. Model coverage is not comprehensive.
 
-* **DESR results (v2.0 test builds, fixed in v3.0):** installs and deletes work from
-  the bootstrap ELF. With two or more of our PFS channels the XMB froze
-  while loading; two PFS-BatchKit-Manager games load fine. PS2 games are
-  now installed in BatchKit's layout (one visible HDL partition with a
-  PATINFO boot header, no PFS channel); D47 confirms it on hardware. The
-  installer channel is still a PFS channel: whether one PFS channel next
-  to several such games loads is part of D47.
+* **Channel layout:** new PS2 installations use hidden HDL data and a separate
+  128 MiB PFS launch/resource channel with generation-specific wrappers.
+  PSX1 never uses `BOOT2 = PATINFO` for new games. Select the DESR generation
+  in settings if automatic detection cannot identify it.
 * **128 GiB safe limit:** passing 128 GiB of games and data (all
   non-system partitions), or a partition the driver placed beyond the
   128 GiB mark (LBA 2^28), needs the warning confirmed (R1 + X, once per

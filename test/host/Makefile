@@ -8,10 +8,10 @@ BUILD := build
 
 # Platform-neutral modules (no PS2SDK headers outside #ifdef _EE).
 LIB_SRCS := errors.c util.c partname.c source.c iso9660.c hdl_plan.c \
-            xmb_text.c apa_osd_header.c transaction.c settings.c \
+            xmb_text.c apa_osd_header.c transaction.c settings.c console.c \
             opl_dependency.c hdl_header.c game_pair.c crc32.c sha256.c batch.c \
             manifest.c server_assets.c ui_style.c rw_buffer.c \
-            remove_games.c listview.c lz4_block.c source_zso.c pops.c dhcp_proto.c resume_seg.c space.c apps.c app_cfg.c
+            remove_games.c listview.c lz4_block.c source_zso.c pops.c dhcp_proto.c resume_seg.c space.c apps.c app_cfg.c wire_frame.c extras.c
 CFLAGS += -DFIXTURE_DIR=\"$(abspath ../fixtures)\"
 TEST_SRCS := $(wildcard test_*.c)
 
@@ -25,6 +25,9 @@ ifneq ($(wildcard $(HDLDUMP_HDL_C)),)
 CFLAGS += -DHAVE_HDLDUMP_REF
 OBJS += $(BUILD)/ref_hdl_pname.o
 endif
+
+NET_SRCS := source_udpfs.c source_wire.c
+OBJS += $(addprefix $(BUILD)/net_,$(NET_SRCS:.c=.o)) $(BUILD)/fake_filexio.o
 
 all: run
 
@@ -56,3 +59,10 @@ clean:
 	rm -rf $(BUILD)
 
 .PHONY: all run clean
+
+$(BUILD)/net_%.o: $(SRC)/%.c $(wildcard $(SRC)/*.h) $(wildcard fake/*.h)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Ifake -I$(SRC) -c -o $@ $<
+$(BUILD)/fake_filexio.o: fake_filexio.c $(wildcard fake/*.h) $(SRC)/wire_frame.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(SRC) -c -o $@ $<

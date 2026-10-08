@@ -6,6 +6,7 @@
 #include <loadfile.h>
 #include <sbv_patches.h>
 #include <sifrpc.h>
+#include <smod.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -14,6 +15,7 @@
 
 #include "iop_boot.h"
 #include "rw_buffer.h"
+#include "source_wire.h"
 
 /* Embedded IRX images (bin2c, see Makefile). */
 #define IRX(n)                                                                 \
@@ -37,6 +39,8 @@ IRX(bdm);
 IRX(bdmfs_fatfs);
 IRX(usbmass_bd);
 IRX(hddpump);
+IRX(mcman);
+IRX(mcserv);
 
 /* ps2hdd-hdl.irx: -o 4 -n 128 (as proven by ps2-usbhdl/HDLGameInstaller). */
 static const char PS2HDD_ARGS[] = "-o\0"
@@ -51,8 +55,16 @@ static const char PS2FS_ARGS[] = "-m\0"
                                  "-n\0"
                                  "40";
 
+void (*iop_boot_progress)(const char *step);
+
+static void progress(const char *step) {
+  if (iop_boot_progress)
+    iop_boot_progress(step);
+}
+
 static int load(iop_status_t *st, const char *name, void *data,
                 unsigned int size, int arglen, const char *args) {
+  progress(name);
   int rv = -1;
   int ret = SifExecModuleBuffer(data, size, arglen, args, &rv);
   /* rv: 0 RESIDENT_END, 2 REMOVABLE_END are fine; 1 NO_RESIDENT_END
@@ -84,14 +96,19 @@ static int load(iop_status_t *st, const char *name, void *data,
 void iop_boot_base(iop_status_t *st) {
   memset(st, 0, sizeof(*st));
 
+  progress("SIF init");
   SifInitRpc(0);
+  progress("IOP reset");
   while (!SifIopReset("", 0)) {
   }
+  progress("IOP sync");
   while (!SifIopSync()) {
   }
+  progress("SIF RPC, IOP heap, LOADFILE");
   SifInitRpc(0);
   SifInitIopHeap();
   SifLoadFileInit();
+  progress("sbv patches");
   sbv_patch_enable_lmb();
   sbv_patch_disable_prefix_check();
 
@@ -110,10 +127,30 @@ void iop_boot_base(iop_status_t *st) {
   /* Optional: overlapped installs (iop/hddpump). */
   st->pump_ok = st->hdd_ok && LOAD(st, hddpump, 0, NULL) == 0;
 
-  int pad_fail = 0;
-  pad_fail |= LOAD(st, sio2man, 0, NULL);
-  pad_fail |= LOAD(st, padman, 0, NULL);
-  st->pad_ok = !pad_fail;
+  /* Check the post-reset IOP, not the environment left by the launcher.
+   * A resident PADMAN already owns its SIO2 dependency: leave both alone. */
+  smod_mod_info_t mod;
+  progress("padman (check resident)");
+  if (smod_get_mod_by_name("padman", &mod) > 0) {
+    st->pad_reused = 1;
+    st->pad_version = mod.version;
+    st->pad_ok = 1;
+    progress("padman (reuse resident)");
+  } else {
+    int pad_fail = 0;
+    progress("sio2man (check resident)");
+    if (smod_get_mod_by_name("sio2man", &mod) > 0) {
+      st->sio2_reused = 1;
+      st->sio2_version = mod.version;
+      progress("sio2man (reuse resident)");
+    } else {
+      pad_fail = LOAD(st, sio2man, 0, NULL);
+    }
+    /* PADMAN cannot initialize if its SIO2 dependency failed. */
+    if (!pad_fail)
+      pad_fail = LOAD(st, padman, 0, NULL);
+    st->pad_ok = !pad_fail;
+  }
 
   /* USB mass storage (FAT32/exFAT) as mass0: - an optional game source. */
   int usb_fail = 0;
@@ -136,6 +173,18 @@ static union {
   u8 line[64];
 } dhcp_buf __attribute__((aligned(64)));
 #define dhcp_res dhcp_buf.r
+
+int iop_load_memcard(iop_status_t *st) {
+  static int loaded = -1;
+  static int at_reboot = -1;
+  extern int _iop_reboot_count;
+  if (loaded >= 0 && at_reboot == _iop_reboot_count)
+    return loaded;
+  at_reboot = _iop_reboot_count;
+  /* mcman needs sio2man, which iop_boot_base loaded for the pads. */
+  loaded = LOAD(st, mcman, 0, NULL) == 0 && LOAD(st, mcserv, 0, NULL) == 0 ? 0 : -1;
+  return loaded;
+}
 
 void iop_boot_network(const char *local_ip, int dhcp, iop_status_t *st) {
   st->net_ok = st->udpfs_ok = 0;
@@ -173,6 +222,8 @@ void iop_boot_network(const char *local_ip, int dhcp, iop_status_t *st) {
   net_fail |= LOAD(st, udpfs_ioman, 0, NULL);
   /* After the last module load, so the bigger buffer cannot starve one. */
   st->rw_buffer = rw_buffer_setup(fileXioSetRWBufferSize);
+  if (st->rw_buffer)
+    source_wire_set_request((uint32_t)st->rw_buffer);
   st->net_ok = !net_fail;
   if (st->net_ok) {
     int dd = fileXioDopen("udpfs:/");

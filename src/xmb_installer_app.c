@@ -36,7 +36,7 @@ static int write_app_extras(void) {
     return -1;
   fileXioMkdir(PFS_WORK "config", 0777);
   fileXioMkdir(PFS_WORK "state", 0777);
-  char buf[64];
+ char buf[128];
   size_t n = settings_serialize(&g_app.settings, buf, sizeof(buf));
   int r = file_write_all(PFS_WORK "config/network.ini", buf, (uint32_t)n);
   iox_stat_t st;

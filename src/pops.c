@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -98,7 +99,7 @@ inst_err_t vcd_probe(GameSource *src, vcd_info_t *out) {
 
 int pops_partition_mb(uint64_t vcd_bytes, char *size_str, size_t sz) {
   uint64_t need = (vcd_bytes >> 20) + 1 + 8;
-  for (int mb = 128; mb <= 2048; mb *= 2)
+  for (int mb = 128; mb <= 4096; mb *= 2)
     if (need <= (uint64_t)mb) {
       if (mb >= 1024)
         snprintf(size_str, sz, "%dG", mb / 1024);
@@ -107,6 +108,61 @@ int pops_partition_mb(uint64_t vcd_bytes, char *size_str, size_t sz) {
       return mb;
     }
   return -1;
+}
+
+const char *pops_image_name(int disc) {
+  static const char *const names[POPS_MAX_DISCS] = {"IMAGE0.VCD", "IMAGE1.VCD", "IMAGE2.VCD",
+                                                    "IMAGE3.VCD"};
+  return disc >= 0 && disc < POPS_MAX_DISCS ? names[disc] : NULL;
+}
+
+int pops_discs_txt(int n, char *out, size_t outsz) {
+  size_t r = 0;
+  if (n < 2 || n > POPS_MAX_DISCS)
+    return -1;
+  for (int i = 0; i < n; i++) {
+    int w = snprintf(out + r, outsz - r, "%s\r\n", pops_image_name(i));
+    if (w < 0 || (size_t)w >= outsz - r)
+      return -1;
+    r += (size_t)w;
+  }
+  return (int)r;
+}
+
+/* "Disc 2", "Disc2", "CD 2", "CD2" (any case) as its own word in the name. */
+int pops_disc_number(const char *name, char *stem, size_t stemsz) {
+  const char *base = strrchr(name, '/');
+  base = base ? base + 1 : name;
+  size_t len = strlen(base);
+  if (len > 4 && str_ends_with_ci(base, ".vcd"))
+    len -= 4;
+  for (size_t i = 0; i < len; i++) {
+    size_t k = !strncasecmp(base + i, "disc", 4) ? 4 : !strncasecmp(base + i, "cd", 2) ? 2 : 0;
+    if (!k || (i > 0 && isalnum((unsigned char)base[i - 1])))
+      continue;
+    size_t j = i + k;
+    while (j < len && (base[j] == ' ' || base[j] == '_' || base[j] == '-'))
+      j++;
+    if (j >= len || base[j] < '1' || base[j] > '0' + POPS_MAX_DISCS)
+      continue;
+    if (j + 1 < len && isalnum((unsigned char)base[j + 1]))
+      continue;
+    if (stem && stemsz) {
+      /* The name without the disc word: the same for every disc of the set. */
+      size_t a = i, b = j + 1;
+      if (a > 0 && base[a - 1] == '(' && b < len && base[b] == ')') {
+        a--;
+        b++;
+      }
+      while (a > 0 && (base[a - 1] == ' ' || base[a - 1] == '_' || base[a - 1] == '-'))
+        a--;
+      snprintf(stem, stemsz, "%.*s%.*s", (int)a, base, (int)(len - b), base + b);
+    }
+    return base[j] - '0';
+  }
+  if (stem && stemsz)
+    snprintf(stem, stemsz, "%.*s", (int)len, base);
+  return 0;
 }
 
 void pops_vmc_dir(const char *partition, char *out, size_t outsz) {

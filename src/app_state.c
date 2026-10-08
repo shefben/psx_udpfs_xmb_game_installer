@@ -51,6 +51,9 @@ void app_mount(void) {
     g_app.app_mounted = 1;
 }
 
+/* The current start-up step, so a photo of a hung start-up shows where. */
+static void boot_step(const char *step) { ui_at(3, "Step: %s", step); }
+
 void app_boot(void) {
   network_wait_idle(); /* never reset the IOP under the network thread */
   ui_pad_close();
@@ -58,15 +61,22 @@ void app_boot(void) {
   g_app.net = NETWORK_DOWN;
 
   ui_header("Starting", "Loading IOP modules...");
+  iop_boot_progress = boot_step;
   iop_boot_base(&g_app.iop);
+  boot_step("HDD check (partition list)");
   g_app.hdd_state = g_app.iop.hdd_ok ? hdd_status() : ERR_HDD_MISSING;
-  if (g_app.hdd_state == ERR_OK)
+  if (g_app.hdd_state == ERR_OK) {
+    boot_step("installer partition (mount)");
     app_mount();
+  }
 
-  if (g_app.app_mounted)
+  if (g_app.app_mounted) {
+    boot_step("settings (config/network.ini)");
     settings_load(APP_NETWORK_INI, &g_app.settings);
-  else if (!g_app.settings.local_ip[0])
+  } else if (!g_app.settings.local_ip[0])
     settings_parse(NULL, &g_app.settings);
+  /* The network half loads modules from a background thread. */
+  iop_boot_progress = NULL;
 
   g_hdl_use_pump = g_app.iop.pump_ok && g_app.settings.fast_copy;
   ui_pad_open();

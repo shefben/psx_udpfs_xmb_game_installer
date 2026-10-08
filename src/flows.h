@@ -53,4 +53,6 @@ void flow_self_install(void);
 void flow_delete_installer_channel(void);
 
 
+void flow_extras(void);
+
 #endif

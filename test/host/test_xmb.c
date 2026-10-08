@@ -394,3 +394,20 @@ TEST(man_xml_default_template) {
   CHECK(strstr(buf, "</MANUAL>\r\n") != NULL);
   CHECK_EQ_INT(xmb_render_man_xml(buf, 64, "T"), 0);
 }
+TEST(game_descriptions_are_per_game_and_safe) {
+  xmb_game_info_t gi;
+  char info[1024];
+  CHECK_EQ_INT(xmb_game_info_parse("description=First game story\n", &gi), 1);
+  CHECK(xmb_game_info_sys_ex(info, sizeof(info), "Game A", "SLUS_203.12", &gi, NULL) > 0);
+  CHECK(strstr(info, "note = First game story\r\n") != NULL);
+  CHECK(strstr(info, "title_id = SLUS-20312") != NULL);
+  CHECK_EQ_INT(xmb_game_info_parse("description=Second game story\n", &gi), 1);
+  CHECK(xmb_game_info_sys_ex(info, sizeof(info), "Game B", "SLES_523.92", &gi, NULL) > 0);
+  CHECK(strstr(info, "note = Second game story\r\n") != NULL);
+  CHECK(strstr(info, "First game") == NULL);
+  CHECK(strstr(info, "title_id = SLES-52392") != NULL);
+  xmb_game_info_parse("genre=Action\n", &gi);
+  xmb_game_info_sys_ex(info, sizeof(info), "Game C", "SLES_523.92", &gi, NULL);
+  CHECK(strstr(info, "Second game") == NULL);
+  CHECK(strstr(info, "note = " XMB_NOTE) != NULL);
+}

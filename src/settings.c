@@ -71,6 +71,11 @@ void settings_parse(const char *text, net_settings_t *out) {
           } else {
             bad = 1;
           }
+        } else if (strcmp(line, "console") == 0) {
+          out->console = !strcmp(v, "psx1") ? CONSOLE_PSX1 :
+                         !strcmp(v, "psx2") ? CONSOLE_PSX2 : CONSOLE_UNKNOWN;
+          if (strcmp(v, "unknown") && out->console == CONSOLE_UNKNOWN)
+            bad = 1;
         } else if (strcmp(line, "fast_copy") == 0) {
           out->fast_copy = strcmp(v, "0") != 0;
         } else if (strcmp(line, "ip_mode") == 0) {
@@ -103,8 +108,9 @@ void ip_format(uint32_t ip, char out[16]) {
 }
 
 size_t settings_serialize(const net_settings_t *s, char *out, size_t outsz) {
-  int n = snprintf(out, outsz, "local_ip=%s\nip_mode=%s\nfast_copy=%d\n", s->local_ip,
-                   s->dhcp ? "dhcp" : "static", s->fast_copy ? 1 : 0);
+  int n = snprintf(out, outsz, "local_ip=%s\nip_mode=%s\nfast_copy=%d\nconsole=%s\n", s->local_ip,
+                   s->dhcp ? "dhcp" : "static", s->fast_copy ? 1 : 0,
+                   console_name(s->console));
   if (n < 0 || (size_t)n >= outsz)
     return 0;
   return (size_t)n;
@@ -140,8 +146,9 @@ void settings_load(const char *path, net_settings_t *out) {
 }
 
 inst_err_t settings_save(const char *path, const net_settings_t *s) {
-  char buf[64];
+  char buf[128];
   size_t n = settings_serialize(s, buf, sizeof(buf));
+  if (!n) return ERR_JOURNAL;
   int fd = fileXioOpen(path, FIO_O_WRONLY | FIO_O_CREAT | FIO_O_TRUNC, 0666);
   if (fd < 0)
     return ERR_JOURNAL;

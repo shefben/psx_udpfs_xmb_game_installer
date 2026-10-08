@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "errors.h"
+#include "console.h"
 
 /* Persistent network settings (plan section 8). Stored as
  * <installer partition>/config/network.ini with `local_ip=a.b.c.d`. */
@@ -18,6 +19,7 @@ typedef struct {
   int dhcp;
   char local_ip[16]; /* static address, or the DHCP fallback */
   int fast_copy;     /* 1 (default): overlapped installs via hddpump.irx */
+  console_t console; /* explicit hardware selection; unknown blocks PS2 channels */
   int using_default; /* 1 if the compiled default is in effect */
   int warning;       /* 1 if a config existed but was invalid */
 } net_settings_t;

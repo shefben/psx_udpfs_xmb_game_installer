@@ -223,12 +223,15 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
              "%s installed (TX_COMPLETE).\n\n%s\n%s\n\n"
              "Bytes copied:     %llu\nBytes read back:  %llu\n"
              "Source CRC-32:    %08lx\nInstalled CRC-32: %s\n"
-             "OPL settings:     %s\n\n"
+             "Game extras:      %.60s\n\n"
              "The game partition is now %s and appears in the XMB\n"
              "after it refreshes (return to the XMB or reboot).",
              p->title, p->visible, p->hidden, (unsigned long long)rep.bytes_written,
              (unsigned long long)rep.bytes_verified, (unsigned long)rep.source_crc32,
-             installed, rep.opl_cfg ? rep.opl_cfg : "none", p->visible);
+             installed,
+             rep.extras ? rep.extras
+                        : "none on the server (CFG, CHT, VMC, ART folders)",
+             p->visible);
     ui_message("Finished", msg);
     return;
   }
@@ -752,14 +755,14 @@ void flow_install_game(game_plan_t *p) {
     ui_at(9, " Volume ID   %s", p->iso.volume_id);
     ui_at(10, " Size        %s (%u sectors)%s", sz, (unsigned)p->iso.sectors,
           p->iso.layer1_start ? "  DVD9" : "");
-    ui_at(11, " Allocation  %s main + %d sub partition(s), %u MiB total",
+    ui_at(11, " Allocation  %s main + %d sub, %u MiB + 128 MiB XMB channel",
           p->alloc.main_size_str, p->alloc.subs, (unsigned)p->alloc.total_mb);
     ui_at(12, " Validation  ISO9660 PVD ok, SYSTEM.CNF ok, BOOT2 %.40s", p->iso.boot2);
     ui_at(14, " Space       %.66s", space_line());
     ui_at(13, " Region      %s     Install state: %s", region_label(p->iso.boot_id),
           pair_state_label(st));
     ui_at(15, " The game is copied to the hidden __. partition, read back in full and");
-    ui_at(16, " CRC-checked; only then is it renamed to PP. and shown in the XMB.");
+    ui_at(16, " CRC-checked; then its PP. cover / launch channel is created.");
     ui_footer("[X] install  [Square] edit title  [O] back");
 
     int b;
@@ -895,11 +898,28 @@ static void do_create_channel(const char *hidden) {
     flow_show_error("XMB channel was not created.", &rep, recovery_for(&rep));
   else {
     ui_message("XMB channel created",
-               "The game partition got its boot header (OPL-Launcher, icon,\n"
-               "title) and is shown in the XMB under its PP. name; an older\n"
-               "PFS channel was removed. Game data was not rewritten.\n\n"
-               "It appears after the XMB refreshes.");
+               "PFS launch / cover channel verified. Game data stays hidden.\n"
+               "Game data was not rewritten. It appears after XMB refreshes.");
   }
+}
+
+static void do_refresh_resources(const char *visible) {
+  install_report_t rep;
+  ui_header("Fetch XMB image and description", visible);
+  game_refresh_resources(visible, &rep);
+  if (rep.err) {
+    char id[16] = "", msg[600];
+    part_id_from_partition(visible, id);
+    snprintf(msg, sizeof(msg), "Image still needed for %s.\n\n"
+      "Put %s_COV.png or .jpg in the server ART folder, or enable\n"
+      "download_covers = yes. Restart udpfsd to prepare the cover.\n"
+      "For descriptions, configure the game database (gamedb).\n"
+      "Connect to the server and select Fetch XMB image again.\n\n%s%s%s",
+      id, id, err_text(rep.err), rep.detail ? "\n" : "", rep.detail ? rep.detail : "");
+    ui_message("XMB image not updated", msg);
+  } else ui_message("XMB image updated", "Matching cover saved in res/jkt_001.png and res/jkt_002.png.\n"
+    "Available description saved in res/info.sys. Existing metadata is\n"
+    "kept when the server has none. Return to the XMB to see the image.");
 }
 
 #define ROW_VERIFY (1 << 16) /* menu rows, not pair_action_t values */
@@ -907,6 +927,7 @@ static void do_create_channel(const char *hidden) {
 #define ROW_RESUME (1 << 18)
 #define ROW_BACKUP (1 << 19)
 #define ROW_COVER (1 << 20)
+#define ROW_REFRESH (1 << 21)
 
 /* ps1: "name" is the PS1 channel, else the hidden PS2 partition. */
 static void do_backup(const char *name, int ps1) {
@@ -982,7 +1003,9 @@ static void do_resume(const char *hidden) {
  * else a shown PS2 game (title in its boot header's icon.sys). */
 static void do_rename(const char *visible, const char *hidden) {
   char t[64] = "";
-  if ((hidden ? game_header_get_title(visible, t, sizeof(t))
+  uint16_t type = 0;
+  int header_title = hidden && hdd_stat(visible, &type, NULL, NULL) == 0 && type == APA_TYPE_HDL_ID;
+  if ((header_title ? game_header_get_title(visible, t, sizeof(t))
               : channel_get_title(visible, t, sizeof(t))) < 0)
     str_copy(t, visible + 3 + PART_ID_LEN + 2, sizeof(t)); /* "..TITLE" part */
   if (!ui_edit_text("Rename", "Title shown in the XMB (the game ID stays the same):", t, 48))
@@ -1043,19 +1066,22 @@ void flow_pair_actions(const char *visible, const char *hidden) {
   pair_state_t st = pair_classify(&f);
   unsigned acts = pair_actions(st);
 
-  static char rows[11][UI_ROW_LEN];
-  int map[11], n = 0;
+  static char rows[12][UI_ROW_LEN];
+  int map[12], n = 0;
 #define ADD(a, label)                                                          \
   if (acts & (a)) {                                                            \
     str_copy(rows[n], label, UI_ROW_LEN);                                      \
     map[n++] = (a);                                                            \
   }
-  if (pair_can_add_cover(&f)) {
+  if (g_app.settings.console == CONSOLE_PSX2 && pair_can_add_cover(&f)) {
     str_copy(rows[n], "Add XMB cover (experimental: PFS cover partition)", UI_ROW_LEN);
     map[n++] = ROW_COVER;
   }
+  if (f.legacy_channel) {
+    str_copy(rows[n], f.cover_missing ? "IMAGE NEEDED: fetch XMB image / description" : "Refresh XMB image / description from server", UI_ROW_LEN);
+    map[n++] = ROW_REFRESH;
+  }
   ADD(ACT_CREATE_CHANNEL, st == PAIR_HIDDEN_ONLY                      ? "Create XMB channel"
-                          : st == PAIR_COMPLETE && f.legacy_channel ? "Remove cover (one partition again)"
                           : st == PAIR_COMPLETE                      ? "Repair XMB channel"
                                                                      : "Rebuild XMB channel");
   ADD(ACT_REMOVE_CHANNEL, f.data_visible             ? "Hide from the XMB (keep the game)"
@@ -1108,6 +1134,9 @@ void flow_pair_actions(const char *visible, const char *hidden) {
     break;
   case ROW_BACKUP:
     do_backup(hidden, 0);
+    break;
+  case ROW_REFRESH:
+    do_refresh_resources(visible);
     break;
   case ROW_COVER:
     do_add_cover(hidden);
@@ -1164,13 +1193,37 @@ void flow_install_ps1(const char *path) {
     ui_message("Cannot install", msg);
     return;
   }
+  /* A multi-disc game: offer all its discs as one game. */
+  static pops_plan_t single;
+  single = plan;
+  ui_at(5, " Looking for the other discs...");
+  int nd = pops_plan_find_discs(&plan);
+  if (nd > 1) {
+    char q[400];
+    snprintf(q, sizeof(q),
+             "This disc belongs to a %d-disc game:\n\n  %.60s\n\n"
+             "Install all %d discs as ONE game? (recommended)\n"
+             "POPStarter changes discs in-game: Select+L2+R2 with Triangle (open\n"
+             "lid), Up/Right/Down/Left (disc 1-4), Square (close lid).\n\n"
+             "[O] installs only the chosen disc.",
+             nd, plan.title, nd);
+    if (!ui_confirm("Multi-disc game", q))
+      plan = single;
+  }
   for (;;) {
     ui_header("Install PS1 game", NULL);
     ui_at(3, " Title       %.60s", plan.title);
     ui_at(4, " Game ID     %s   (PS1, POPStarter)", plan.vcd.boot_id);
     ui_at(5, " Source      %.64s", plan.source_path);
     ui_at(6, " Partition   %s (%s)", plan.partition, plan.size_str);
-    ui_at(7, " Size        %lu MiB", (unsigned long)(plan.vcd.bytes >> 20));
+    uint64_t all = 0;
+    for (int i = 0; i < plan.ndiscs; i++)
+      all += plan.disc_bytes[i];
+    if (plan.ndiscs > 1)
+      ui_at(7, " Size        %lu MiB, %d discs (IMAGE0..%d.VCD + DISCS.TXT)",
+            (unsigned long)(all >> 20), plan.ndiscs, plan.ndiscs - 1);
+    else
+      ui_at(7, " Size        %lu MiB", (unsigned long)(all >> 20));
     ui_at(9, " Needs POPSTARTER.KELF next to the VCD or in POPS/ on the same");
     ui_at(10, " device; POPS.ELF and IOPRP252.IMG are copied to __common/POPS");
     ui_at(11, " if they are not there yet.");
@@ -1205,22 +1258,25 @@ void flow_install_ps1(const char *path) {
                                        : "nothing is left on the HDD; fix the cause and retry.");
     return;
   }
-  char msg[400];
+  char msg[600];
   snprintf(msg, sizeof(msg),
-           "%s installed as %s.\n\n"
-           "Copied %llu bytes, CRC-32 %08lx, read back: %s.\n\n"
+           "%s installed as %s%s.\n\n"
+           "Copied %llu bytes, read back: %s.\n"
+           "Game extras: %.60s\n\n"
            "It appears in the XMB after it refreshes and starts through\n"
-           "POPStarter. Memory cards: __common/POPS/%s/",
-           plan.title, plan.partition, (unsigned long long)rep.bytes_written,
-           (unsigned long)rep.source_crc32, rep.verify_skipped ? "SKIPPED" : "equal",
+           "POPStarter. Memory cards: __common/POPS/%.40s/",
+           plan.title, plan.partition, plan.ndiscs > 1 ? " (all discs)" : "",
+           (unsigned long long)rep.bytes_written, rep.verify_skipped ? "SKIPPED" : "equal",
+           rep.extras ? rep.extras : "none on the server (VMC, CHT folders)",
            plan.partition + 3);
   ui_message("Finished", msg);
 }
 
 void flow_ps1_actions(const char *partition) {
-  static char rows[4][UI_ROW_LEN] = {"Rename (title shown in the XMB)",
-                                     "Back up to USB (.VCD)", "Delete game", "Back"};
-  int c = ui_select("PS1 game", partition, rows, 4, 0, NULL, NULL);
+  static char rows[5][UI_ROW_LEN] = {"Rename (title shown in the XMB)",
+                                     "Back up to USB (.VCD)", "Delete game", "Back", "Fetch XMB image / description"};
+  int c = ui_select("PS1 game", partition, rows, 5, 0, NULL, NULL);
+  if (c == 4) { do_refresh_resources(partition); return; }
   if (c == 0) {
     do_rename(partition, NULL);
   } else if (c == 1) {
@@ -1250,7 +1306,8 @@ typedef struct {
   char visible[APA_NAME_MAX + 1];
   char hidden[APA_NAME_MAX + 1];
   pair_state_t state;
-  int can_cover; /* pair_can_add_cover(): listed under Repair too */
+  int can_cover; /* legacy visible HDL needs a PFS partition */
+  int missing_cover;
 } pair_row_t;
 
 static pair_row_t pairs[MAX_PAIRS];
@@ -1278,12 +1335,16 @@ static int collect_pairs(void) {
     ui_at(4, " Checking %d/%d: %s", i + 1, n, pairs[i].hidden + 3);
     game_pair_facts(pairs[i].visible, pairs[i].hidden, &f);
     pairs[i].state = pair_classify(&f);
-    pairs[i].can_cover = pair_can_add_cover(&f);
+    pairs[i].can_cover = g_app.settings.console == CONSOLE_PSX2 && pair_can_add_cover(&f);
     /* A channel without a __. partner may be a PS1 game (IMAGE0.VCD). */
     if (pairs[i].state == PAIR_ORPHAN_CHANNEL && pops_partition_is_ps1(pairs[i].visible))
       pairs[i].state = PAIR_PS1;
-    snprintf(pair_rows[i], UI_ROW_LEN, "%-34.34s %s", pairs[i].visible + 3,
-             pairs[i].state == PAIR_PS1 ? pair_state_label(PAIR_PS1) : pair_label(&f));
+    pairs[i].missing_cover = f.cover_missing;
+    if (pairs[i].state == PAIR_PS1)
+      pairs[i].missing_cover = game_cover_status(pairs[i].visible) != GAME_COVER_READY;
+    snprintf(pair_rows[i], UI_ROW_LEN, "%-30.30s %s%s", pairs[i].visible + 3,
+             pairs[i].state == PAIR_PS1 ? "PS1" : pair_label(&f),
+             pairs[i].missing_cover ? " [IMAGE NEEDED]" : "");
   }
   return n;
 }
@@ -1299,7 +1360,7 @@ static void pair_list(const char *title, int only_problems) {
     if (only_problems) {
       int m = 0;
       for (int i = 0; i < n; i++)
-        if (pairs[i].state != PAIR_COMPLETE || pairs[i].can_cover) {
+        if ((pairs[i].state != PAIR_COMPLETE && pairs[i].state != PAIR_PS1) || pairs[i].can_cover || pairs[i].missing_cover) {
           pairs[m] = pairs[i];
           memcpy(pair_rows[m], pair_rows[i], UI_ROW_LEN);
           m++;
@@ -1313,7 +1374,7 @@ static void pair_list(const char *title, int only_problems) {
       pair_items[i].name = pairs[i].visible + 3; /* "SLUS-20312..TITLE" */
       pair_items[i].size = 0;
       /* Games that need attention first. */
-      pair_items[i].group = pairs[i].state == PAIR_COMPLETE ? 1 : 0;
+      pair_items[i].group = (pairs[i].state == PAIR_COMPLETE || pairs[i].state == PAIR_PS1) && !pairs[i].missing_cover ? 1 : 0;
     }
     static listui_state_t ls;
     ls.item = sel;
@@ -1481,6 +1542,31 @@ static void add_covers_to_all(void) {
   ui_text_view("Add XMB covers", done);
 }
 
+static void refresh_missing_images(void) {
+  int n = collect_pairs(), want = 0;
+  if (n < 0) return;
+  for (int i=0; i<n; i++) want += pairs[i].missing_cover;
+  if (!want) return;
+  char msg[450];
+  snprintf(msg, sizeof(msg), "%d game(s) still need an XMB image.\n\n"
+    "Missing, invalid and default jackets are flagged even after repair.\n"
+    "Fetch their matching artwork from the server now?\n\n"
+    "If unavailable, add <GAME-ID>_COV.png/jpg to ART or enable cover\n"
+    "downloads, restart udpfsd and run Repair again.", want);
+  if (!ui_confirm("XMB images needed", msg)) return;
+  int ok=0, bad=0;
+  for (int i=0; i<n; i++) if (pairs[i].missing_cover) {
+    install_report_t rep;
+    ui_header("Fetching missing XMB images", pairs[i].visible);
+    game_refresh_resources(pairs[i].visible, &rep);
+    if (rep.err) bad++; else ok++;
+  }
+  snprintf(msg, sizeof(msg), "%d image(s) updated; %d still need an image.\n\n"
+    "Unresolved games remain flagged. Add their ID-named covers to ART,\n"
+    "restart udpfsd and retry Repair or the game's Fetch XMB image action.", ok, bad);
+  ui_message("XMB image results", msg);
+}
+
 void flow_repair(void) {
   if (g_app.app_mounted) {
     static tx_journal_t txs[16];
@@ -1498,13 +1584,14 @@ void flow_repair(void) {
     }
   }
   add_covers_to_all();
+  refresh_missing_images();
   pair_list("Repair XMB Channels", 1);
 }
 
 /* ------------------------------------------------------------------ */
 
 void flow_network_settings(void) {
-  static char rows[6][UI_ROW_LEN];
+ static char rows[6][UI_ROW_LEN];
   for (;;) {
     snprintf(rows[4], UI_ROW_LEN, "Copy engine: %s",
              !g_app.iop.pump_ok        ? "basic (hddpump module not loaded)"
@@ -1516,10 +1603,29 @@ void flow_network_settings(void) {
              g_app.settings.local_ip);
     snprintf(rows[2], UI_ROW_LEN, "Save and restart network");
     snprintf(rows[3], UI_ROW_LEN, "Restart network (retry discovery)");
-    int c = ui_select("Network Settings", network_status_line(), rows, 5, 0, NULL, NULL);
+ snprintf(rows[5], UI_ROW_LEN, "DESR generation: %s", console_name(g_app.settings.console));
+ int c = ui_select("Network / Console Settings", network_status_line(), rows, 6, 0, NULL, NULL);
     if (c < 0)
       return;
-    if (c == 4) {
+ if (c == 5) {
+ static char models[2][UI_ROW_LEN] = {
+   "PSX1: DESR-5000/5100/7000/7100",
+   "PSX2: DESR-5500/5700/7500/7700"
+ };
+ int model = ui_select("Console generation", "Select the model printed on your console", models, 2, 0, NULL, NULL);
+ if (model >= 0) {
+   g_app.settings.console = model == 0 ? CONSOLE_PSX1 : CONSOLE_PSX2;
+   if (g_app.app_mounted) {
+     fileXioMkdir(APP_CONFIG_DIR, 0777);
+     if (settings_save(APP_NETWORK_INI, &g_app.settings) != ERR_OK)
+       ui_message("Console settings", "Could not save; selection applies to this session only.");
+   } else {
+     ui_message("Console settings", "Selection applies to this session. Install the installer channel to save it.");
+   }
+ }
+ continue;
+ }
+ if (c == 4) {
       /* Takes effect now; Save keeps it. */
       g_app.settings.fast_copy = !g_app.settings.fast_copy;
       g_hdl_use_pump = g_app.iop.pump_ok && g_app.settings.fast_copy;

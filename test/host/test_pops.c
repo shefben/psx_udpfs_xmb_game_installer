@@ -82,7 +82,38 @@ TEST(pops_partition_size_steps) {
   CHECK_STR(s, "1G");
   CHECK_EQ_INT(pops_partition_mb(1020ull << 20, s, sizeof(s)), 2048);
   CHECK_STR(s, "2G");
-  CHECK_EQ_INT(pops_partition_mb(3000ull << 20, s, sizeof(s)), -1);
+  /* Multi-disc games: all discs in one partition. */
+  CHECK_EQ_INT(pops_partition_mb(3000ull << 20, s, sizeof(s)), 4096);
+  CHECK_STR(s, "4G");
+  CHECK_EQ_INT(pops_partition_mb(4090ull << 20, s, sizeof(s)), -1);
+}
+
+TEST(pops_disc_numbers_and_stems) {
+  char a[64], b[64];
+  CHECK_EQ_INT(pops_disc_number("udpfs:/POPS/Final Fantasy VII (USA) (Disc 1).VCD", a, sizeof(a)), 1);
+  CHECK_EQ_INT(pops_disc_number("Final Fantasy VII (USA) (Disc 3).vcd", b, sizeof(b)), 3);
+  CHECK_STR(a, "Final Fantasy VII (USA)");
+  CHECK_STR(a, b);
+  CHECK_EQ_INT(pops_disc_number("Parasite Eve CD2.VCD", a, sizeof(a)), 2);
+  CHECK_STR(a, "Parasite Eve");
+  CHECK_EQ_INT(pops_disc_number("Xenogears_disc_1.VCD", a, sizeof(a)), 1);
+  CHECK_STR(a, "Xenogears");
+  CHECK_EQ_INT(pops_disc_number("Metal Gear Solid.VCD", a, sizeof(a)), 0);
+  CHECK_STR(a, "Metal Gear Solid");
+  CHECK_EQ_INT(pops_disc_number("Discworld.VCD", a, sizeof(a)), 0);   /* a word, not "Disc N" */
+  CHECK_EQ_INT(pops_disc_number("ABCD 2.VCD", a, sizeof(a)), 0);      /* "CD" inside a word */
+  CHECK_EQ_INT(pops_disc_number("Game (Disc 5).VCD", a, sizeof(a)), 0); /* POPStarter: 4 */
+  CHECK_EQ_INT(pops_disc_number("Game Disc 12.VCD", a, sizeof(a)), 0);
+}
+
+TEST(pops_discs_txt_lists_images) {
+  char t[80];
+  CHECK_EQ_INT(pops_discs_txt(3, t, sizeof(t)), 36);
+  CHECK_STR(t, "IMAGE0.VCD\r\nIMAGE1.VCD\r\nIMAGE2.VCD\r\n");
+  CHECK_EQ_INT(pops_discs_txt(1, t, sizeof(t)), -1);
+  CHECK_EQ_INT(pops_discs_txt(5, t, sizeof(t)), -1);
+  CHECK_STR(pops_image_name(3), "IMAGE3.VCD");
+  CHECK(pops_image_name(4) == NULL);
 }
 
 TEST(pops_vmc_folder_and_names) {

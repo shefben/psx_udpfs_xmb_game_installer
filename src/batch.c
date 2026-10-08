@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "batch.h"
+#include "hdd_partitions.h"
 #include "util.h"
 
 void batch_entry_from_manifest(batch_entry_t *e, const manifest_entry_t *m) {
@@ -91,10 +92,10 @@ int batch_count_selected(const batch_entry_t *e, int n) {
   return c;
 }
 
-/* Data partitions (none for a resume: they exist). The XMB entry is the
- * game partition itself (no channel partition). */
+/* Every install needs its 128 MiB PFS launch/resource channel. A resumed
+ * copy already has its data partitions, but no visible channel yet. */
 static uint64_t batch_entry_need_mb(const batch_entry_t *e) {
-  return e->status == BATCH_RESUME ? 0 : (uint64_t)e->alloc_mb;
+  return (e->status == BATCH_RESUME ? 0 : (uint64_t)e->alloc_mb) + CHANNEL_SIZE_MB;
 }
 
 uint64_t batch_needed_mb(const batch_entry_t *e, int n) {

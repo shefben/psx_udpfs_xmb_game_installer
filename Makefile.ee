@@ -23,17 +23,19 @@ SRCS := main.c app_state.c iop_boot.c network.c source.c source_udpfs.c \
         iso9660.c hdl_plan.c hdl_header.c hdl_install.c hdd_partitions.c \
         pfs_channel.c apa_osd_header.c opl_dependency.c opl_launcher_payload.c \
         xmb_installer_app.c xmb_game_channel.c xmb_text.c transaction.c \
-        settings.c ui.c partname.c errors.c util.c game_pair.c browser.c flows.c \
+ settings.c console.c ui.c partname.c errors.c util.c game_pair.c browser.c flows.c \
         diagnostics.c crc32.c sha256.c batch.c manifest.c \
         server_assets.c ui_style.c rw_buffer.c remove_games.c listview.c listui.c \
         lz4_block.c source_zso.c pops.c pops_install.c backup.c pump.c resume_seg.c \
-        xmb_dump.c space.c apps.c app_cfg.c app_install.c flows_apps.c
+        xmb_dump.c space.c apps.c app_cfg.c app_install.c flows_apps.c \
+        wire_frame.c source_wire.c flows_extras.c \
+        extras.c extras_install.c
 
 # <bin2c symbol>=<file>. Standard PS2SDK modules, then the HDD driver
 # (source-built, see tools/driver/), hdlfs (HDLGameInstaller ec37c81),
 # the Neutrino network modules and the jacket images.
 SDK_IRX := iomanX fileXio poweroff ps2dev9 ps2atad ps2fs sio2man padman \
-           usbd bdm bdmfs_fatfs usbmass_bd
+           usbd bdm bdmfs_fatfs usbmass_bd mcman mcserv
 BLOBS := $(foreach m,$(SDK_IRX),$(m)_irx=$(PS2SDK)/iop/irx/$(m).irx) \
          ps2hdd_hdl_irx=vendor/irx/ps2hdd-hdl.irx \
          hdlfs_irx=reference/HDLGameInstaller/irx/hdlfs.irx \
@@ -72,6 +74,9 @@ endif
 ifneq ($(filter opl_launcher_kelf,$(BLOB_SYMS)),)
 EE_CFLAGS += -DHAVE_EMBEDDED_OPL_LAUNCHER
 endif
+ifneq ($(filter psx1_launcher_kelf,$(BLOB_SYMS)),)
+EE_CFLAGS += -DHAVE_EMBEDDED_PSX1_LAUNCHER
+endif
 ifneq ($(filter installer_kelf,$(BLOB_SYMS)),)
 EE_CFLAGS += -DHAVE_EMBEDDED_INSTALLER_KELF
 endif
@@ -79,7 +84,7 @@ ifneq ($(filter app_launcher_kelf,$(BLOB_SYMS)),)
 EE_CFLAGS += -DHAVE_EMBEDDED_APP_LAUNCHER
 endif
 
-EE_LIBS = -ldebug -lhdd -lpoweroff -lfileXio -lpatches -lpad
+EE_LIBS = -ldebug -lhdd -lpoweroff -lfileXio -lpatches -lpad -lmc
 EE_CFLAGS += -std=gnu11 -Wextra -Werror -Wno-unused-parameter -D_EE
 EE_INCS += -I$(SRC_DIR)
 

@@ -44,7 +44,7 @@ char xmb_area_letter(const char *boot_id) {
 
 static size_t render(char *out, size_t outsz, const char *title, const char *title_id,
                      char area, const xmb_game_info_t *gi, const char *today) {
-  char t[256], id[64], rd[9] = "", dev[64] = "", pub[64] = "", gen[32] = "";
+  char t[256], id[64], rd[9] = "", dev[64] = "", pub[64] = "", gen[32] = "", desc[256] = "";
   xmb_sanitize_value(title, t, sizeof(t));
   xmb_sanitize_value(title_id, id, sizeof(id));
   if (gi) {
@@ -52,6 +52,7 @@ static size_t render(char *out, size_t outsz, const char *title, const char *tit
     xmb_sanitize_value(gi->developer, dev, sizeof(dev));
     xmb_sanitize_value(gi->publisher, pub, sizeof(pub));
     xmb_sanitize_value(gi->genre, gen, sizeof(gen));
+    xmb_sanitize_value(gi->description, desc, sizeof(desc));
   }
   /* No release date known: the install date (YYYYMMDD) instead. */
   if (!rd[0] && today && strlen(today) == 8 && strspn(today, "0123456789") == 8)
@@ -64,6 +65,7 @@ static size_t render(char *out, size_t outsz, const char *title, const char *tit
     strcpy(pub, XMB_UNKNOWN);
   if (!gen[0])
     strcpy(gen, XMB_UNKNOWN);
+  if (!desc[0]) strcpy(desc, XMB_NOTE);
   /* "key = value", or "key =" when empty (the template's form). */
 #define KV(v) (v)[0] ? " " : "", (v)
   int n = snprintf(out, outsz,
@@ -73,7 +75,7 @@ static size_t render(char *out, size_t outsz, const char *title, const char *tit
                    "release_date =%s%s\r\n"
                    "developer_id =%s%s\r\n"
                    "publisher_id =%s%s\r\n"
-                   "note = " XMB_NOTE "\r\n"
+                   "note = %s\r\n"
                    "content_web = " XMB_WEB "\r\n"
                    "image_topviewflag = 0\r\n"
                    "image_type = 0\r\n"
@@ -89,7 +91,7 @@ static size_t render(char *out, size_t outsz, const char *title, const char *tit
                    "violence_flag = 0\r\n"
                    "content_type = 255\r\n"
                    "content_subtype = 0", /* no final line break, as BatchKit */
-                   t, id, KV(rd), KV(dev), KV(pub), KV(gen), area);
+                   t, id, KV(rd), KV(dev), KV(pub), desc, KV(gen), area);
 #undef KV
   if (n < 0 || (size_t)n >= outsz) {
     if (outsz)
@@ -249,7 +251,8 @@ int xmb_game_info_parse(const char *text, xmb_game_info_t *gi) {
   } F[] = {{"release_date", offsetof(xmb_game_info_t, release_date), sizeof(gi->release_date)},
            {"developer", offsetof(xmb_game_info_t, developer), sizeof(gi->developer)},
            {"publisher", offsetof(xmb_game_info_t, publisher), sizeof(gi->publisher)},
-           {"genre", offsetof(xmb_game_info_t, genre), sizeof(gi->genre)}};
+           {"genre", offsetof(xmb_game_info_t, genre), sizeof(gi->genre)},
+           {"description", offsetof(xmb_game_info_t, description), sizeof(gi->description)}};
   int n = 0;
   for (const char *p = text; p && *p;) {
     const char *eol = p + strcspn(p, "\r\n");
@@ -258,7 +261,7 @@ int xmb_game_info_parse(const char *text, xmb_game_info_t *gi) {
       size_t kl = strlen(F[i].key);
       if ((size_t)(eq - p) != kl || strncmp(p, F[i].key, kl))
         continue;
-      char v[128];
+      char v[256];
       size_t vl = (size_t)(eol - eq - 1);
       if (vl >= sizeof(v))
         vl = sizeof(v) - 1;

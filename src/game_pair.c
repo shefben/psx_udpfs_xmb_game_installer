@@ -66,7 +66,7 @@ const char *pair_label(const pair_facts_t *f) {
   if (f->verify_skipped && s == PAIR_HIDDEN_ONLY)
     return "not verified, channel pending";
   if (s == PAIR_COMPLETE && f->legacy_channel)
-    return "installed, with cover";
+    return f->cover_missing ? "installed, IMAGE NEEDED" : "installed, with cover";
   if (s == PAIR_COMPLETE && f->data_visible)
     return "installed, no cover";
   return pair_state_label(s);

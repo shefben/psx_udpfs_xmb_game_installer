@@ -38,6 +38,7 @@ typedef enum {
   ERR_PAUSED, /* the user paused a copy: Resume copy continues it */
   ERR_PARTITION_RENAME, /* __.X <-> PP.X rename refused or not confirmed */
   ERR_DATA_LIMIT, /* the 128 GiB limit for games and data would be passed */
+  ERR_CONSOLE_UNKNOWN,
   ERR__COUNT
 } inst_err_t;
 

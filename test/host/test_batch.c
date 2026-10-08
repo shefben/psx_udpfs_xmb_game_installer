@@ -70,15 +70,15 @@ TEST(batch_toggle_only_eligible) {
   CHECK_EQ_INT(e[1].selected, 0);
 }
 
-TEST(batch_space_counts_selected_data_only) {
+TEST(batch_space_counts_selected_data_and_channels) {
   batch_entry_t e[3];
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);
   e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_NONE, 1024);
   e[2] = ent("C.iso", ERR_OK, "__.SLUS-20314..C", PAIR_NONE, 512);
   batch_classify(e, 3);
-  CHECK_EQ_U64(batch_needed_mb(e, 3), 4096 + 1024 + 512);
+  CHECK_EQ_U64(batch_needed_mb(e, 3), 4096 + 1024 + 512 + 3 * 128);
   batch_toggle(&e[1]);
-  CHECK_EQ_U64(batch_needed_mb(e, 3), 4096 + 512);
+  CHECK_EQ_U64(batch_needed_mb(e, 3), 4096 + 512 + 2 * 128);
 }
 
 TEST(batch_rows_and_summary) {
@@ -165,14 +165,15 @@ TEST(batch_resumable_copy_is_selected_and_needs_only_the_channel) {
   CHECK_EQ_INT(e[1].status, BATCH_EXISTS);
   CHECK(e[0].selected && !e[1].selected && e[2].selected);
   CHECK_STR(batch_status_label(BATCH_RESUME), "resume copy");
-  /* a resume's data partitions already exist: it needs no space */
-  CHECK_EQ_U64(batch_needed_mb(e, 3), 1024);
+  /* A resume needs its channel; a new game needs data and channel. */
+  CHECK_EQ_U64(batch_needed_mb(e, 3), 1024 + 2 * 128);
   CHECK_EQ_INT(batch_toggle(&e[0]), 0);
   CHECK_EQ_INT(batch_toggle(&e[0]), 1);
-  CHECK_EQ_INT(batch_auto_select(e, 3, 1024), 2);
+  CHECK_EQ_INT(batch_auto_select(e, 3, 1024 + 2 * 128), 2);
   CHECK(e[0].selected && e[2].selected);
-  CHECK_EQ_INT(batch_auto_select(e, 3, 1023), 1); /* only the resume fits */
+  CHECK_EQ_INT(batch_auto_select(e, 3, 1024 + 2 * 128 - 1), 1); /* only the resume fits */
   CHECK(e[0].selected && !e[2].selected);
+  CHECK_EQ_INT(batch_auto_select(e, 3, 127), 0);
 }
 
 TEST(batch_summary_counts_paused) {
@@ -237,8 +238,8 @@ TEST(batch_auto_select_fits_free_space_in_order) {
   e[2] = ent("C.iso", ERR_OK, "__.SLUS-20314..C", PAIR_NONE, 512);
   e[3] = ent("D.iso", ERR_OK, "__.SLUS-20315..D", PAIR_COMPLETE, 512);
   batch_classify(e, 4);
-  /* 4096 fits, the next 4096 does not, 512 still fits */
-  CHECK_EQ_INT(batch_auto_select(e, 4, 4096 + 512), 2);
+  /* First data+channel fits, the next does not; last data+channel fits. */
+  CHECK_EQ_INT(batch_auto_select(e, 4, 4096 + 512 + 2 * 128), 2);
   CHECK(e[0].selected && !e[1].selected && e[2].selected && !e[3].selected);
   CHECK_EQ_INT(e[1].status, BATCH_NO_SPACE);
   CHECK_EQ_INT(e[3].status, BATCH_EXISTS);

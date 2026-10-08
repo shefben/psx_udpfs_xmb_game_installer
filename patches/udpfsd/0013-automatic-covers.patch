@@ -1,0 +1,285 @@
+--- a/internal/prep/scan.go
++++ b/internal/prep/scan.go
+@@ -214,7 +214,8 @@
+ }
+ 
+ // Run scans, prepares jackets, copies the launcher and writes the
+-// manifest (once after probing, again after downloads).
++// manifest only when cover preparation has finished. The scanning placeholder
++// keeps an auto-installing console from snapshotting a cover-less game list.
+ func Run(o Options) (Result, error) {
+ 	served := ServedDir(o.CacheDir)
+ 	if err := os.MkdirAll(filepath.Join(served, "jkt"), 0755); err != nil {
+@@ -301,13 +302,10 @@
+ 	} else {
+ 		os.Remove(filepath.Join(served, "OPNPS2LD.ELF"))
+ 	}
+-	if err := writeAtomic(filepath.Join(served, "manifest.txt"), o.manifest(entries, launcher)); err != nil {
+-		return res, err
+-	}
+ 	if !o.Download || o.Downloader == nil {
+-		return res, nil
+-	}
+-	// Phase 2: download missing covers, 4 at a time, then rewrite.
++		return res, writeAtomic(filepath.Join(served, "manifest.txt"), o.manifest(entries, launcher))
++	}
++	// Download missing covers, 4 at a time, before publishing the ready list.
+ 	var wg sync.WaitGroup
+ 	sem := make(chan struct{}, 4)
+ 	done := map[string]bool{}
+--- a/internal/prep/scan_test.go
++++ b/internal/prep/scan_test.go
+@@ -205,6 +205,73 @@
+ 	}
+ }
+ 
++func TestManifestWaitsForAutomaticCovers(t *testing.T) {
++	base := t.TempDir()
++	games := filepath.Join(base, "DVD")
++	os.MkdirAll(games, 0755)
++	os.WriteFile(filepath.Join(games, "game.iso"), buildISO("X", 1000, 1000, cnfOK, false), 0644)
++	cover := filepath.Join(base, "cover.jpg")
++	writeImg(t, cover, 140, 200, true)
++	jpeg, _ := os.ReadFile(cover)
++	cache := filepath.Join(base, "cache")
++	var during string
++	requests := 0
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		requests++
++		b, _ := os.ReadFile(filepath.Join(ServedDir(cache), "manifest.txt"))
++		during = string(b)
++		if r.URL.Path != "/SLUS-20312.jpg" {
++			t.Errorf("cover URL %s", r.URL.Path)
++		}
++		w.Write(jpeg)
++	}))
++	defer srv.Close()
++	o := Options{Folders: []Folder{{"DVD", games}}, CacheDir: cache, Auto: true, Download: true,
++		Downloader: &Downloader{BaseURL: srv.URL, Client: srv.Client(), CacheDir: cache}}
++	if _, err := Run(o); err != nil {
++		t.Fatal(err)
++	}
++	if during != "udpfsd-manifest 1 auto=1"+Features+" scanning=1\n" {
++		t.Fatalf("game list became ready before cover download finished: %q", during)
++	}
++	head, entries := readManifest(t, cache)
++	if strings.Contains(head, "scanning=1") || len(entries) != 1 ||
++		!strings.Contains(entries[0], "\tjkt/SLUS_203.12.png\t") {
++		t.Fatalf("%q %q", head, entries)
++	}
++	if !bothJackets(filepath.Join(ServedDir(cache), "jkt", "SLUS_203.12.png")) {
++		t.Fatal("missing XMB jackets")
++	}
++	if _, err := Run(o); err != nil {
++		t.Fatal(err)
++	}
++	if requests != 1 {
++		t.Fatalf("cover downloaded %d times", requests)
++	}
++}
++
++func TestAutomaticCoverUnavailableStillPublishesGame(t *testing.T) {
++	base := t.TempDir()
++	games := filepath.Join(base, "DVD")
++	os.MkdirAll(games, 0755)
++	os.WriteFile(filepath.Join(games, "game.iso"), buildISO("X", 1000, 1000, cnfOK, false), 0644)
++	cache := filepath.Join(base, "cache")
++	srv := httptest.NewServer(http.NotFoundHandler())
++	defer srv.Close()
++	o := Options{Folders: []Folder{{"DVD", games}}, CacheDir: cache, Auto: true, Download: true,
++		Downloader: &Downloader{BaseURL: srv.URL, Client: srv.Client(), CacheDir: cache}}
++	if _, err := Run(o); err != nil {
++		t.Fatal(err)
++	}
++	head, entries := readManifest(t, cache)
++	if strings.Contains(head, "scanning=1") || len(entries) != 1 {
++		t.Fatalf("%q %q", head, entries)
++	}
++	if fields := strings.Split(entries[0], "\t"); fields[7] != "-" {
++		t.Fatalf("unavailable cover advertised: %q", fields[7])
++	}
++}
++
+ func TestWriteAtomicRetriesRename(t *testing.T) {
+ 	// Windows refuses to replace a file another reader holds open.
+ 	dir := t.TempDir()
+--- a/internal/prep/download.go
++++ b/internal/prep/download.go
+@@ -3,6 +3,7 @@
+ import (
+ 	"errors"
+ 	"fmt"
++	"image"
+ 	"io"
+ 	"net/http"
+ 	"os"
+@@ -17,6 +18,32 @@
+ 
+ // ErrNotFound means the repository has no cover for the ID.
+ var ErrNotFound = errors.New("cover not found")
++
++const maxCoverBytes = 8 << 20
++
++// Cached/downloaded bytes must decode before they can become a permanent
++// cache hit. Otherwise one failed HTTP response poisons future server runs.
++func validCover(path string) bool {
++	f, err := os.Open(path)
++	if err != nil {
++		return false
++	}
++	defer f.Close()
++	st, err := f.Stat()
++	if err != nil || st.Size() == 0 || st.Size() > maxCoverBytes {
++		return false
++	}
++	cfg, _, err := image.DecodeConfig(f)
++	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > 8192 || cfg.Height > 8192 ||
++		int64(cfg.Width)*int64(cfg.Height) > 16<<20 {
++		return false
++	}
++	if _, err := f.Seek(0, io.SeekStart); err != nil {
++		return false
++	}
++	_, _, err = image.Decode(f)
++	return err == nil
++}
+ 
+ // Downloader fetches covers once per ID per session and caches them.
+ type Downloader struct {
+@@ -38,9 +65,10 @@
+ // the rest of the session, so an offline server never waits repeatedly.
+ func (d *Downloader) Fetch(id string) (string, error) {
+ 	dst := filepath.Join(d.CacheDir, "covers", id+".jpg")
+-	if st, err := os.Stat(dst); err == nil && st.Size() > 0 {
++	if validCover(dst) {
+ 		return dst, nil
+ 	}
++	os.Remove(dst) // discard empty, truncated or otherwise corrupt old cache
+ 	d.mu.Lock()
+ 	if d.missing == nil {
+ 		d.missing = map[string]bool{}
+@@ -83,7 +111,7 @@
+ 	if err != nil {
+ 		return "", err
+ 	}
+-	_, err = io.Copy(f, io.LimitReader(resp.Body, 8<<20))
++	n, err := io.Copy(f, io.LimitReader(resp.Body, maxCoverBytes+1))
+ 	if cerr := f.Close(); err == nil {
+ 		err = cerr
+ 	}
+@@ -91,5 +119,13 @@
+ 		os.Remove(tmp)
+ 		return "", err
+ 	}
+-	return dst, os.Rename(tmp, dst)
++	if n > maxCoverBytes || !validCover(tmp) {
++		os.Remove(tmp)
++		return "", fmt.Errorf("cover %s: invalid or oversized image", id)
++	}
++	if err := os.Rename(tmp, dst); err != nil {
++		os.Remove(tmp)
++		return "", err
++	}
++	return dst, nil
+ }
+--- a/internal/prep/download_test.go
++++ b/internal/prep/download_test.go
+@@ -1,20 +1,25 @@
+ package prep
+ 
+ import (
++	"bytes"
+ 	"errors"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"os"
++	"path/filepath"
+ 	"testing"
+ 	"time"
+ )
+ 
+ func TestDownloadFetch(t *testing.T) {
++	cover := filepath.Join(t.TempDir(), "cover.jpg")
++	writeImg(t, cover, 100, 150, true)
++	jpeg, _ := os.ReadFile(cover)
+ 	var asked []string
+ 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+ 		asked = append(asked, r.URL.Path)
+ 		if r.URL.Path == "/SLUS-20312.jpg" {
+-			w.Write([]byte("jpegdata"))
++			w.Write(jpeg)
+ 			return
+ 		}
+ 		http.NotFound(w, r)
+@@ -25,7 +30,7 @@
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if b, _ := os.ReadFile(p); string(b) != "jpegdata" {
++	if b, _ := os.ReadFile(p); !bytes.Equal(b, jpeg) {
+ 		t.Fatalf("%q", b)
+ 	}
+ 	if _, err := d.Fetch("SLUS_999.99"); !errors.Is(err, ErrNotFound) {
+@@ -40,6 +45,62 @@
+ 	}
+ }
+ 
++func TestDownloadRejectsInvalidCoverAndRetries(t *testing.T) {
++	cover := filepath.Join(t.TempDir(), "cover.jpg")
++	writeImg(t, cover, 100, 150, true)
++	jpeg, _ := os.ReadFile(cover)
++	requests := 0
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		requests++
++		if requests == 1 {
++			w.Write([]byte("not an image"))
++			return
++		}
++		w.Write(jpeg)
++	}))
++	defer srv.Close()
++	cache := t.TempDir()
++	d := &Downloader{BaseURL: srv.URL, Client: srv.Client(), CacheDir: cache}
++	if _, err := d.Fetch("SLUS_203.12"); err == nil {
++		t.Fatal("invalid image accepted")
++	}
++	for _, suffix := range []string{".jpg", ".jpg.tmp"} {
++		if _, err := os.Stat(filepath.Join(cache, "covers", "SLUS_203.12"+suffix)); !os.IsNotExist(err) {
++			t.Fatalf("invalid cover left in cache: %v", err)
++		}
++	}
++	if _, err := d.Fetch("SLUS_203.12"); err != nil {
++		t.Fatal(err)
++	}
++	if requests != 2 {
++		t.Fatalf("requests %d", requests)
++	}
++}
++
++func TestDownloadRepairsCorruptCache(t *testing.T) {
++	cover := filepath.Join(t.TempDir(), "cover.jpg")
++	writeImg(t, cover, 100, 150, true)
++	jpeg, _ := os.ReadFile(cover)
++	requests := 0
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		requests++
++		w.Write(jpeg)
++	}))
++	defer srv.Close()
++	cache := t.TempDir()
++	path := filepath.Join(cache, "covers", "SLUS_203.12.jpg")
++	os.MkdirAll(filepath.Dir(path), 0755)
++	os.WriteFile(path, []byte("broken cached image"), 0644)
++	d := &Downloader{BaseURL: srv.URL, Client: srv.Client(), CacheDir: cache}
++	if _, err := d.Fetch("SLUS_203.12"); err != nil {
++		t.Fatal(err)
++	}
++	b, _ := os.ReadFile(path)
++	if requests != 1 || !bytes.Equal(b, jpeg) {
++		t.Fatal("corrupt cache not repaired")
++	}
++}
++
+ func TestDownloadOfflineIsFastAndSticky(t *testing.T) {
+ 	d := &Downloader{BaseURL: "http://127.0.0.1:1", CacheDir: t.TempDir(),
+ 		Client: &http.Client{Timeout: 2 * time.Second}}

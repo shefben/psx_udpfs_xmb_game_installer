@@ -59,6 +59,12 @@ static void check_build(void) {
 }
 
 static void check_modules(void) {
+  if (g_app.iop.pad_reused)
+    line("INFO", "PADMAN reused from IOP, version %u.%u (not reloaded)",
+         g_app.iop.pad_version >> 8, g_app.iop.pad_version & 0xFF);
+  if (g_app.iop.sio2_reused)
+    line("INFO", "SIO2MAN reused from IOP, version %u.%u (not reloaded)",
+         g_app.iop.sio2_version >> 8, g_app.iop.sio2_version & 0xFF);
   for (int i = 0; i < g_app.iop.nmods; i++) {
     line(g_app.iop.mods[i].ok ? "PASS" : "FAIL", "IRX %-12s ret=%d rv=%d",
          g_app.iop.mods[i].module, g_app.iop.mods[i].ret, g_app.iop.mods[i].rv);

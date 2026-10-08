@@ -182,7 +182,8 @@ static int64_t z_seek(GameSource *src, int64_t off, int whence) {
 
 static int64_t z_size(GameSource *src) { return (int64_t)((zso_src_t *)src->priv)->size; }
 
-static const GameSourceOps ZSO_OPS = {z_open, z_close, z_read, z_seek, z_size};
+/* No read-ahead: index and data reads alternate (source_udpfs.h). */
+static const GameSourceOps ZSO_OPS = {z_open, z_close, z_read, z_seek, z_size, NULL, NULL};
 
 void source_zso_init(GameSource *src, zso_src_t *z, GameSource *inner) {
   memset(src, 0, sizeof(*src));

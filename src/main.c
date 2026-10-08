@@ -57,15 +57,16 @@ int main(int argc, char *argv[]) {
   flows_init();
   startup_notices();
 
-  static char rows[12][UI_ROW_LEN] = {
+  static char rows[13][UI_ROW_LEN] = {
       "Install Games from UDPFS",
       "Install Games from USB",
       "Install All Games from the server",
       "Installed Games",
       "Remove Games",
+      "Saves, Cheats & Game Extras",
       "Apps (homebrew XMB channels)",
       "Repair XMB Channels",
-      "Network Settings",
+ "Network / Console Settings",
       "Install Installer as XMB Channel",
       "Delete Installer XMB Channel",
       "Diagnostics",
@@ -76,13 +77,13 @@ int main(int argc, char *argv[]) {
     int hdd_ok = g_app.iop.hdd_ok && g_app.hdd_state == ERR_OK;
     /* udpfsd.cfg auto_install = yes: once the server answers, install
      * without input - unless someone is already using the menu. */
-    if (auto_start_due(hdd_ok, g_app.net == NETWORK_READY, g_manifest_loaded,
+ if (auto_start_due(hdd_ok && g_app.settings.console != CONSOLE_UNKNOWN, g_app.net == NETWORK_READY, g_manifest_loaded,
                        g_manifest_loaded && g_manifest.auto_install, user_acted, auto_ran)) {
       auto_ran = 1;
       flow_auto_install();
     }
     enum {
-      M_BROWSE, M_USB, M_BATCH, M_INSTALLED, M_REMOVE, M_APPS, M_REPAIR, M_NET, M_SELF, M_DEL_SELF,
+      M_BROWSE, M_USB, M_BATCH, M_INSTALLED, M_REMOVE, M_EXTRAS, M_APPS, M_REPAIR, M_NET, M_SELF, M_DEL_SELF,
       M_DIAG, M_EXIT,
       M_COUNT
     };
@@ -94,7 +95,7 @@ int main(int argc, char *argv[]) {
     sel = c;
     user_acted = 1;
     int needs_games = c == M_BROWSE || c == M_USB || c == M_BATCH || c == M_INSTALLED || c == M_REMOVE ||
-                      c == M_REPAIR;
+                      c == M_REPAIR || c == M_EXTRAS;
     if (!hdd_ok && (needs_games || c == M_APPS || c == M_SELF || c == M_DEL_SELF)) {
       ui_message("HDD unavailable",
                  "The internal HDD is not usable or a required HDD module failed\n"
@@ -115,6 +116,9 @@ int main(int argc, char *argv[]) {
       break;
     case M_USB:
       browser_run_usb();
+      break;
+    case M_EXTRAS:
+      flow_extras();
       break;
     case M_BATCH:
       flow_batch_install();

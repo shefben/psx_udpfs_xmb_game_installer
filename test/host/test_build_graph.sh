@@ -34,8 +34,10 @@ check order_opl_app_appkelf_bootstrap $?
 
 contains() { python3 -c "import sys; sys.exit(0 if open(sys.argv[2],'rb').read() in open(sys.argv[1],'rb').read() else 1)" "$1" "$2"; }
 contains "$B/app/desr-udpfs-installer-app.elf" "$B/kelf/opl-launcher-EXECUTE.KELF"; check app_embeds_opl_kelf $?
+contains "$B/app/desr-udpfs-installer-app.elf" "$B/kelf/opl-launcher-PSX1.KELF"; check app_embeds_psx1_kelf $?
 ! contains "$B/app/desr-udpfs-installer-app.elf" "$B/kelf/installer-EXECUTE.KELF"; check app_has_no_own_kelf $?
 contains "$B/bootstrap/desr-udpfs-installer-bootstrap.elf" "$B/kelf/opl-launcher-EXECUTE.KELF"; check bootstrap_embeds_opl_kelf $?
+contains "$B/bootstrap/desr-udpfs-installer-bootstrap.elf" "$B/kelf/opl-launcher-PSX1.KELF"; check bootstrap_embeds_psx1_kelf $?
 contains "$B/app/desr-udpfs-installer-app.elf" "$B/kelf/app-launcher-EXECUTE.KELF"; check app_embeds_app_launcher_kelf $?
 contains "$B/bootstrap/desr-udpfs-installer-bootstrap.elf" "$B/kelf/app-launcher-EXECUTE.KELF"; check bootstrap_embeds_app_launcher_kelf $?
 contains "$B/bootstrap/desr-udpfs-installer-bootstrap.elf" "$B/kelf/installer-EXECUTE.KELF"; check bootstrap_embeds_app_kelf $?

@@ -35,7 +35,9 @@ typedef struct {
     unsigned int size;
   } mods[IOP_MAX_MODS];
   int hdd_ok;   /* iomanX..hdlfs all loaded: HDD writes allowed */
-  int pad_ok;   /* sio2man + padman loaded */
+  int pad_ok;   /* controller modules loaded or PADMAN already resident */
+  int pad_reused, sio2_reused; /* existing modules, not embedded IRX loads */
+  unsigned short pad_version, sio2_version; /* resident IRX versions */
   int usb_ok;   /* usbd + bdm + bdmfs_fatfs + usbmass_bd loaded (mass0:) */
   int pump_ok;  /* hddpump loaded (overlapped network + HDD writes) */
   int net_ok;   /* smap + ministack + udpfs_ioman loaded */
@@ -53,8 +55,14 @@ typedef struct {
   } fails[IOP_MAX_FAILS];
 } iop_status_t;
 
+/* Optional: called with each step ("IOP reset", "ps2atad", ...) before it
+ * starts, so a start-up that hangs shows where. NULL: nothing is shown. */
+extern void (*iop_boot_progress)(const char *step);
+
 void iop_boot_base(iop_status_t *st);
 /* dhcp: ask a DHCP server first; local_ip is then the fallback. */
 void iop_boot_network(const char *local_ip, int dhcp, iop_status_t *st);
+
+int iop_load_memcard(iop_status_t *st);
 
 #endif

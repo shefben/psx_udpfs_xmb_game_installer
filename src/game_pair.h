@@ -36,6 +36,7 @@ typedef struct {
   int data_visible;   /* the HDL game partition itself is PP.X (BatchKit layout) */
   int legacy_channel; /* PFS PP.X next to __.X: a cover partition (or an older
                        * release's channel) */
+  int cover_missing; /* PFS jackets missing, invalid, default or unreadable */
   int verify_skipped; /* journal: full read-back skipped by the user */
   int resumable;      /* interrupted copy, checkpoint bound to this partition */
   uint64_t resume_bytes; /* bytes already copied (when resumable) */

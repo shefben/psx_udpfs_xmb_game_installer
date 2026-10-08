@@ -1,5 +1,39 @@
 # Changelog
 
+## 3.2
+
+### Fixed
+
+- PSX1 PS2 game channels now use hidden HDL data and a separate PFS launch
+  channel with `BOOT2 = pfs:/EXECUTE.KELF`, avoiding unsupported PATINFO.
+  Select the console generation in Network / Console Settings.
+- PSX1 uses the pinned compatible launcher wrapper; generic server
+  launchers cannot override it.
+- Startup reuses resident PADMAN/SIO2MAN modules and displays each
+  initialization step for diagnosing HDD/XMB startup failures.
+
+### Changed
+
+- PS2 installation automatically creates a 128 MiB PFS cover/launch
+  partition on both generations, with artwork, game information and the
+  selected launcher. Repair migrates legacy channels without recopying data.
+- The server prepares downloaded covers before publishing the ready game
+  list, repairs damaged caches, and uses defaults for unavailable artwork.
+  Batch/resume space estimates include the resource partition.
+- The user reports the test package worked. Version 3.2 promotes that
+  tested implementation and its template-wrapped installer payload.
+
+### Added
+
+- Negotiated LZ4 network frames, with validated decoding and ordinary-read fallback for older servers.
+- Server-side CSO / CHD decoding and contiguous split `.iso.001` images.
+- Automatic single-BIN/CUE conversion to virtual VCD and PS1 multi-disc installation (up to four discs).
+- Saves, Cheats & Game Extras menu; automatic game-ID-matched CFG, CHT, VMC and OPL artwork installation. Existing cards and settings are kept unless replacement is requested.
+- PS1 card/save imports, PCSX2 card conversion and PS2 `.psu` imports to a physical memory card.
+- Installed channels with missing, invalid or default jackets remain flagged IMAGE NEEDED after repair. Fetch matching XMB resources individually or in bulk without touching game data or launchers.
+- Game database descriptions written to each channel's `res/info.sys`, beside its matching jackets.
+- These additions retain the tested 3.2 HDD copy/read-back path; hardware validation of the added features is pending.
+
 ## 3.1 hotfix (from 3.0)
 
 ### Fixed

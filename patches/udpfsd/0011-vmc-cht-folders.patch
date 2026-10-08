@@ -1,0 +1,90 @@
+diff --git a/cmd/udpfsd/main.go b/cmd/udpfsd/main.go
+index 217a1d8..7bd82fa 100644
+--- a/cmd/udpfsd/main.go
++++ b/cmd/udpfsd/main.go
+@@ -96,6 +96,12 @@ func main() {
+ 	if cfg.APPS != "" {
+ 		fsopts = append(fsopts, fs.WithMount("APPS", cfg.APPS))
+ 	}
++	if cfg.VMC != "" {
++		fsopts = append(fsopts, fs.WithMount("VMC", cfg.VMC))
++	}
++	if cfg.CHT != "" {
++		fsopts = append(fsopts, fs.WithMount("CHT", cfg.CHT))
++	}
+ 	if cfg.CFG != "" {
+ 		fsopts = append(fsopts, fs.WithMount("CFG", cfg.CFG))
+ 	}
+diff --git a/internal/config/config.go b/internal/config/config.go
+index a8a8e15..3ef29f4 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -17,6 +17,8 @@ type Config struct {
+ 	OPLElf                                string // OPL runtime offered to consoles without OPL
+ 	POPS                                  string // PS1 games (.VCD) + POPStarter files, served as /POPS
+ 	APPS                                  string // homebrew apps (.ELF + their files), served as /APPS
++	VMC                                   string // memory cards and saves, served as /VMC
++	CHT                                   string // cheats (OPL .cht, POPStarter .txt), served as /CHT
+ 	GameDB                                string // PS2DB.xml (PFS-BatchKit-Manager): XMB game info
+ 	PowerOff                              bool   // power_off_after_install
+ 	DownloadCovers, AutoInstall, ReadOnly bool
+@@ -28,7 +30,7 @@ type Config struct {
+ }
+ 
+ // Keys lists every accepted key.
+-var Keys = []string{"dvd", "cd", "games", "install", "cfg", "art", "pops", "apps", "gamedb", "power_off_after_install", "gamelist", "cache",
++var Keys = []string{"dvd", "cd", "games", "install", "cfg", "art", "pops", "apps", "vmc", "cht", "gamedb", "power_off_after_install", "gamelist", "cache",
+ 	"download_covers", "opl_launcher", "opl_elf", "auto_install", "fsroot", "read_only", "port", "bind"}
+ 
+ // Defaults returns the built-in defaults (relative paths not yet resolved).
+@@ -94,6 +96,10 @@ func (c *Config) Set(key, value, baseDir string) error {
+ 		return dir(&c.POPS)
+ 	case "apps":
+ 		return dir(&c.APPS)
++	case "vmc":
++		return dir(&c.VMC)
++	case "cht":
++		return dir(&c.CHT)
+ 	case "gamedb":
+ 		c.GameDB = resolve(v, baseDir)
+ 		if c.GameDB != "" {
+diff --git a/internal/config/config_test.go b/internal/config/config_test.go
+index 6728bb6..e12221f 100644
+--- a/internal/config/config_test.go
++++ b/internal/config/config_test.go
+@@ -186,3 +186,35 @@ func TestAPPSFolderKey(t *testing.T) {
+ 		t.Fatal("missing apps folder accepted")
+ 	}
+ }
++
++func TestVMCAndCHTFolderKeys(t *testing.T) {
++	base := t.TempDir()
++	for _, d := range []string{"VMC", "CHT"} {
++		if err := os.Mkdir(filepath.Join(base, d), 0o755); err != nil {
++			t.Fatal(err)
++		}
++	}
++	p := write(t, base, "udpfsd.cfg", "vmc = VMC\ncht = "+filepath.Join(base, "CHT")+"\n")
++	c, err := Load(p, base)
++	if err != nil || c.VMC != filepath.Join(base, "VMC") || c.CHT != filepath.Join(base, "CHT") {
++		t.Fatalf("%v %q %q", err, c.VMC, c.CHT)
++	}
++	if c.HasGameFolders() {
++		t.Fatal("VMC/CHT folders are not PS2 game folders")
++	}
++	for _, key := range []string{"vmc", "cht"} {
++		p = write(t, base, "udpfsd.cfg", key+" = nothere\n")
++		if _, err := Load(p, base); err == nil {
++			t.Fatalf("missing %s folder accepted", key)
++		}
++		write(t, base, "afile", "x")
++		p = write(t, base, "udpfsd.cfg", key+" = afile\n")
++		if _, err := Load(p, base); err == nil {
++			t.Fatalf("%s = a file accepted", key)
++		}
++		p = write(t, base, "udpfsd.cfg", key+" =\n")
++		if c, err := Load(p, base); err != nil || c.VMC != "" || c.CHT != "" {
++			t.Fatalf("empty %s: %v", key, err)
++		}
++	}
++}

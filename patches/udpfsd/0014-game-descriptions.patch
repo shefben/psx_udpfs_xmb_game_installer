@@ -1,0 +1,62 @@
+--- a/internal/prep/gamedb.go
++++ b/internal/prep/gamedb.go
+@@ -13,7 +13,7 @@
+ // GameInfo is the XMB info of one game (OPL-Games-Infos-Database, the
+ // PS2DB.xml / PS1DB.xml shipped with PFS-BatchKit-Manager).
+ type GameInfo struct {
+-	Release, Developer, Publisher, Genre string
++	Release, Developer, Publisher, Genre, Description string
+ }
+ 
+ type dbGame struct {
+@@ -22,6 +22,7 @@
+ 	Developer string `xml:"Developer"`
+ 	Publisher string `xml:"Publisher"`
+ 	Genre     string `xml:"Genre"`
++	Description string `xml:"Description"`
+ }
+ 
+ // LoadGameDB reads a game database keyed by game ID ("SLUS_203.12").
+@@ -60,7 +61,8 @@
+ 		out[id] = GameInfo{Release: ReleaseDate(g.Release),
+ 			Developer: strings.TrimRight(Sanitize(g.Developer, 63), ", "),
+ 			Publisher: strings.TrimRight(Sanitize(g.Publisher, 63), ", "),
+-			Genre:     Sanitize(g.Genre, 31)}
++			Genre:     Sanitize(g.Genre, 31),
++			Description: Sanitize(g.Description, 255)}
+ 	}
+ }
+ 
+@@ -120,7 +122,7 @@
+ func infoText(g GameInfo) string {
+ 	var b strings.Builder
+ 	for _, kv := range [][2]string{{"release_date", g.Release}, {"developer", g.Developer},
+-		{"publisher", g.Publisher}, {"genre", g.Genre}} {
++		{"publisher", g.Publisher}, {"genre", g.Genre}, {"description", g.Description}} {
+ 		if kv[1] != "" {
+ 			fmt.Fprintf(&b, "%s=%s\n", kv[0], kv[1])
+ 		}
+--- a/internal/prep/gamedb_test.go
++++ b/internal/prep/gamedb_test.go
+@@ -41,7 +41,7 @@
+ 		t.Fatalf("%d entries", len(db))
+ 	}
+ 	g := db["SLUS_203.12"]
+-	if g != (GameInfo{"20011217", "Square Co. Ltd", "Square Enix", "RPG"}) {
++	if g != (GameInfo{"20011217", "Square Co. Ltd", "Square Enix", "RPG", "long text"}) {
+ 		t.Fatalf("%+v", g)
+ 	}
+ 	if g := db["SLES_523.92"]; g.Developer != "BattleBorne & Co" || g.Release != "" {
+@@ -68,10 +68,10 @@
+ 
+ func TestWriteInfo(t *testing.T) {
+ 	served := t.TempDir()
+-	db := map[string]GameInfo{"SLUS_203.12": {"20011217", "Square", "", "RPG"}}
++	db := map[string]GameInfo{"SLUS_203.12": {"20011217", "Square", "", "RPG", "This game"}}
+ 	writeInfo(served, "SLUS_203.12", db)
+ 	b, err := os.ReadFile(filepath.Join(served, "info", "SLUS_203.12.txt"))
+-	if err != nil || string(b) != "release_date=20011217\ndeveloper=Square\ngenre=RPG\n" {
++	if err != nil || string(b) != "release_date=20011217\ndeveloper=Square\ngenre=RPG\ndescription=This game\n" {
+ 		t.Fatalf("%v %q", err, b)
+ 	}
+ 	writeInfo(served, "SLUS_203.12", map[string]GameInfo{}) // no longer in the DB

@@ -1,27 +1,27 @@
-# PSX DESR UDPFS XMB Game Installer (v3.1)
+# PSX DESR UDPFS XMB Game Installer (v3.2)
 
 An installer for the PSX DESR that runs on the console as its own XMB
 channel. It installs PS2 and PS1 games to the internal HDD from a PC over
 the network ([udpfsd](https://github.com/pcm720/udpfsd)) or from a USB
 drive. Every installed game appears in the XMB and starts through
 [OPL-Launcher](https://github.com/ps2homebrew/OPL-Launcher) (PS2) or
-POPStarter (PS1). PS2 games use PFS-BatchKit-Manager's layout, which
-loads reliably on a DESR: one partition per game, booted from its own
-header.
+POPStarter (PS1). PS2 games use hidden HDL data plus a separate 128 MiB PFS
+cover/launch channel. Select PSX1 or PSX2 in Network / Console Settings to
+use the appropriate launcher wrapper.
 
 ```
 PC .iso/.zso/.vcd -> udpfsd -> UDPFS/UDPRDMA (DHCP or fixed IP) -> udpfs:/...
 USB .iso/.zso/.vcd -> mass0:/...
   -> GameSource (ZSO unpacked on the EE) -> CRC-32 -> hddpump.irx -> hdl0:
-  -> hidden __.<ID>..<TITLE> -> full read-back -> boot header -> renamed PP.<ID>..<TITLE>
+  -> hidden __.<ID>..<TITLE> -> full read-back -> separate PFS PP.<ID>..<TITLE>
 ```
 
-Status: tested on the PC side (host tests, signed build, server smoke
-tests). Testing on a DESR is in progress; see the
+Status: host/server tests and builds pass; the user reports the 3.2 test
+package worked on hardware. For broader model coverage, see the
 [hardware checklist](docs/HARDWARE_TEST_CHECKLIST.md). Back up the HDD
 before the first run.
 
-**Download:** `PSX-UDPFS-Installer_V3.1.zip` (from `make package`)
+**Download:** `PSX-UDPFS-Installer_V3.2.zip`
 contains the installer ELF, the ready-to-run server folder,
 `README.txt`, `CHANGELOG.txt` and `SERVER-MANUAL.txt`.
 
@@ -176,3 +176,19 @@ Open PS2 Loader is distributed under the AFL-3.0 licence (shipped as
 unchanged; Sony's POPS files are not part of this project. Pinned upstream revisions:
 [reference/REVISIONS.txt](reference/REVISIONS.txt) and
 [provenance](docs/PROVENANCE.md).
+
+### Selected features added in 3.2
+
+The server decodes CSO and CHD images and contiguous `Name.iso.001`, `.002`, ...
+sets. It converts supported single-BIN/CUE games to virtual VCD files and offers
+LZ4 frames automatically to the client. USB sources retain ISO/raw-ZSO/VCD support.
+Name PS1 discs `Game (Disc 1).VCD` through Disc 4 to install them together.
+
+Put ID-named cards/saves in `VMC`, cheats in `CHT`, settings in `CFG`, and artwork
+in `ART`. Installation adds matching extras while keeping existing cards/settings;
+the Saves, Cheats & Game Extras menu manages imports and replacement.
+Each game's XMB PFS channel has its own `res/jkt_001.png`, `res/jkt_002.png` and
+`res/info.sys`. The configured game database supplies its description, developer,
+publisher, genre and release date by game ID. See [server manual](docs/SERVER_MANUAL.md).
+
+The added features pass host/server tests; DESR hardware validation is pending.
