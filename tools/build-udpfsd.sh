@@ -139,6 +139,7 @@ VERSION="$(git -C "$ROOT/reference/udpfsd" rev-parse --short=12 HEAD)+game-prep-
 
 mkdir -p "$SRC/out"
 cd "$SRC"
+export XMB_JACKETS_HELPER="$ROOT/vendor/nquant/xmb-jackets.exe"
 export GOFLAGS=-buildvcs=false CGO_ENABLED=1
 CC=gcc CGO_LDFLAGS="-L$CHDR_LINUX" go vet ./...
 CC=gcc CGO_LDFLAGS="-L$CHDR_LINUX" go test ./...
@@ -170,5 +171,7 @@ if [ "$MODE" = build ]; then
     exit 1
   }
   cp out/udpfsd-windows-amd64.exe out/udpfsd-linux-amd64 "$OUT"/
+  cp "$ROOT/vendor/nquant/xmb-jackets.exe" "$ROOT/vendor/nquant/nQuant.Core.dll" "$OUT"/
+  cp "$ROOT/vendor/nquant/LICENSE.txt" "$OUT/nQuant-LICENSE.txt"
   echo "udpfsd $VERSION (CHD: libchdr ${LIBCHDR_COMMIT:0:12}) -> $OUT"
 fi

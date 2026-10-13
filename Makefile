@@ -89,6 +89,10 @@ test:
 	python3 test/host/test_channel_layout.py
 	python3 test/host/test_extras_writes.py
 	python3 test/host/test_cover_refresh.py
+	python3 test/host/test_xmb_png.py
+	python3 test/host/test_smap_receive.py
+	python3 test/host/test_channel_header_compat.py
+	python3 test/host/test_apa_scan.py
 	python3 test/host/test_launcher_profile.py
 	bash test/host/test_kelf_sign.sh
 	python3 tools/verify-assets.py
@@ -102,7 +106,7 @@ test-graph:
 UDPFSD_BIN := $(BUILD)/udpfsd/udpfsd-windows-amd64.exe $(BUILD)/udpfsd/udpfsd-linux-amd64
 
 udpfsd: $(UDPFSD_BIN)
-$(UDPFSD_BIN) &: $(BUILD)/.refs-ok $(wildcard patches/udpfsd/*.patch) tools/build-udpfsd.sh
+$(UDPFSD_BIN) &: $(BUILD)/.refs-ok $(wildcard patches/udpfsd/*.patch) tools/build-udpfsd.sh vendor/nquant/xmb-jackets.exe vendor/nquant/nQuant.Core.dll
 	bash tools/build-udpfsd.sh $(BUILD)/udpfsd
 
 test-udpfsd: $(BUILD)/.refs-ok
@@ -282,6 +286,8 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	  cmp -s "$$b" $(DIST)/udpfsd/$$(basename "$$b") || cp "$$b" $(DIST)/udpfsd/; \
 	done
 	cp $(OPL_KELF) docs/udpfsd-example/udpfsd.cfg $(DIST)/udpfsd/
+	cp vendor/nquant/xmb-jackets.exe vendor/nquant/nQuant.Core.dll $(DIST)/udpfsd/
+	cp vendor/nquant/LICENSE.txt $(DIST)/udpfsd/nQuant-LICENSE.txt
 	cp $(OPL_RUNTIME) $(BUILD)/opl/OPL-LICENSE.txt $(DIST)/udpfsd/
 	cp docs/udpfsd-example/* $(DIST)/udpfsd-example/
 	cp docs/INSTALL.md docs/HARDWARE_TEST_CHECKLIST.md $(DIST)/docs/

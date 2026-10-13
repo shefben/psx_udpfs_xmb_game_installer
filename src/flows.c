@@ -611,6 +611,11 @@ static void power_off_now(void) {
 
 /* Last chance to keep the console on: any button cancels (returns 0). */
 static int power_off_countdown(const char *title) {
+  if (!g_app.iop.poweroff_ok) {
+    ui_message(title, "Automatic power off is unavailable (poweroff module failed).\n"
+                      "The console will stay on; see Diagnostics for the module error.");
+    return 0;
+  }
   for (int s = 15; s > 0; s--) {
     char st[64];
     snprintf(st, sizeof(st), "Switching off in %d s - any button cancels", s);
@@ -1316,9 +1321,15 @@ static lv_item_t pair_items[MAX_PAIRS];
 static listui_state_t rm_ls;
 static hdd_part_t parts[256];
 
+static void apa_scan_progress(int entry, const char *name) {
+  ui_at(4, " APA header %d: %.48s", entry, name);
+}
+
 static int collect_pairs(void) {
   ui_header("Scanning", "Reading APA partition table...");
+  hdd_scan_progress = apa_scan_progress;
   int np = hdd_list(parts, 256);
+  hdd_scan_progress = NULL;
   if (np < 0)
     return np;
   static pair_part_t pp[256];
@@ -1354,7 +1365,9 @@ static void pair_list(const char *title, int only_problems) {
   for (;;) {
     int n = collect_pairs();
     if (n < 0) {
-      ui_message(title, "Cannot read the HDD partition table.");
+      char error[300];
+      snprintf(error, sizeof(error), "APA scan stopped (code %d).\n\nNo partitions were changed.\n-40: repeated APA header; -75: table/list limit.\nOther negative codes are HDD driver read errors.", n);
+      ui_message(title, error);
       return;
     }
     if (only_problems) {

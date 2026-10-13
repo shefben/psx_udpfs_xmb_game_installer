@@ -18,13 +18,15 @@ harness = r'''
 #include "pfs_channel.h"
 #include "partname.h"
 #include "util.h"
+#include "sha256.h"
 #include "xmb_game_channel.h"
 #define FIO_MT_RDONLY 1
 #define FIO_MT_RDWR 2
 #define JACKET_MAX 524288
 app_state_t g_app;
 int g_manifest_loaded;
-static int mounted, mount_fail, mode, served, writes;
+static int mounted, mount_fail, mode, served, writes, reloads, reload_fail;
+int manifest_load(void) { reloads++; if(reload_fail) { g_manifest_loaded=0; return -1; } g_manifest_loaded=1; return 0; }
 static const unsigned char default_art[4]={1,2,3,4};
 static unsigned char disk[2][4];
 static int sizes[2];
@@ -37,7 +39,7 @@ int hdd_stat(const char *p,uint16_t *t,uint32_t *a,uint32_t *b) { (void)p;(void)
 const char *game_load_jackets(const char *id,jacket_pair_t *j,void *owned[2]) {
   assert(!strcmp(id,"SLUS_203.12")); owned[0]=owned[1]=NULL;
   static const unsigned char a[4]={42,2,3,4}, b[4]={43,2,3,4};
-  *j=(jacket_pair_t){a,4,b,4}; return served?"server":"missing";
+  *j=served ? (jacket_pair_t){a,4,b,4} : (jacket_pair_t){default_art,4,default_art,4}; return served?"server":"missing";
 }
 int channel_get_title(const char *p,char *t,size_t n) { (void)p;str_copy(t,"GAME",n);return 0; }
 int game_load_info(const char *id,xmb_game_info_t *gi) { assert(!strcmp(id,"SLUS_203.12")); memset(gi,0,sizeof(*gi)); strcpy(gi->description,"Correct game's story"); return mode; }
@@ -62,9 +64,14 @@ int main(void) {
  disk[1][0]=43; assert(game_cover_status(p)==GAME_COVER_READY);
  mount_fail=1;assert(game_cover_status(p)==GAME_COVER_UNREADABLE);mount_fail=0;
  memcpy(disk[0],default_art,4);memcpy(disk[1],default_art,4);
- g_app.net=NETWORK_READY;g_manifest_loaded=1;
- game_refresh_resources(p,&rep);assert(rep.err && writes==0 && game_cover_status(p)==GAME_COVER_DEFAULT);
- served=1;mode=1;game_refresh_resources(p,&rep);assert(!rep.err && writes==3 && game_cover_status(p)==GAME_COVER_READY);
+  g_app.net=NETWORK_READY;g_manifest_loaded=0;
+  reload_fail=1;game_refresh_resources(p,&rep);assert(rep.err==ERR_NETWORK && writes==0 && reloads==1);
+  reload_fail=0;
+ game_refresh_resources(p,&rep);assert(rep.err && writes==2 && game_cover_status(p)==GAME_COVER_DEFAULT);
+  assert(reloads==2 && g_manifest_loaded);
+ writes=0;
+ mode=1;game_refresh_resources(p,&rep);assert(rep.err && writes==3 && game_cover_status(p)==GAME_COVER_DEFAULT);
+ writes=0;served=1;mode=1;game_refresh_resources(p,&rep);assert(!rep.err && writes==3 && game_cover_status(p)==GAME_COVER_READY);
  mode=0;writes=0;game_refresh_resources(p,&rep);assert(!rep.err && writes==2); /* keep metadata without server DB */
  assert(!mounted);puts("Production missing/default cover detection and refresh passed");
 }
@@ -75,6 +82,6 @@ with tempfile.TemporaryDirectory() as tmp:
     binary = Path(tmp) / 'covers'
     subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror',
                     '-fsanitize=address,undefined', '-I' + str(ROOT / 'src'), str(src),
-                    *[str(ROOT / 'src' / (n + '.c')) for n in ['util', 'partname', 'xmb_text']],
+                    *[str(ROOT / 'src' / (n + '.c')) for n in ['util', 'partname', 'xmb_text', 'sha256']],
                     '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

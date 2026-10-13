@@ -11,6 +11,14 @@ covers and game info, and offers OPL and OPL-Launcher to the console.
 - Linux: `chmod +x udpfsd-linux-amd64`, then `./udpfsd-linux-amd64`.
 - Keep the window open while the DESR installs games.
 
+Keep `xmb-jackets.exe` and `nQuant.Core.dll` beside the Windows server.
+Dynamic covers now use PSX XMB Manager's exact Windows .NET image pipeline.
+Native Linux uses the embedded canonical defaults unless you prepare covers
+on Windows: run `xmb-jackets.exe source.jpg SLUS_203.12_L.png SLUS_203.12.png`,
+then copy both PNGs and `SLUS_203.12.png.xmb-manager` into
+`udpfsd-cache/served/jkt/`. Substitute the game's full boot ID. Old covers
+without the new stamp are regenerated on Windows rather than reused.
+
 At start it reads `udpfsd.cfg` from its own folder and scans your game
 folders. When the scan is done, the window shows a line like:
 
@@ -67,7 +75,7 @@ on the network. One CPU core per transfer compresses on the fly.
 | `cfg = CFG` | OPL per-game settings, `<GAME-ID>.cfg` (e.g. `SLUS_203.12.cfg`). Copied to the DESR's OPL folder at install (kept if OPL has one there, unless replaced from *Saves, Cheats & Game Extras*). Its `Title=` line is used as the game title. |
 | `art = ART` | Covers: `<GAME-ID>_COV.png/.jpg`, `<GAME-ID>_COV2.*` or `<GAME-ID>.*`. Also OPL art, installed into OPL's ART folder as PNG (JPEG converted, served under `/.oplart/`): `_COV _COV2 _ICO _LAB _LGO _BG` (or `_BG_00`) `_SCR` (or `_SCR_00`) `_SCR2` (or `_SCR_01`) |
 | `gamelist = GameListPS2.txt` | List of game IDs and names (PFS-BatchKit-Manager format), used for titles |
-| `gamedb = PS2DB.xml` | Game database (PFS-BatchKit-Manager `BAT\PS2DB.xml`). Adds the release date, developer, publisher, genre and description shown in the XMB game info. A game not in the database gets its install date as the release date. |
+| `gamedb = auto` | Automatically downloads/caches GDX PS2/PS1 databases; a local XML path can override this. Adds the release date, developer, publisher, genre and description shown in the XMB game info. A game not in the database gets its install date as the release date. |
 | `download_covers = yes` | Downloads covers missing from `art` (from xlenore/ps2-covers on GitHub) |
 
 **Title order:** `Title=` in the game's CFG, then the game list, then the
@@ -144,7 +152,7 @@ overrides `udpfsd.cfg`. Run the server with `-h` for the full list.
 | `prep: N invalid images` | Those files are not PS2 disc images; fix or remove them. |
 | Game listed as "duplicate" | Two images of the same game; only one is installed. |
 | Plain "PS2 GAME" cover | Restart the server, then on the DESR: Installed Games > game > Repair XMB channel. |
-| No release date / genre in the XMB | Set `gamedb`; the game must be in that database. |
+| No release date / genre in the XMB | Check the automatic database preparation log; the game ID must be in the database. |
 | PS1 install says POPSTARTER.KELF / POPS.ELF missing | Keep the shipped `POPSTARTER.KELF` and add `POPS.ELF` and `IOPRP252.IMG` next to the .VCD or in the `POPS` folder. Installers before 3.1 reported these files missing on the server even when present; update the installer. |
 
 Each XMB game channel stores its own game-ID-matched jackets in `res/jkt_001.png`
@@ -157,5 +165,25 @@ default images show **IMAGE NEEDED**, including after a successful channel repai
 Choose **Fetch XMB image / description** on the game, or accept the bulk fetch
 in Repair. The server must be connected and have prepared a matching cover.
 If unavailable, put `<GAME-ID>_COV.png` or `.jpg` in ART (or enable
-`download_covers = yes`), restart udpfsd to prepare it, then retry. Failed fetches
-keep the channel flagged; they do not replace an image with a default.
+`download_covers = yes`), restart udpfsd to prepare it, then retry. Unavailable covers keep the channel flagged. Missing or default jackets
+receive the indexed fallback; existing real artwork is preserved.
+
+### 3.2 hotfix test
+
+`gamedb = auto` is enabled by default, including when the setting is omitted.
+The server downloads GDX's English PS2 and PS1 databases into its cache, then
+uses the cached copies offline. A local XML path overrides this; `gamedb =`
+disables metadata. Databases are from the public OPL Games Infos Database
+Project: https://github.com/GDX-X/OPL-Games-Infos-Database-Project (GDX; source
+credits include Redump, PSXDatacenter and ScreenScraper). Missing entries stay
+at defaults, and a failed download does not stop game installation.
+
+The test build writes opaque 8-bit indexed fallback jackets, matching the
+server's PNG format. Repair/Fetch replaces older generic black/default jackets
+with the new PS2 GAME fallback when no real cover is available; those games
+remain IMAGE NEEDED. Metadata can update even when the actual cover is missing.
+
+APA enumeration now shows the raw header being read, uses cache-line-aligned
+DMA buffers, waits for network initialization, checks for repeated header LBAs
+and reports read/limit errors. PSX1 freezing in one driver read still needs
+hardware testing; record the displayed APA entry number if it stops.

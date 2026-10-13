@@ -10,20 +10,25 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--output', type=Path, help='Explicit ZIP output path')
 parser.add_argument('--release', help='Promote the tested payloads to a versioned release')
 parser.add_argument('--stage', type=Path, help='Keep the verified distribution tree for end-user packaging')
 args = parser.parse_args()
 if args.release and not all(c.isdigit() or c == '.' for c in args.release):
     parser.error('release must be a numeric version')
-OUTPUT = ROOT / (f'PSX-UDPFS-Installer_V{args.release}.zip' if args.release else 'desr-udpfs-installer-test.zip')
+OUTPUT = (ROOT / args.output) if args.output else ROOT / (f'PSX-UDPFS-Installer_V{args.release}.zip' if args.release else 'desr-udpfs-installer-test.zip')
 LABEL = f'version {args.release}' if args.release else 'test release'
 spec = importlib.util.spec_from_file_location('psx1_wrapper', ROOT / 'tools/build-psx1-kelf.py')
 wrapper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wrapper)
 
 updates = {
+    'udpfsd/xmb-jackets.exe': ROOT / 'vendor/nquant/xmb-jackets.exe',
+    'udpfsd/nQuant.Core.dll': ROOT / 'vendor/nquant/nQuant.Core.dll',
+    'udpfsd/nQuant-LICENSE.txt': ROOT / 'vendor/nquant/LICENSE.txt',
     'desr-udpfs-installer-app.elf': ROOT / 'build/app/desr-udpfs-installer-app.elf',
     'desr-udpfs-installer-bootstrap.elf': ROOT / 'build/bootstrap-test/desr-udpfs-installer-bootstrap.elf',
+    'BOOT.ELF': ROOT / 'build/bootstrap-test/desr-udpfs-installer-bootstrap.elf',
     'installer-EXECUTE.KELF': ROOT / 'build/kelf/installer-test-EXECUTE.KELF',
     'opl-launcher-PSX1.KELF': ROOT / 'build/kelf/opl-launcher-PSX1.KELF',
     'opl-launcher-EXECUTE.KELF': ROOT / 'build/kelf/opl-launcher-EXECUTE.KELF',
@@ -63,7 +68,9 @@ with tempfile.TemporaryDirectory(prefix='psxi-test-release-') as temp:
         'Select Network / Console Settings > DESR generation before PS2 game installation.\n'
         'PSX1: hidden HDL data plus PFS channel and pinned v1.2 template wrapper.\n'
         'PSX2: hidden HDL data plus automatic PFS cover / launch channel, existing PSX2 wrapper.\n'
-        'Server automatically downloads missing covers before publishing the ready game list.\n'
+        'Windows server prepares missing covers with Manager System.Drawing/nQuant before publishing the ready list.\n'
+        'XMB parity test: Manager headers/templates and PNG encoder; old cover cache invalidated.\n'
+        'Keep xmb-jackets.exe and nQuant.Core.dll beside udpfsd. Native Linux uses prepared/default artwork.\n'
         'Both generations install ID-matched artwork and descriptions into each channel res/ folder.\n'
         'LZ4 transfers; server CSO/CHD/split-ISO decoding; single-BIN/CUE conversion.\n'
         'PS1 multi-disc and automatic CFG/CHT/VMC/ART installation; extras management menu.\n'
@@ -71,10 +78,11 @@ with tempfile.TemporaryDirectory(prefix='psxi-test-release-') as temp:
         'Installed Games / Repair flag IMAGE NEEDED; fetch XMB resources from the server.\n'
         'Installer EXECUTE.KELF uses the pinned v1.2 template wrapper from the tested package.\n'
         'The bootstrap embeds this updated installer and both game-launcher variants.\n'
+        'For memory cards, copy BOOT.ELF to mc0:/ or mc1:/ and launch it with wLaunchELF.\n'
         + ('The user reports the earlier compatibility test worked; newly added features need hardware testing.\n'
          if args.release else
          'Hardware verification is pending: the IOP-loading hang and multi-channel XMB freeze\n'
-         'are not confirmed resolved. Test one channel, then two, on the DESR-7000.\n'),
+         'are not confirmed resolved. Validate at least 12 channels and cold-boot game launching on PSX1.\n'),
         encoding='utf-8')
     (stage / 'BUILD-MANIFEST.txt').write_text(
         f'DESR installer {LABEL}\n'
@@ -90,7 +98,7 @@ with tempfile.TemporaryDirectory(prefix='psxi-test-release-') as temp:
     for path in sorted(stage.rglob('*')):
         if path.is_file() and path.name != 'SHA256SUMS':
             sums.append(hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + path.relative_to(stage).as_posix())
-    (stage / 'SHA256SUMS').write_text('\n'.join(sums) + '\n', encoding='utf-8', newline='\n')
+    (stage / 'SHA256SUMS').write_bytes(('\n'.join(sums) + '\n').encode('utf-8'))
     if args.stage:
         if args.stage.exists():
             raise ValueError('stage already exists: ' + str(args.stage))

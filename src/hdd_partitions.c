@@ -9,7 +9,33 @@
 
 #include "hdd_partitions.h"
 #include "pump.h"
+#include "network.h"
 #include "util.h"
+
+/* Isolate directory DMA buffers and stop cycles instead of accepting a
+ * partial APA table. HDD enumeration is serial on the main thread. */
+#define APA_SCAN_MAX 8192
+static uint32_t scan_seen[APA_SCAN_MAX];
+static int scan_count;
+void (*hdd_scan_progress)(int entry, const char *last_name);
+static int scan_open(void) {
+  network_wait_idle();
+  scan_count = 0;
+  if (hdd_scan_progress) hdd_scan_progress(0, "opening hdd0:");
+  return fileXioDopen("hdd0:");
+}
+static int scan_read(int dd, iox_dirent_t *de) {
+  if (scan_count >= APA_SCAN_MAX) return -75;
+  if (hdd_scan_progress) hdd_scan_progress(scan_count + 1, "reading next APA header");
+  memset(de, 0, sizeof(*de));
+  int rc = fileXioDread(dd, de);
+  if (rc <= 0) return rc;
+  for (int i = 0; i < scan_count; i++)
+    if (scan_seen[i] == de->stat.private_5) return -40;
+  scan_seen[scan_count++] = de->stat.private_5;
+  if (hdd_scan_progress) hdd_scan_progress(scan_count, de->name);
+  return rc;
+}
 
 /* Same argument as libhdd's pfsFormatArg (PFS_ZONE_SIZE, no -f). */
 static const int PFS_FORMAT_ARG[1] = {8192};
@@ -31,12 +57,14 @@ static char g_space_names[SPACE_MAX_PARTS][APA_NAME_MAX + 1];
 static space_part_t g_space_parts[SPACE_MAX_PARTS];
 
 int hdd_space_list(const space_part_t **out) {
-  int dd = fileXioDopen("hdd0:");
+  int dd = scan_open();
   if (dd < 0)
     return dd;
-  iox_dirent_t de;
+  iox_dirent_t de __attribute__((aligned(64)));
   int n = 0;
-  while (n < SPACE_MAX_PARTS && fileXioDread(dd, &de) > 0) {
+  int rc;
+  while ((rc = scan_read(dd, &de)) > 0) {
+    if (n == SPACE_MAX_PARTS) { rc = -75; break; }
     memcpy(g_space_names[n], de.name, APA_NAME_MAX);
     g_space_names[n][APA_NAME_MAX] = 0;
     g_space_parts[n] = (space_part_t){g_space_names[n], de.stat.mode, de.stat.attr,
@@ -45,7 +73,7 @@ int hdd_space_list(const space_part_t **out) {
   }
   fileXioDclose(dd);
   *out = g_space_parts;
-  return n;
+  return rc < 0 ? rc : n;
 }
 
 int hdd_usage(space_usage_t *u, uint32_t *hdd_free_mb) {
@@ -95,8 +123,8 @@ inst_err_t hdd_space_check(uint32_t add_mb) {
 inst_err_t hdd_space_guard_new(const char *name, int *rc_out) {
   const space_part_t *p;
   int n = hdd_space_list(&p);
-  if (n < 0 || !space_name_beyond(p, n, name))
-    return ERR_OK;
+  if (n < 0) return ERR_HDD_MISSING;
+  if (!space_name_beyond(p, n, name)) return ERR_OK;
   /* The driver placed it past 128 GiB: only kept if the user says so. */
   space_usage_t u;
   space_tally(p, n, &u);
@@ -153,15 +181,17 @@ int hdd_space_raw(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb) 
   if (ms <= 0)
     return ms < 0 ? ms : -5;
   uint32_t total = (uint32_t)ts / 2048;
-  int dd = fileXioDopen("hdd0:");
+  int dd = scan_open();
   if (dd < 0)
     return dd;
   uint32_t used = 0;
-  iox_dirent_t de;
-  while (fileXioDread(dd, &de) > 0)
+  iox_dirent_t de __attribute__((aligned(64)));
+  int rc;
+  while ((rc = scan_read(dd, &de)) > 0)
     if (de.stat.mode != 0)
       used += de.stat.size / 2048;
   fileXioDclose(dd);
+  if (rc < 0) return rc;
   if (total_mb)
     *total_mb = total;
   if (free_mb)
@@ -172,16 +202,18 @@ int hdd_space_raw(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb) 
 }
 
 int hdd_list(hdd_part_t *out, int max) {
-  int dd = fileXioDopen("hdd0:");
+  int dd = scan_open();
   if (dd < 0)
     return dd;
-  iox_dirent_t de;
+  iox_dirent_t de __attribute__((aligned(64)));
   int n = 0;
-  while (n < max && fileXioDread(dd, &de) > 0) {
+  int rc;
+  while ((rc = scan_read(dd, &de)) > 0) {
     /* Skip free space and sub-partition entries (they repeat the main
      * partition's name with APA_FLAG_SUB set). */
     if (!hdd_dirent_is_main(de.stat.mode, de.stat.attr))
       continue;
+    if (n == max) { rc = -75; break; }
     /* APA ids are 32 bytes, not necessarily terminated. */
     memcpy(out[n].name, de.name, APA_NAME_MAX);
     out[n].name[APA_NAME_MAX] = 0;
@@ -190,16 +222,17 @@ int hdd_list(hdd_part_t *out, int max) {
     n++;
   }
   fileXioDclose(dd);
-  return n;
+  return rc < 0 ? rc : n;
 }
 
 int hdd_exists(const char *name) {
-  int dd = fileXioDopen("hdd0:");
+  int dd = scan_open();
   if (dd < 0)
     return -1;
-  iox_dirent_t de;
+  iox_dirent_t de __attribute__((aligned(64)));
   int found = 0;
-  while (fileXioDread(dd, &de) > 0) {
+  int rc;
+  while ((rc = scan_read(dd, &de)) > 0) {
     if (de.stat.mode != 0 && strncmp(de.name, name, APA_NAME_MAX) == 0 &&
         strlen(name) <= APA_NAME_MAX) {
       found = 1;
@@ -207,7 +240,7 @@ int hdd_exists(const char *name) {
     }
   }
   fileXioDclose(dd);
-  return found;
+  return rc < 0 ? rc : found;
 }
 
 int installer_partition_migrate(void) {

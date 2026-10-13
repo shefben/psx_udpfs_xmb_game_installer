@@ -22,6 +22,7 @@ def check_png(path):
     assert n == 13 and t == b"IHDR", "%s: first chunk is not IHDR" % path
     w, h, depth, ctype, comp, filt, inter = struct.unpack(">IIBBBBB", d[16:29])
     assert 1 <= w <= 1024 and 1 <= h <= 1024, "%s: bad size" % path
+    assert depth == 8 and ctype == 3, "%s: XMB images must use an 8-bit palette" % path
     assert inter == 0, "%s: interlaced PNG" % path
     # Walk chunks and verify CRCs.
     off = 8

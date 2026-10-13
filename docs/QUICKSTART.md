@@ -79,6 +79,9 @@ DESR. Back up the HDD partition table before the first run (e.g.
 
 1. **Copy** `desr-udpfs-installer-bootstrap.elf` to a USB stick and start
    it with wLaunchELF.
+   For a memory card, use the identical `BOOT.ELF` payload from the updated
+   package and launch `mc0:/BOOT.ELF` (or `mc1:/BOOT.ELF`) with wLaunchELF.
+   The short filename fits the memory card's 32-byte filename field.
 
 2. **Network.** The main menu appears at once; the installer looks for
    udpfsd in the background (status line: `looking for udpfsd...`, up to

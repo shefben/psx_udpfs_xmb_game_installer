@@ -32,7 +32,9 @@ int hdd_space_mb(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb);
 /* The same without the limit: what the drive itself has free. */
 int hdd_space_raw(uint32_t *total_mb, uint32_t *free_mb, uint32_t *max_part_mb);
 
-#define SPACE_MAX_PARTS 512
+#define SPACE_MAX_PARTS 8192
+/* Optional progress callback: raw APA header index and its name. */
+extern void (*hdd_scan_progress)(int entry, const char *last_name);
 /* The APA list as space_part_t (valid until the next call). Count or <0. */
 int hdd_space_list(const space_part_t **out);
 

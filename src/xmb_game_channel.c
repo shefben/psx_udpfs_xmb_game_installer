@@ -17,6 +17,7 @@
 #include "pfs_channel.h"
 #include "server_assets.h"
 #include "source_wire.h"
+#include "sha256.h"
 #include "source_udpfs.h"
 #include "source_zso.h"
 #include "transaction.h"
@@ -1080,6 +1081,9 @@ game_cover_status_t game_cover_status(const char *partition) {
   else if (!png_is_size(large, (uint32_t)a, JKT_LARGE_W, JKT_LARGE_H) ||
            !png_is_size(small, (uint32_t)b, JKT_SMALL_W, JKT_SMALL_H)) status = GAME_COVER_INVALID;
   else {
+    char hash[65];
+    if (a == 1138) { sha256_hex(large, (uint32_t)a, hash); if (!strcmp(hash, "de7a9dd8be1c25594adbff425338bc7206a63e360ed48192c4be3713c5be6ab3")) status = GAME_COVER_DEFAULT; }
+    if (b == 719) { sha256_hex(small, (uint32_t)b, hash); if (!strcmp(hash, "99bf28c79b8cce024324f18bc3683d31730f9527080dfd0b5e7ca15957963383")) status = GAME_COVER_DEFAULT; }
     jacket_pair_t defaults;
     payload_default_jackets(&defaults);
     if (((uint32_t)a == defaults.large_size && !memcmp(large, defaults.large, (size_t)a)) ||
@@ -1097,10 +1101,16 @@ void game_refresh_resources(const char *visible, install_report_t *rep) {
   if (part_id_from_partition(visible, id) < 0 || hdd_stat(visible, &type, NULL, NULL) < 0 || type != APA_TYPE_PFS_ID) {
     rep->err = ERR_INVALID_ARG; rep->detail = "a PFS game channel is required"; return;
   }
-  if (g_app.net != NETWORK_READY || !g_manifest_loaded) { rep->err = ERR_NETWORK; return; }
+  /* Preparation may have finished since connection, or the server restarted.
+   * Reload its list before deciding whether matching jackets are available. */
+  if (g_app.net != NETWORK_READY || manifest_load() < 0 || !g_manifest_loaded) { rep->err = ERR_NETWORK; return; }
   jacket_pair_t jackets; void *owned[2] = {NULL, NULL};
   rep->jacket = game_load_jackets(id, &jackets, owned);
-  if (strcmp(rep->jacket, "server")) {
+  int have_cover = !strcmp(rep->jacket, "server");
+  game_cover_status_t existing_cover = game_cover_status(visible);
+  int write_cover = have_cover || existing_cover == GAME_COVER_DEFAULT ||
+                    existing_cover == GAME_COVER_MISSING || existing_cover == GAME_COVER_INVALID;
+  if (!write_cover && game_load_info(id, &(xmb_game_info_t){0}) == 0) {
     rep->err = ERR_SOURCE_OPEN;
     rep->detail = "matching cover is not ready on the server; add <GAME-ID>_COV.png/jpg to ART, restart the server and retry";
     goto out;
@@ -1115,13 +1125,16 @@ void game_refresh_resources(const char *visible, install_report_t *rep) {
   if (rc < 0) { rep->err = ERR_PFS_MOUNT; rep->rc = rc; goto out; }
   rc = fileXioMkdir(PFS_WORK "res", 0777);
   if (rc < 0 && rc != -17) { rep->err = ERR_XMB_RESOURCE_WRITE; rep->rc = rc; pfs_umount(PFS_WORK); goto out; }
-  if ((rc = extras_write_verified(PFS_WORK "res/jkt_001.png", jackets.large, jackets.large_size)) < 0 ||
-      (rc = extras_write_verified(PFS_WORK "res/jkt_002.png", jackets.small, jackets.small_size)) < 0 ||
+  if ((write_cover && (rc = extras_write_verified(PFS_WORK "res/jkt_001.png", jackets.large, jackets.large_size)) < 0) ||
+      (write_cover && (rc = extras_write_verified(PFS_WORK "res/jkt_002.png", jackets.small, jackets.small_size)) < 0) ||
       (len && (rc = extras_write_verified(PFS_WORK "res/info.sys", info, len)) < 0)) {
     rep->err = ERR_XMB_RESOURCE_WRITE; rep->rc = rc;
   }
   pfs_umount(PFS_WORK);
-  if (!rep->err && game_cover_status(visible) != GAME_COVER_READY) rep->err = ERR_XMB_VERIFY;
+  if (!rep->err && !have_cover) {
+    rep->err = ERR_SOURCE_OPEN;
+    rep->detail = write_cover ? "default jacket installed; matching cover still unavailable (available game info was updated)" : "game information updated; matching cover is still unavailable on the server";
+  } else if (!rep->err && game_cover_status(visible) != GAME_COVER_READY) rep->err = ERR_XMB_VERIFY;
 out:
   free(owned[0]); free(owned[1]);
 }

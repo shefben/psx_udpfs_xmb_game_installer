@@ -203,7 +203,15 @@ inst_err_t channel_quick_check(const char *partition) {
   pfs_umount(W);
   if (!ok)
     return ERR_XMB_VERIFY;
-  return ppaa_check_partition(partition, XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF), 0, NULL);
+  inst_err_t err = ppaa_check_partition(partition, XMB_SYSTEM_CNF, strlen(XMB_SYSTEM_CNF), 0, NULL);
+  /* Recognize previously installed channels; new writes and post-write
+   * verification still require Manager's template. */
+  if (err == ERR_XMB_VERIFY) {
+    static const char legacy[] = "BOOT2 = pfs:/EXECUTE.KELF\nVER = 1.00\n"
+                                 "VMODE = NTSC\nHDDUNITPOWER = NICHDD\n";
+    err = ppaa_check_partition(partition, legacy, sizeof(legacy) - 1, 0, NULL);
+  }
+  return err;
 }
 
 #define INFO_SYS_MAX 2048

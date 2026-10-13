@@ -93,8 +93,9 @@ static int load(iop_status_t *st, const char *name, void *data,
 
 #define LOAD(st, n, alen, a) load(st, #n, n##_irx, size_##n##_irx, alen, a)
 
-void iop_boot_base(iop_status_t *st) {
-  memset(st, 0, sizeof(*st));
+static int screen_iop_ready;
+
+static void reset_iop(void) {
 
   progress("SIF init");
   SifInitRpc(0);
@@ -108,6 +109,22 @@ void iop_boot_base(iop_status_t *st) {
   SifInitRpc(0);
   SifInitIopHeap();
   SifLoadFileInit();
+}
+
+void iop_boot_prepare_screen(void) {
+  /* init_scr() calls GetRomName(), which binds to the IOP heap service.
+   * PSXBB/wLaunchELF may leave an IOP without that service. Reset first,
+   * before any screen call that would wait indefinitely for the old IOP. */
+  reset_iop();
+  screen_iop_ready = 1;
+}
+
+void iop_boot_base(iop_status_t *st) {
+  memset(st, 0, sizeof(*st));
+  if (screen_iop_ready)
+    screen_iop_ready = 0;
+  else
+    reset_iop();
   progress("sbv patches");
   sbv_patch_enable_lmb();
   sbv_patch_disable_prefix_check();
@@ -116,8 +133,11 @@ void iop_boot_base(iop_status_t *st) {
   hdd_fail |= LOAD(st, iomanX, 0, NULL);
   hdd_fail |= LOAD(st, fileXio, 0, NULL);
   fileXioInit();
-  hdd_fail |= LOAD(st, poweroff, 0, NULL);
-  poweroffInit();
+  /* Power control is optional and must not hide an otherwise usable HDD.
+   * Its RPC server exists only when the module stayed resident. */
+  st->poweroff_ok = LOAD(st, poweroff, 0, NULL) == 0;
+  if (st->poweroff_ok)
+    poweroffInit();
   hdd_fail |= LOAD(st, ps2dev9, 0, NULL);
   hdd_fail |= LOAD(st, ps2atad, 0, NULL);
   hdd_fail |= LOAD(st, ps2hdd_hdl, sizeof(PS2HDD_ARGS), PS2HDD_ARGS);

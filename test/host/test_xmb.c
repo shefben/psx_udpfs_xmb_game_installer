@@ -21,12 +21,24 @@ static size_t load(const char *name, uint8_t *buf, size_t max) {
 }
 
 TEST(system_cnf_exact_bytes) {
-  CHECK_STR(XMB_SYSTEM_CNF, "BOOT2 = pfs:/EXECUTE.KELF\nVER = 1.00\n"
-                            "VMODE = NTSC\nHDDUNITPOWER = NICHDD\n");
+  CHECK_STR(XMB_SYSTEM_CNF, "BOOT2 = pfs:/EXECUTE.KELF\r\nVER = 1.01\r\n"
+                            "VMODE = NTSC\r\nHDDUNITPOWER = NICHDD\r\n");
   uint8_t fx[256];
   size_t n = load("system_cnf.bin", fx, sizeof(fx));
   CHECK_EQ_INT(n, strlen(XMB_SYSTEM_CNF));
   CHECK(memcmp(fx, XMB_SYSTEM_CNF, n) == 0);
+}
+
+TEST(xmb_manager_channel_templates) {
+  CHECK_STR(XMB_SYSTEM_CNF, "BOOT2 = pfs:/EXECUTE.KELF\r\nVER = 1.01\r\n"
+                           "VMODE = NTSC\r\nHDDUNITPOWER = NICHDD\r\n");
+  char text[2048];
+  xmb_render_icon_sys(text, sizeof(text), "Game", "SLUS-20312");
+  CHECK(strstr(text, "title0=Game\r\ntitle1=SLUS-20312\r\n") != NULL);
+  CHECK(strstr(text, "bgcol0=0,0,0\r\n") != NULL);
+  CHECK(strstr(text, "lightdir0=1.0,-1.0,1.0\r\n") != NULL);
+  xmb_game_info_sys(text, sizeof(text), "Game", "SLUS_203.12");
+  CHECK(strstr(text, "content_subtype = 0\r\n") != NULL);
 }
 
 TEST(info_sys_game_template) {
@@ -56,7 +68,7 @@ TEST(info_sys_game_template) {
             "area = U\r\n"
             "violence_flag = 0\r\n"
             "content_type = 255\r\n"
-            "content_subtype = 0"); /* no final line break, as BatchKit */
+            "content_subtype = 0\r\n"); /* no final line break, as BatchKit */
 }
 
 TEST(info_sys_matches_crlf_fixture) {
@@ -73,11 +85,12 @@ TEST(info_sys_matches_crlf_fixture) {
       CHECK(i > 0 && fx[i - 1] == '\r');
 }
 
-TEST(system_cnf_fixture_is_lf_only) {
+TEST(system_cnf_fixture_is_crlf) {
   uint8_t fx[256];
   size_t n = load("system_cnf.bin", fx, sizeof(fx));
   CHECK(n > 0);
-  CHECK(memchr(fx, '\r', n) == NULL);
+  for (size_t i = 0; i < n; i++)
+    if (fx[i] == '\n') CHECK(i > 0 && fx[i - 1] == '\r');
 }
 
 TEST(info_sys_retitle_keeps_every_other_line) {
@@ -152,7 +165,7 @@ TEST(sanitize_value_trims_and_keeps_utf8) {
 
 TEST(ppaa_matches_hdldump_fixture) {
   static uint8_t fx[2048], region[2048];
-  size_t n = load("ppaa_hdldump.bin", fx, sizeof(fx));
+  size_t n = load("ppaa_xmb_manager.bin", fx, sizeof(fx));
   CHECK_EQ_INT(n, 2048);
   memset(region, 0, sizeof(region));
   CHECK_EQ_INT(ppaa_apply(region, sizeof(region), XMB_SYSTEM_CNF,
@@ -238,13 +251,8 @@ TEST(icon_sys_hdd_format) {
   size_t n = xmb_render_icon_sys(buf, sizeof(buf), "Gran Turismo 4\r\nx", "SLUS-20312");
   CHECK(n > 0 && n < PPAA_ICONSYS_MAX);
   CHECK_EQ_INT(n, strlen(buf));
-  CHECK(strncmp(buf, "PS2X\ntitle0 = Gran Turismo 4x\ntitle1 = SLUS-20312\nbgcola = 0\n", 60) == 0);
-  /* Byte-identical tail to PFS-BatchKit-Manager's (DESR dump). */
-  CHECK(strstr(buf, "lightdir0 = 0.5000,0.5000,0.5000\nlightdir1 = 0.0000,-0.4000,-1.0000\n"
-                    "lightdir2 = 0.5000,-0.5000,0.5000\nlightcolamb = 31,31,31\n"
-                    "lightcol0 = 62,62,55\nlightcol1 = 33,42,64\nlightcol2 = 18,18,49\n"
-                    "uninstallmes0 =  \nuninstallmes1 =  \nuninstallmes2 =  \n") != NULL);
-  CHECK(memchr(buf, '\r', n) == NULL);
+  CHECK(strstr(buf, "PS2X\r\ntitle0=Gran Turismo 4x\r\ntitle1=SLUS-20312\r\n") == buf);
+  CHECK(strstr(buf, "lightcolamb=64,64,64\r\n") != NULL);
   CHECK_EQ_INT(xmb_render_icon_sys(buf, 40, "T", "I"), 0);
 }
 

@@ -90,7 +90,7 @@ static size_t render(char *out, size_t outsz, const char *title, const char *tit
                    "area = %c\r\n"
                    "violence_flag = 0\r\n"
                    "content_type = 255\r\n"
-                   "content_subtype = 0", /* no final line break, as BatchKit */
+                   "content_subtype = 0\r\n", /* Manager final WriteLine */
                    t, id, KV(rd), KV(dev), KV(pub), desc, KV(gen), area);
 #undef KV
   if (n < 0 || (size_t)n >= outsz) {
@@ -159,25 +159,24 @@ size_t xmb_render_icon_sys(char *out, size_t outsz, const char *title0, const ch
   xmb_sanitize_value(title0, t0, sizeof(t0));
   xmb_sanitize_value(title1, t1, sizeof(t1));
   int n = snprintf(out, outsz,
-                   "PS2X\n"
-                   "title0 = %s\n"
-                   "title1 = %s\n"
-                   "bgcola = 0\n"
-                   "bgcol0 = 22,47,92\n"
-                   "bgcol1 = 3,10,28\n"
-                   "bgcol2 = 3,10,28\n"
-                   "bgcol3 = 22,47,92\n"
-                   "lightdir0 = 0.5000,0.5000,0.5000\n"
-                   "lightdir1 = 0.0000,-0.4000,-1.0000\n"
-                   "lightdir2 = 0.5000,-0.5000,0.5000\n"
-                   "lightcolamb = 31,31,31\n"
-                   "lightcol0 = 62,62,55\n"
-                   "lightcol1 = 33,42,64\n"
-                   "lightcol2 = 18,18,49\n"
-                   "uninstallmes0 =  \n"
-                   "uninstallmes1 =  \n"
-                   "uninstallmes2 =  \n",
-                   t0, t1);
+                   "PS2X\r\n"
+                   "title0=%s\r\n"
+                   "title1=%s\r\n"
+                   "bgcola=0\r\n"
+                   "bgcol0=0,0,0\r\n"
+                   "bgcol1=0,0,0\r\n"
+                   "bgcol2=0,0,0\r\n"
+                   "bgcol3=0,0,0\r\n"
+                   "lightdir0=1.0,-1.0,1.0\r\n"
+                   "lightdir1=-1.0,1.0,-1.0\r\n"
+                   "lightdir2=0.0,0.0,0.0\r\n"
+                   "lightcolamb=64,64,64\r\n"
+                   "lightcol0=64,64,64\r\n"
+                   "lightcol1=16,16,16\r\n"
+                   "lightcol2=0,0,0\r\n"
+                   "uninstallmes0=\r\n"
+                   "uninstallmes1=\r\n"
+                   "uninstallmes2=\r\n", t0, t1);
   if (n < 0 || (size_t)n >= outsz) {
     if (outsz)
       out[0] = 0;
@@ -209,18 +208,18 @@ size_t xmb_render_man_xml(char *out, size_t outsz, const char *title) {
                    "\r\n"
                    "<MANUAL version=\"1.0\">\r\n"
                    "\r\n"
-                   "\t<IMG id=\"bg\" src=\"./image/0.png\" />\r\n"
+                   "<IMG id=\"bg\" src=\"./image/0.png\" />\r\n"
                    "\r\n"
-                   "\t<MENUGROUP id=\"TOP\">\r\n"
-                   "\t\t<TITLE id=\"TOP-TITLE\" label=\"%s\" />\r\n"
-                   "\t\t<ITEM id=\"M00\" label=\"Screenshots\"\tpage=\"PIC0000\" />\r\n"
-                   "\t</MENUGROUP>\r\n"
+                   "<MENUGROUP id=\"TOP\">\r\n"
+                   "<TITLE id=\"TOP-TITLE\" label=\"%s\" />\r\n"
+                   "<ITEM id=\"M00\" label=\"Screenshots\"\tpage=\"PIC0000\" />\r\n"
+                   "</MENUGROUP>\r\n"
                    "\r\n"
-                   "\t<PAGEGROUP>\r\n"
-                   "\t\t<PAGE id=\"PIC0000\" src=\"./image/1.png\" retitem=\"M00\" retgroup=\"TOP\" />\r\n"
-                   "\t\t<PAGE id=\"PIC0000\" src=\"./image/2.png\" retitem=\"M00\" retgroup=\"TOP\" />\r\n"
-                   "\t</PAGEGROUP>\r\n"
-                   "</MANUAL>\r\n",
+                   "<PAGEGROUP>\r\n"
+                   "<PAGE id=\"PIC0000\" src=\"./image/1.png\" retitem=\"M00\" retgroup=\"TOP\" />\r\n"
+                   "<PAGE id=\"PIC0000\" src=\"./image/2.png\" retitem=\"M00\" retgroup=\"TOP\" />\r\n"
+                   "</PAGEGROUP>\r\n"
+                   "</MANUAL>\r\n\r\n",
                    esc);
   if (n < 0 || (size_t)n >= outsz) {
     if (outsz)

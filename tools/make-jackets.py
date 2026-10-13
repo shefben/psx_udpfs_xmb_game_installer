@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Generate the embedded jacket PNGs (8-bit RGB, no interlace).
+"""Generate embedded PNGs with Manager's System.Drawing/nQuant 1.0.3 encoder.
 
 Sizes as PSX-XMB-Manager writes them for PS2 game channels:
 res/jkt_001.png 140x200 (large cover), res/jkt_002.png 74x108 (XMB list
 cover); res/jkt_cp.png 290x46 (copyright strip, blank). Also the blank 640x350 page the default res/man.xml uses.
 The images are deterministic so rebuilding never changes their bytes.
-Only the standard library is used (zlib + struct).
+Requires the pinned Windows .NET converter in vendor/nquant.
 """
 import os
 import struct
 import sys
 import zlib
+import subprocess
+import tempfile
+from pathlib import Path
 
 
 # 5x7 glyphs, rows top to bottom, 5 bits each (MSB = left).
@@ -27,14 +30,22 @@ FONT = {
 
 
 def png(pixels, W, H):
-    raw = b"".join(b"\x00" + bytes(row) for row in pixels)
+    # Lossless 256-entry palette; generated gradients use at most 202 colours.
+    colours = sorted({tuple(row[i:i+3]) for row in pixels for i in range(0, len(row), 3)})
+    if len(colours) > 256:
+        raise ValueError("embedded XMB image exceeds 256 colours")
+    index = {colour: i for i, colour in enumerate(colours)}
+    palette = bytes(v for colour in colours for v in colour) + bytes((256-len(colours))*3)
+    rows = [bytes(index[tuple(row[i:i+3])] for i in range(0,len(row),3)) for row in pixels]
+    raw = b"".join(b"\x00" + row for row in rows)
 
     def chunk(t, d):
         c = struct.pack(">I", len(d)) + t + d
         return c + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
 
     return (b"\x89PNG\r\n\x1a\n"
-            + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0))
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 3, 0, 0, 0))
+            + chunk(b"PLTE", palette)
             + chunk(b"IDAT", zlib.compress(raw, 9))
             + chunk(b"IEND", b""))
 
@@ -78,14 +89,11 @@ def main():
     game = ((20, 40, 110), (5, 10, 40), ["PS2", "GAME"])
     inst = ((10, 90, 60), (5, 25, 20), ["UDPFS", "INST"])
     app = ((110, 45, 15), (40, 12, 5), ["PS2", "APP"])
-    app = ((110, 45, 15), (40, 12, 5), ["PS2", "APP"])
     out = {
         "game/default_jkt_001.png": render(*game, W=140, H=200, scale=4),
         "game/default_jkt_002.png": render(*game),
         "installer/jkt_001.png": render(*inst, W=140, H=200, scale=4),
         "installer/jkt_002.png": render(*inst),
-        "app/jkt_001.png": render(*app, W=140, H=200, scale=4),
-        "app/jkt_002.png": render(*app),
         "app/jkt_001.png": render(*app, W=140, H=200, scale=4),
         "app/jkt_002.png": render(*app),
         "manual/blank.png": png([bytes([16, 16, 24] * 640)] * 350, 640, 350),
@@ -94,8 +102,21 @@ def main():
     for rel, data in out.items():
         p = os.path.join(root, rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "wb") as f:
-            f.write(data)
+        # Render the source artwork, then encode through Manager's actual
+        # System.Drawing resize and nQuant 1.0.3 pipeline.
+        helper = Path(__file__).resolve().parents[1] / 'vendor/nquant/xmb-jackets.exe'
+        width, height = struct.unpack('>II', data[16:24])
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / 'source.png'
+            source.write_bytes(data)
+            args = [str(source), str(Path(p).resolve()), str(width), str(height)]
+            if os.name != 'nt':
+                if not Path('/proc/sys/fs/binfmt_misc/WSLInterop').exists():
+                    raise RuntimeError('Exact Manager encoding requires Windows .NET or WSL interoperability')
+                args[:2] = [subprocess.check_output(['wslpath', '-w', arg], text=True).strip() for arg in args[:2]]
+            command = [str(helper)]
+            subprocess.run(command + args, check=True)
+        data = Path(p).read_bytes()
         print("%s %d bytes" % (rel, len(data)))
     return 0
 

@@ -227,3 +227,13 @@ Existing cards/settings are preserved during automatic installs. Use the
 extras menu for replacement or importing .psu saves to a physical PS2 card.
 Descriptions and matching covers reside in each channel partition res/ folder.
 These new features still need hardware testing.
+
+3.2 HOTFIX TEST
+Game metadata is enabled automatically (gamedb = auto). The server downloads
+and caches GDX's PS2/PS1 English databases on first start. No checkbox or
+manual database file is needed. Restart this updated server, then use Repair
+or Fetch XMB image / description to update existing channels.
+Fallback jackets now use the server's indexed PNG format. Games without a
+real cover keep their PS2 GAME fallback and IMAGE NEEDED flag.
+The PSX1 APA scan changes require hardware testing: if it stops, record the
+APA header number shown on screen.

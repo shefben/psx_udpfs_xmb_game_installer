@@ -1,0 +1,207 @@
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -35,7 +35,7 @@
+ 
+ // Defaults returns the built-in defaults (relative paths not yet resolved).
+ func Defaults() Config {
+-	return Config{Cache: "udpfsd-cache", OPLLauncher: "opl-launcher-EXECUTE.KELF", OPLElf: "OPNPS2LD.ELF",
++	return Config{GameDB: "auto", Cache: "udpfsd-cache", OPLLauncher: "opl-launcher-EXECUTE.KELF", OPLElf: "OPNPS2LD.ELF",
+ 		DownloadCovers: true, Port: 62966}
+ }
+ 
+@@ -101,6 +101,10 @@
+ 	case "cht":
+ 		return dir(&c.CHT)
+ 	case "gamedb":
++		if v == "auto" {
++			c.GameDB = "auto"
++			return nil
++		}
+ 		c.GameDB = resolve(v, baseDir)
+ 		if c.GameDB != "" {
+ 			if _, err := os.Stat(c.GameDB); err != nil {
+--- a/internal/prep/scan.go
++++ b/internal/prep/scan.go
+@@ -263,7 +263,9 @@
+ 		}
+ 	}
+ 	var db map[string]GameInfo
+-	if o.GameDB != "" {
++	if o.GameDB == "auto" {
++		db = automaticGameDB(o.CacheDir, nil, GameDBBaseURL)
++	} else if o.GameDB != "" {
+ 		var err error
+ 		if db, err = LoadGameDB(o.GameDB); err != nil {
+ 			log.Printf("prep: %v", err) // game info is optional
+--- a/internal/prep/gamedb.go
++++ b/internal/prep/gamedb.go
+@@ -1,8 +1,10 @@
+ package prep
+ 
+ import (
++	"bytes"
+ 	"encoding/xml"
+ 	"fmt"
++	"io"
+ 	"os"
+ 	"path/filepath"
+ 	"regexp"
+@@ -17,11 +19,11 @@
+ }
+ 
+ type dbGame struct {
+-	Serial    string `xml:"serial,attr"`
+-	Release   string `xml:"Release"`
+-	Developer string `xml:"Developer"`
+-	Publisher string `xml:"Publisher"`
+-	Genre     string `xml:"Genre"`
++	Serial      string `xml:"serial,attr"`
++	Release     string `xml:"Release"`
++	Developer   string `xml:"Developer"`
++	Publisher   string `xml:"Publisher"`
++	Genre       string `xml:"Genre"`
+ 	Description string `xml:"Description"`
+ }
+ 
+@@ -33,7 +35,13 @@
+ 	}
+ 	defer f.Close()
+ 	out := map[string]GameInfo{}
+-	d := xml.NewDecoder(f)
++	raw, err := io.ReadAll(io.LimitReader(f, (32<<20)+1))
++	if err != nil || len(raw) > 32<<20 {
++		return nil, fmt.Errorf("gamedb %s: too large or unreadable", path)
++	}
++	// Published databases contain occasional non-UTF8 bytes despite the XML header.
++	raw = bytes.ToValidUTF8(raw, []byte(" "))
++	d := xml.NewDecoder(bytes.NewReader(raw))
+ 	// The real database has bare "&" in names ("Tom & Jerry"): be lenient.
+ 	d.Strict = false
+ 	d.AutoClose = xml.HTMLAutoClose
+@@ -59,9 +67,9 @@
+ 			continue
+ 		}
+ 		out[id] = GameInfo{Release: ReleaseDate(g.Release),
+-			Developer: strings.TrimRight(Sanitize(g.Developer, 63), ", "),
+-			Publisher: strings.TrimRight(Sanitize(g.Publisher, 63), ", "),
+-			Genre:     Sanitize(g.Genre, 31),
++			Developer:   strings.TrimRight(Sanitize(g.Developer, 63), ", "),
++			Publisher:   strings.TrimRight(Sanitize(g.Publisher, 63), ", "),
++			Genre:       Sanitize(g.Genre, 31),
+ 			Description: Sanitize(g.Description, 255)}
+ 	}
+ }
+--- /dev/null
++++ b/internal/prep/autogamedb.go
+@@ -0,0 +1,73 @@
++package prep
++
++import (
++	"fmt"
++	"io"
++	"log"
++	"net/http"
++	"os"
++	"path/filepath"
++	"time"
++)
++
++// GDX's public OPL database; pin a reviewed revision for reproducible metadata.
++const GameDBBaseURL = "https://raw.githubusercontent.com/GDX-X/OPL-Games-Infos-Database-Project/0ee1ed2913c83006401e823943777068b3a1ebd8"
++
++func automaticGameDB(cache string, client *http.Client, base string) map[string]GameInfo {
++	if client == nil {
++		client = &http.Client{Timeout: 20 * time.Second}
++	}
++	out := map[string]GameInfo{}
++	dir := filepath.Join(cache, "gamedb")
++	if err := os.MkdirAll(dir, 0755); err != nil {
++		log.Printf("prep: game database cache: %v", err)
++		return out
++	}
++	for _, name := range []string{"PS2DB_EN.xml", "PS1DB_EN.xml"} {
++		dst := filepath.Join(dir, name)
++		db, err := LoadGameDB(dst)
++		if err == nil && len(db) > 0 {
++			for id, g := range db {
++				out[id] = g
++			}
++			continue
++		}
++		if err := fetchGameDB(client, base+"/"+name, dst); err != nil {
++			log.Printf("prep: automatic %s unavailable: %v (game installation remains available)", name, err)
++			continue
++		}
++		db, err = LoadGameDB(dst)
++		if err == nil {
++			for id, g := range db {
++				out[id] = g
++			}
++		}
++	}
++	log.Printf("prep: automatic game database: %d IDs ready", len(out))
++	return out
++}
++
++func fetchGameDB(client *http.Client, url, dst string) error {
++	res, err := client.Get(url)
++	if err != nil {
++		return err
++	}
++	defer res.Body.Close()
++	if res.StatusCode != http.StatusOK {
++		return fmt.Errorf("HTTP %d", res.StatusCode)
++	}
++	data, err := io.ReadAll(io.LimitReader(res.Body, (32<<20)+1))
++	if err != nil || len(data) == 0 || len(data) > 32<<20 {
++		return fmt.Errorf("empty, oversized or unreadable database")
++	}
++	tmp := dst + ".tmp"
++	if err := os.WriteFile(tmp, data, 0644); err != nil {
++		return err
++	}
++	defer os.Remove(tmp)
++	db, err := LoadGameDB(tmp)
++	if err != nil || len(db) == 0 {
++		return fmt.Errorf("invalid game database: %v", err)
++	}
++	return os.Rename(tmp, dst)
++}
+--- /dev/null
++++ b/internal/prep/autogamedb_test.go
+@@ -0,0 +1,35 @@
++package prep
++
++import (
++ "net/http"
++ "net/http/httptest"
++ "os"
++ "path/filepath"
++ "strings"
++ "testing"
++)
++
++func TestAutomaticGameDBDownloadsAndUsesCache(t *testing.T) {
++ calls:=0
++ server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
++  calls++
++  id:="SLUS-20312"
++  if strings.Contains(r.URL.Path,"PS1") { id="SLUS-00594" }
++  w.Write([]byte(`<datafile><game serial="`+id+`"><Developer>Test`+string([]byte{0xa0})+`Studio</Developer><Description>Matching story</Description></game></datafile>`))
++ }))
++ defer server.Close()
++ cache:=t.TempDir()
++ db:=automaticGameDB(cache,server.Client(),server.URL)
++ if len(db)!=2 || db["SLUS_203.12"].Description!="Matching story" || db["SLUS_005.94"].Description!="Matching story" || calls!=2 { t.Fatalf("%+v calls=%d",db,calls) }
++ if db["SLUS_203.12"].Developer!="Test Studio" { t.Fatal("invalid UTF8 prevented metadata import") }
++ server.Close()
++ if len(automaticGameDB(cache,server.Client(),server.URL))!=2 { t.Fatal("offline cache not reused") }
++}
++
++func TestAutomaticGameDBRejectsBadDownload(t *testing.T) {
++ server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){ w.Write([]byte("<html>Not a database</html>")) }))
++ defer server.Close()
++ cache:=t.TempDir()
++ if len(automaticGameDB(cache,server.Client(),server.URL))!=0 { t.Fatal("invalid database accepted") }
++ if _,err:=os.Stat(filepath.Join(cache,"gamedb","PS2DB_EN.xml"));err==nil { t.Fatal("bad download cached permanently") }
++}

@@ -8,6 +8,7 @@
 #include "diagnostics.h"
 #include "flows.h"
 #include "hdd_partitions.h"
+#include "iop_boot.h"
 #include "manifest.h"
 #include "network.h"
 #include "transaction.h"
@@ -51,6 +52,7 @@ static void startup_notices(void) {
 int main(int argc, char *argv[]) {
   (void)argc;
   (void)argv;
+  iop_boot_prepare_screen();
   ui_init();
   memset(&g_app, 0, sizeof(g_app));
   app_boot(); /* the network keeps starting in the background */

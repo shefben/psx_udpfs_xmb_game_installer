@@ -35,6 +35,7 @@ typedef struct {
     unsigned int size;
   } mods[IOP_MAX_MODS];
   int hdd_ok;   /* iomanX..hdlfs all loaded: HDD writes allowed */
+  int poweroff_ok; /* optional power-control RPC server is available */
   int pad_ok;   /* controller modules loaded or PADMAN already resident */
   int pad_reused, sio2_reused; /* existing modules, not embedded IRX loads */
   unsigned short pad_version, sio2_version; /* resident IRX versions */
@@ -59,6 +60,9 @@ typedef struct {
  * starts, so a start-up that hangs shows where. NULL: nothing is shown. */
 extern void (*iop_boot_progress)(const char *step);
 
+/* Reset the loader's IOP before libdebug queries ROMVER for screen setup.
+ * The first base boot reuses this reset; later restarts perform a fresh one. */
+void iop_boot_prepare_screen(void);
 void iop_boot_base(iop_status_t *st);
 /* dhcp: ask a DHCP server first; local_ip is then the fallback. */
 void iop_boot_network(const char *local_ip, int dhcp, iop_status_t *st);

@@ -1,5 +1,26 @@
 # Changelog
 
+## Startup and cover repair fixes
+
+- Preserve odd-length network transfers so downloaded covers pass PNG validation; add a regression test for SMAP receive tails.
+- Reload the server manifest before fetching repaired channel artwork.
+- Reset the loader's IOP before initializing the first screen and include a short memory-card bootstrap filename.
+- Keep HDD access available when the optional poweroff module fails, and disable automatic shutdown in that case.
+- Verify builds use the source-compiled PS2SDK with DESR LBA48 support. Console generation remains a manual setting; PSX2 startup still needs hardware validation.
+
+## XMB Manager parity test
+
+- Match PSX XMB Manager's Windows System.Drawing resize, nQuant 1.0.3 quantizer and PNG encoder for server covers and embedded images. Invalidate old prepared-art caches using pair hashes.
+- Match its VER 1.01/CRLF channel header and icon/resource text templates; continue recognizing previously installed VER 1.00 channels.
+- Reject mismatched PNG encoding, malformed chunks and failed CRCs before accepting XMB covers.
+- Native Linux serves Windows-prepared artwork or embedded defaults. Windows and WSL prepare artwork dynamically. The reported PSX1 multi-channel freeze still needs hardware validation.
+
+## 3.2 hotfix test
+
+- Enable automatic download and offline caching of English PS2/PS1 game databases.
+- Use indexed PNG fallback jackets and refresh metadata even when artwork is unavailable.
+- Harden APA enumeration for large game libraries with aligned buffers, cycle/error detection and per-header progress. PSX1 hardware verification is pending; a blocking driver RPC can still stall.
+
 ## 3.2
 
 ### Fixed

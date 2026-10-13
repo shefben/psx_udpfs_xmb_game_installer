@@ -7,12 +7,12 @@
  * Pure functions; byte output is covered by host tests. */
 
 /* The OSD-header system.cnf for every PFS-booted channel (game and
- * installer). LF line endings, as hdl-dump writes them. */
+ * installer). CRLF and VER 1.01, as PSX XMB Manager writes them. */
 #define XMB_SYSTEM_CNF                                                         \
-  "BOOT2 = pfs:/EXECUTE.KELF\n"                                                \
-  "VER = 1.00\n"                                                               \
-  "VMODE = NTSC\n"                                                             \
-  "HDDUNITPOWER = NICHDD\n"
+  "BOOT2 = pfs:/EXECUTE.KELF\r\n"                                              \
+  "VER = 1.01\r\n"                                                             \
+  "VMODE = NTSC\r\n"                                                           \
+  "HDDUNITPOWER = NICHDD\r\n"
 
 /* Copy `in` to `out`, dropping control characters (< 0x20, 0x7F) so a
  * value can never inject extra lines into info.sys. Leading/trailing
@@ -77,12 +77,12 @@ char xmb_area_letter(const char *boot_id);
   "VMODE = NTSC\n"                                                             \
   "HDDUNITPOWER = NICHDD\n"
 /* HDD-format icon.sys ("PS2X") for the OSD header: title0 = title (the
- * XMB name), title1 = second line (game ID), in PFS-BatchKit-Manager's
- * exact form (hdl_dump colours and lights, bgcola 0, empty uninstall
- * messages). LF line endings. Returns length or 0. */
+ * XMB name), title1 = second line (game ID), in PSX XMB Manager's
+ * exact form (zero background colours, its lights, empty uninstall
+ * messages). Manager's CRLF template. Returns length or 0. */
 size_t xmb_render_icon_sys(char *out, size_t outsz, const char *title0, const char *title1);
 
-/* Default res/man.xml (the XMB "Manual" entry), as PFS-BatchKit-Manager's
+/* Default res/man.xml (the XMB "Manual" entry), as PSX XMB Manager's
  * template: background image/0.png, pages image/1.png and image/2.png
  * (written blank when the channel has no manual). The title is
  * XML-escaped. Returns length or 0. */

@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include "hdl_header.h"
+#include "crc32.h"
 #include "partname.h"
 #include "util.h"
 
@@ -76,7 +77,31 @@ int png_basic_valid(const void *data, uint32_t size) {
 
 int png_is_size(const void *data, uint32_t size, uint32_t w, uint32_t h) {
   const uint8_t *b = data;
-  return png_basic_valid(data, size) && be32(b + 16) == w && be32(b + 20) == h;
+  if (!png_basic_valid(data, size) || be32(b + 16) != w || be32(b + 20) != h ||
+      b[24] != 8 || b[25] != 3 || b[26] || b[27] || b[28]) return 0;
+  /* Manager/nQuant emits non-interlaced indexed PNGs with a 256-entry
+   * palette. Validate the entire chunk stream before passing it to XMB.
+   * Ancillary chunks, including nQuant's tRNS, are retained. */
+  uint32_t off = 8;
+  int palette = 0, pixels = 0;
+  while (off <= size - 12) {
+    uint32_t len = be32(b + off);
+    if (len > size - off - 12 ||
+        crc32_update(0, b + off + 4, len + 4) != be32(b + off + 8 + len)) return 0;
+    const uint8_t *type = b + off + 4;
+    if (!memcmp(type, "IHDR", 4) && off != 8) return 0;
+    if (!memcmp(type, "PLTE", 4)) {
+      if (palette || pixels || len != 768) return 0;
+      palette = 1;
+    } else if (!memcmp(type, "IDAT", 4)) {
+      if (!palette) return 0;
+      pixels = 1;
+    } else if (!memcmp(type, "IEND", 4)) {
+      return len == 0 && palette && pixels && off + 12 == size;
+    } else if (!(type[0] & 0x20) && memcmp(type, "IHDR", 4)) return 0;
+    off += len + 12;
+  }
+  return 0;
 }
 
 void default_display_title(const iso_info_t *iso, const char *source_path,

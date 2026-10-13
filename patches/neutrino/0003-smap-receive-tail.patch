@@ -1,0 +1,24 @@
+--- a/iop/smap/src/xfer.c
++++ b/iop/smap/src/xfer.c
+@@ -141,11 +141,18 @@
+             dev9DmaTransfer(1, dst, bcr, DMAC_TO_MEM);
+     }
+ 
+-    /* PIO remaining bytes (u32 chunks, then u16 for trailing 2 bytes) */
++    /* Read FIFO words, copying only the requested trailing bytes.
++     * A halfword read loses an odd final byte; reading a full word into
++     * the destination would overwrite a buffer ending at that byte. */
+     for (i = dma_bytes; i + 4 <= bytes; i += 4)
+         *(u32 *)(d + i) = SMAP_REG32(SMAP_R_RXFIFO_DATA);
+-    if (i + 2 <= bytes)
+-        *(u16 *)(d + i) = SMAP_REG16(SMAP_R_RXFIFO_DATA);
++    if (i < bytes) {
++        u32 tail = SMAP_REG32(SMAP_R_RXFIFO_DATA);
++        while (i < bytes) {
++            d[i++] = (u8)tail;
++            tail >>= 8;
++        }
++    }
+ }
+ 
+ int HandleRxIntr(struct SmapDriverData *SmapDrivPrivData)

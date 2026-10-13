@@ -45,8 +45,8 @@ BLOB(bdmfs_fatfs) BLOB(usbmass_bd) BLOB(hddpump) BLOB(mcman) BLOB(mcserv)
 int _iop_reboot_count;
 static int mc_loads;
 void source_wire_set_request(uint32_t n) { (void)n; }
-static int existing_pad, existing_sio, fail_sio, pad_loads, sio_loads;
-static int storage_loads, reset_done, queries;
+static int existing_pad, existing_sio, fail_sio, fail_poweroff, poweroff_inits, pad_loads, sio_loads;
+static int storage_loads, reset_done, queries, resets, heap_ready;
 int smod_get_mod_by_name(const char *name, smod_mod_info_t *info) {
   assert(reset_done); /* A pre-reset module list must never decide reuse. */
   queries++;
@@ -60,6 +60,7 @@ int SifExecModuleBuffer(void *data, unsigned int size, int alen,
                         const char *args, int *rv) {
   (void)size; (void)alen; (void)args;
   *rv = 0;
+  if (data == poweroff_irx && fail_poweroff) { *rv = 1; return 42; }
   if (data == mcman_irx || data == mcserv_irx) mc_loads++;
   if (data == sio2man_irx) {
     sio_loads++;
@@ -79,14 +80,14 @@ int SifExecModuleBuffer(void *data, unsigned int size, int alen,
   return 42;
 }
 void SifInitRpc(int n) { (void)n; }
-int SifIopReset(const char *arg, int n) { (void)arg; (void)n; return 1; }
+int SifIopReset(const char *arg, int n) { (void)arg; (void)n; resets++; heap_ready=0; return 1; }
 int SifIopSync(void) { reset_done = 1; return 1; }
-void SifInitIopHeap(void) {}
+void SifInitIopHeap(void) { assert(reset_done); heap_ready=1; }
 void SifLoadFileInit(void) {}
 void sbv_patch_enable_lmb(void) {}
 void sbv_patch_disable_prefix_check(void) {}
 void fileXioInit(void) {}
-void poweroffInit(void) {}
+void poweroffInit(void) { assert(!fail_poweroff); poweroff_inits++; }
 void SyncDCache(void *a, void *b) { (void)a; (void)b; }
 void InvalidDCache(void *a, void *b) { (void)a; (void)b; }
 void DelayThread(int n) { (void)n; }
@@ -99,10 +100,21 @@ int main(int argc, char **argv) {
   existing_pad = !strcmp(argv[1], "resident-pad");
   existing_sio = !strcmp(argv[1], "resident-sio");
   fail_sio = !strcmp(argv[1], "failed-sio");
+  fail_poweroff = !strcmp(argv[1], "failed-poweroff");
   iop_status_t st;
+  if (!strcmp(argv[1], "memcard-bootstrap")) {
+    /* libdebug's screen setup calls GetRomName through the IOP heap.
+     * A loader need not leave that RPC server usable before a reset. */
+    iop_boot_prepare_screen();
+    assert(reset_done && heap_ready && resets == 1);
+    assert(storage_loads == 0 && pad_loads == 0);
+  }
   iop_boot_base(&st);
+  assert(resets == 1); /* Consume the early reset instead of rebooting twice. */
   assert(queries > 0);
   assert(storage_loads == 3 && st.hdd_ok && st.usb_ok);
+  assert(poweroff_inits == !fail_poweroff);
+  assert(st.poweroff_ok == !fail_poweroff);
   if (!strcmp(argv[1], "resident-pad")) {
     assert(sio_loads == 0 && pad_loads == 0 && st.pad_ok);
     assert(st.pad_reused && st.pad_version == 0x0306);
@@ -125,6 +137,8 @@ int main(int argc, char **argv) {
     _iop_reboot_count++;
     assert(iop_load_memcard(&st) == 0 && mc_loads == 4);
   }
+  iop_boot_base(&st);
+  assert(resets == 2); /* Network Settings > Restart still resets the IOP. */
   puts(argv[1]);
   return 0;
 }
@@ -132,6 +146,8 @@ int main(int argc, char **argv) {
 
 
 def main():
+    startup = (ROOT / 'src/main.c').read_text().split('int main(', 1)[1]
+    assert startup.index('iop_boot_prepare_screen();') < startup.index('ui_init();')
     with tempfile.TemporaryDirectory(prefix="psxi-iop-boot-") as tmp:
         tmp = Path(tmp)
         for name in SDK_HEADERS:
@@ -145,7 +161,7 @@ def main():
                         "-include", str(tmp / "mock_sdk.h"),
                         str(ROOT / "src/iop_boot.c"), str(tmp / "harness.c"),
                         "-o", str(binary)], check=True)
-        for scenario in ("resident-pad", "resident-sio", "fresh", "failed-sio"):
+        for scenario in ("resident-pad", "resident-sio", "fresh", "failed-sio", "memcard-bootstrap", "failed-poweroff"):
             subprocess.run([str(binary), scenario], check=True)
 
 

@@ -119,3 +119,17 @@ still need DESR hardware validation. Model coverage is not comprehensive.
   through 4 IOP buffers of 128 KiB; if it cannot allocate two, or the
   module does not load, the previous copy loop is used. Network Settings >
   Copy engine: basic turns it off.
+
+* **3.2 hotfix test:** automatic game databases and indexed fallback assets
+  pass host/server checks. APA enumeration has DMA alignment, cycle/limit/error
+  handling and per-header progress, but a PSX1 driver stall inside one RPC is
+  not confirmed resolved on hardware. A scan error never supplies a partial
+  partition list for writes.
+# Latest 3.2 hotfix test: XMB startup regression
+
+The user reports that a PSX2 freezes before the XMB appears after Cover
+Repair with `PSX-UDPFS-Installer_V3.2-test.zip`. Do not use that build to
+repair or install further channels pending investigation. Cover Repair can
+write both jacket PNGs and downloaded `res/info.sys` metadata; the failing
+resource has not yet been isolated. Host tests do not establish DESR XMB
+compatibility. Replacing the USB ELF alone does not undo HDD resource writes.
