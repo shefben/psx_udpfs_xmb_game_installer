@@ -1,4 +1,13 @@
-UDPFS Game Installer for the PSX DESR - v3.2
+UDPFS Game Installer for the PSX DESR - v3.5
+
+NEW IN 3.5
+- Install PS1 CDs and PS2 CDs/DVDs from the console's optical drive.
+- Install Games starts with every game unselected.
+- Settings groups network, copy-engine and PSX1/PSX2 configuration.
+- Select multiple games to remove or repair their channels.
+- Apps > Remove installed apps deletes a chosen homebrew channel.
+- Latest checked PS2SDK detects LBA48 automatically with compatible DVRP firmware.
+Physical disc and XMB behavior still require hardware testing.
 ============================================
 
 Installs PS2 games (.iso / .zso / .cso / .chd, or split .iso.001 sets) from your PC onto the PSX DESR's
@@ -80,7 +89,7 @@ PC SIDE
 DESR SIDE
 ---------
 
-Select Network / Console Settings > DESR generation (PSX1 or PSX2) before
+Select Settings > DESR generation (PSX1 or PSX2) before
 installing PS2 games. The setting is saved in the installer partition.
 New games get hidden HDL data and a separate 128 MiB cover/launch channel.
 
@@ -113,7 +122,7 @@ New games get hidden HDL data and a separate 128 MiB cover/launch channel.
      Installed Games > the game > Verify game data checks it later;
    - a summary is shown, then the DESR returns to the XMB (or switches
      itself off with power_off_after_install = yes in udpfsd.cfg; any
-     button within 15 s cancels). Install All asks the same: Square on
+     button within 15 s cancels). Install Games asks the same: Square on
      its confirm screen toggles "power off when done".
    Do not switch the DESR off while it is copying.
 
@@ -122,7 +131,7 @@ New games get hidden HDL data and a separate 128 MiB cover/launch channel.
                                          PS1 .VCD in the POPS folder)
      Install Games from USB              same, from a FAT32/exFAT USB drive
                                          (games over 4 GiB need exFAT)
-     Install All Games from the server   pick several (Square toggles)
+     Install Games from the server   pick several (Square toggles)
      Install Installer as XMB Channel    puts the installer itself in the
                                          XMB, so you no longer need the
                                          USB stick
@@ -164,7 +173,7 @@ PS1 GAMES (POPSTARTER)
                        supply them
    Choose the .VCD in Install Games from UDPFS (or USB). Each PS1 game
    gets its own XMB channel; POPS.ELF and IOPRP252.IMG are copied to
-   __common/POPS once. PS1 games are not part of Install All /
+   __common/POPS once. PS1 games are not part of Install Games /
    auto-install yet.
 
 4. Go back to the XMB (or restart the DESR). Each game and the installer
@@ -190,7 +199,7 @@ IF SOMETHING GOES WRONG
                            once and keeps what is on the HDD.
   Copy failed / power cut  Installed Games > the game > Resume copy
                            continues where it stopped (the image must still
-                           be at the same place); Install All resumes it too.
+                           be at the same place); Install Games resumes it too.
                            The last copied part is read back first; a part
                            that did not reach the disk is copied again.
   Installer channel shows  Made by v2.0 (or an earlier zip). Start this zip's

@@ -77,6 +77,15 @@ int pair_can_add_cover(const pair_facts_t *f) {
 }
 
 int pair_can_verify(const pair_facts_t *f) { return pair_hidden_trusted(f); }
+unsigned pair_repair_actions(pair_state_t state, int can_cover, int missing_cover) {
+  if (state == PAIR_PS1)
+    return REPAIR_PS1_HEADER | (missing_cover ? REPAIR_IMAGE : 0);
+  if (state == PAIR_COMPLETE)
+    return can_cover ? REPAIR_ADD_COVER : REPAIR_CHANNEL | (missing_cover ? REPAIR_IMAGE : 0);
+  if (state == PAIR_HIDDEN_ONLY || state == PAIR_CHANNEL_BROKEN)
+    return REPAIR_CHANNEL;
+  return 0;
+}
 
 const char *pair_state_label(pair_state_t s) {
   switch (s) {

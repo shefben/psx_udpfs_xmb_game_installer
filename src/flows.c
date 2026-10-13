@@ -10,9 +10,11 @@
 #include <io_common.h>
 
 #include "app_state.h"
+#include "apa_osd_header.h"
 #include "backup.h"
 #include "batch.h"
 #include "browser.h"
+#include "disc_cdvd.h"
 #include "flows.h"
 #include "hdd_partitions.h"
 #include "hdl_install.h"
@@ -240,7 +242,7 @@ static void run_install(game_plan_t *p, int allow_without_opl) {
     snprintf(msg, sizeof(msg),
              "%s paused: %llu MiB of %llu MiB are on the HDD.\n\n"
              "Continue later with Installed Games > the game > Resume copy\n"
-             "(Install All also lists it as 'resume copy'). The last copied\n"
+             "(Install Games also lists it as 'resume copy'). The last copied\n"
              "part is read back and checked before the copy goes on.",
              p->title, (unsigned long long)(rep.bytes_written >> 20),
              (unsigned long long)(((uint64_t)p->iso.sectors * ISO_SECTOR) >> 20));
@@ -473,18 +475,18 @@ static void batch_run_selected(int n, int allow_without_opl, const char *label) 
 
 void flow_batch_install(void) {
   if (g_app.net != NETWORK_READY) {
-    ui_message("Install All Games", network_not_ready_text());
+    ui_message("Install Games", network_not_ready_text());
     return;
   }
-  int n = batch_load_entries("Install All Games");
+  int n = batch_load_entries("Install Games");
   if (g_manifest_loaded && g_manifest.scanning) {
-    ui_message("Install All Games",
+    ui_message("Install Games",
                "The server is still reading its game folders.\n"
                "Try again in a moment (its window shows 'games ready').");
     return;
   }
   if (n == 0) {
-    ui_message("Install All Games",
+    ui_message("Install Games",
                "No .iso/.zso games found on the server.\n\n"
                "Set the game folders (dvd, cd, games, install) in udpfsd.cfg\n"
                "next to the udpfsd from dist/udpfsd/ and restart it.");
@@ -509,7 +511,7 @@ void flow_batch_install(void) {
              batch_count_selected(batch, n), n, (unsigned long)batch_needed_mb(batch, n),
              (unsigned long)free_mb);
     int key = 0;
-    int c = listui_pick("Install All Games", status, items, batch_rows, n, &ls,
+    int c = listui_pick("Install Games", status, items, batch_rows, n, &ls,
                         "[Sq] toggle  [X] install  [O] back", UI_SQUARE, &key);
     if (c < 0)
       return;
@@ -519,11 +521,11 @@ void flow_batch_install(void) {
     }
     int count = batch_count_selected(batch, n);
     if (count == 0) {
-      ui_message("Install All Games", "Nothing selected.");
+      ui_message("Install Games", "Nothing selected.");
       continue;
     }
     if (batch_needed_mb(batch, n) > free_mb) {
-      ui_message("Install All Games",
+      ui_message("Install Games",
                  "The selected games do not fit: the HDD is too full, or they\n"
                  "would pass the 128 GiB limit for games and data.\n"
                  "Deselect some with Square.");
@@ -535,7 +537,7 @@ void flow_batch_install(void) {
   int allow_without_opl = 0;
   opl_runtime_t opl;
   int orc;
-  if (!ensure_opl("Install All Games", 0, NULL) && opl_check_runtime(&opl, &orc) != ERR_OK) {
+  if (!ensure_opl("Install Games", 0, NULL) && opl_check_runtime(&opl, &orc) != ERR_OK) {
     char txt[400];
     snprintf(txt, sizeof(txt),
              "OPL runtime not found (looked for %s on hdd0:%s).\n\n"
@@ -550,7 +552,7 @@ void flow_batch_install(void) {
   /* Confirm; Square toggles switching the console off when done. */
   int power_off = g_manifest_loaded && g_manifest.power_off;
   for (;;) {
-    ui_header("Install All Games", NULL);
+    ui_header("Install Games", NULL);
     ui_at(3, " Install %d game(s), one after another (%lu MiB).",
           batch_count_selected(batch, n), (unsigned long)batch_needed_mb(batch, n));
     ui_at(5, " Each game is copied, read back and CRC-checked before its XMB");
@@ -567,15 +569,15 @@ void flow_batch_install(void) {
       break;
   }
 
-  batch_run_selected(n, allow_without_opl, "Install All");
+  batch_run_selected(n, allow_without_opl, "Install Games");
   static char summary[4096];
   batch_summary(batch, n, summary, sizeof(summary));
   if (power_off) {
-    auto_show("Install All Games - summary", summary, 15000);
-    if (power_off_countdown("Install All Games"))
+    auto_show("Install Games - summary", summary, 15000);
+    if (power_off_countdown("Install Games"))
       power_off_now();
   }
-  ui_text_view("Install All Games - summary", summary);
+  ui_text_view("Install Games - summary", summary);
 }
 
 /* Show text for up to ms (any button continues); used where nobody may
@@ -1182,6 +1184,39 @@ void flow_pair_actions(const char *visible, const char *hidden) {
 /* ------------------------------------------------------------------ */
 /* PS1 games (POPStarter)                                              */
 
+void flow_install_disc(void) {
+  if (!ui_confirm("Install Games from CD/DVD",
+                  "Insert a PS1 game CD or PS2 game CD/DVD, then press X.\n\n"
+                  "Leave the disc in until copying finishes.\n"
+                  "PS1 needs POPSTARTER.KELF in mass0:/POPS/ or the server\n"
+                  "POPS folder. POPS.ELF and IOPRP252.IMG are also needed\n"
+                  "there if not already installed on the HDD.")) return;
+  disc_info_t info;
+  ui_header("Checking CD/DVD", "Detecting the disc...");
+  int rc = disc_cdvd_prepare(NULL, &info);
+  if (rc < 0) {
+    char msg[300];
+    snprintf(msg, sizeof(msg), "Cannot read a supported game disc (code %d).\n\n"
+             "Check the tray and disc. Audio CDs and DVD movies cannot\n"
+             "be installed. No game data was written.", rc);
+    ui_message("CD/DVD unavailable", msg);
+    return;
+  }
+  if (info.ps1) flow_install_ps1("disc:/PS1/game.VCD");
+  else {
+    static game_plan_t plan;
+    const char *path = info.dvd ? "disc:/DVD/game.iso" : "disc:/CD/game.iso";
+    inst_err_t e = game_plan_build(path, &plan, &rc);
+    if (e) {
+      char msg[240];
+      snprintf(msg, sizeof(msg), "Could not read the PS2 disc: %s (code %d).\nNo game data was written.", err_text(e), rc);
+      ui_message("Cannot install disc", msg);
+      return;
+    }
+    flow_install_game(&plan);
+  }
+}
+
 void flow_install_ps1(const char *path) {
   static pops_plan_t plan;
   int rc = 0;
@@ -1229,9 +1264,14 @@ void flow_install_ps1(const char *path) {
             (unsigned long)(all >> 20), plan.ndiscs, plan.ndiscs - 1);
     else
       ui_at(7, " Size        %lu MiB", (unsigned long)(all >> 20));
-    ui_at(9, " Needs POPSTARTER.KELF next to the VCD or in POPS/ on the same");
-    ui_at(10, " device; POPS.ELF and IOPRP252.IMG are copied to __common/POPS");
-    ui_at(11, " if they are not there yet.");
+    if (source_is_disc(path)) {
+      ui_at(9, " Runtime files: POPSTARTER.KELF, POPS.ELF, IOPRP252.IMG in");
+      ui_at(10, " mass0:/POPS/ or the server POPS folder. Leave the disc in.");
+    } else {
+      ui_at(9, " Needs POPSTARTER.KELF next to the VCD or in POPS/ on the same");
+      ui_at(10, " device; POPS.ELF and IOPRP252.IMG are copied to __common/POPS");
+    }
+    ui_at(11, " Existing HDD runtime files are kept.");
     ui_footer("[X] install  [Square] edit title  [O] back");
     int b;
     do
@@ -1441,7 +1481,7 @@ void flow_remove_games(void) {
     }
     rm_ls.item = sel;
     int c = listui_pick("Remove Games", status, pair_items, rm_rows, n, &rm_ls,
-                        "[Sq] toggle [Start] all [X] remove", UI_SQUARE | UI_START, &key);
+                        "[Square] select [Start] all/none [X] remove", UI_SQUARE | UI_START, &key);
     if (c < 0)
       return;
     sel = c;
@@ -1506,104 +1546,93 @@ void flow_remove_games(void) {
   ui_text_view("Remove Games - summary", summary);
 }
 
-/* Repair XMB Channels starts here: every installed game shown without a
- * cover can get its PFS cover partition in one go. */
-static void add_covers_to_all(void) {
+/* Batch repair: select first; no operation touches an unselected game. */
+void flow_repair(void) {
   int n = collect_pairs();
-  int want = 0;
-  for (int i = 0; i < n; i++)
-    want += pairs[i].can_cover;
-  if (want <= 0)
-    return;
-  char txt[700];
-  snprintf(txt, sizeof(txt),
-           "%d installed game%s ha%s no cover in the XMB.\n\n"
-           "Add a cover to %s now? (EXPERIMENTAL)\n"
-           "  - each game is hidden again (PP. renamed to __., not copied)\n"
-           "  - a 128 MiB PFS partition PP. gets the cover, title, game ID\n"
-           "    and OPL-Launcher (PFS-BatchKit-Manager's resource partition)\n\n"
-           "If the XMB freezes afterwards: start this installer from\n"
-           "wLaunchELF, Installed Games > game > Remove cover.\n\n"
-           "[X] add covers   [O] no, show the list",
-           want, want == 1 ? "" : "s", want == 1 ? "s" : "ve", want == 1 ? "it" : "all of them");
-  if (!ui_confirm("Add XMB covers", txt))
-    return;
-  static char done[2048];
-  int off = 0, ok = 0, bad = 0;
-  done[0] = 0;
+  if (n < 0) { ui_message("Repair XMB Channels", "Cannot read the HDD partition table."); return; }
+  if (!n) { ui_message("Repair XMB Channels", "No installed games found."); return; }
+  static unsigned actions[MAX_PAIRS];
+  for (int i = 0; i < n; i++) {
+    remove_entry_init(&rm[i], pairs[i].visible, pairs[i].hidden, pairs[i].state);
+    actions[i] = pair_repair_actions(pairs[i].state, pairs[i].can_cover, pairs[i].missing_cover);
+    pair_items[i] = (lv_item_t){pairs[i].visible + 3, 0, actions[i] ? 0 : 1};
+  }
+  listui_state_t ls = {0};
+  for (;;) {
+    for (int i = 0; i < n; i++) {
+      remove_format_row(&rm[i], rm_rows[i], UI_ROW_LEN);
+      if (!actions[i])
+        snprintf(rm_rows[i], UI_ROW_LEN, "[ ] %-32.32s needs individual recovery", pairs[i].visible + 3);
+    }
+    char status[96];
+    snprintf(status, sizeof(status), "%d/%d selected; only selected channels are repaired", remove_count_selected(rm, n), n);
+    int key = 0;
+    int c = listui_pick("Repair XMB Channels", status, pair_items, rm_rows, n, &ls,
+                       "[Square] select [Start] all/none [X] repair [O] back", UI_SQUARE | UI_START, &key);
+    if (c < 0) return;
+    if (key & UI_SQUARE) {
+      if (actions[c]) remove_toggle(&rm[c]);
+      else ui_message("Individual recovery needed", "Unknown or incomplete game data cannot be made bootable safely.\nUse Installed Games to resume or reinstall this game.");
+      continue;
+    }
+    if (key & UI_START) {
+      int eligible = 0;
+      for (int i = 0; i < n; i++) eligible += actions[i] != 0;
+      int on = remove_count_selected(rm, n) != eligible;
+      for (int i = 0; i < n; i++) rm[i].selected = on && actions[i];
+      continue;
+    }
+    if (!remove_count_selected(rm, n)) { ui_message("Repair XMB Channels", "Nothing selected. Square selects a game."); continue; }
+    break;
+  }
+  char msg[600];
+  int count = remove_count_selected(rm, n), covers = 0, needs_opl = 0;
+  for (int i = 0; i < n; i++) if (rm[i].selected) {
+    covers += !!(actions[i] & REPAIR_ADD_COVER);
+    needs_opl |= actions[i] & (REPAIR_CHANNEL | REPAIR_ADD_COVER);
+  }
+  snprintf(msg, sizeof(msg), "Repair %d selected game channel(s)?\n\n"
+    "Game data is kept. Missing images are fetched when available.\n"
+    "Unknown and incomplete copies require individual recovery.%s",
+    count, covers ? "\n\nSelected games without covers receive experimental 128 MiB PFS\ncover partitions. If XMB freezes, use Installed Games > Remove cover." : "");
+  if (!ui_confirm("Repair XMB Channels", msg)) return;
+  if (needs_opl && !ensure_opl("Repair XMB Channels", 0, NULL)) {
+    opl_runtime_t opl; int rc;
+    if (opl_check_runtime(&opl, &rc) != ERR_OK) { ui_message("Repair XMB Channels", "OPL is required to repair the selected PS2 channels."); return; }
+  }
   progress_ctx_t ctx = {NULL, STAGE_CREATING_CHANNEL, 1, 0, 0};
   install_ui_t ui = {cb_stage, NULL, NULL, &ctx, NULL, NULL};
+  static char summary[8192];
+  size_t off = 0;
+  int ok = 0, bad = 0, index = 0;
   for (int i = 0; i < n; i++) {
-    if (!pairs[i].can_cover)
-      continue;
-    install_report_t rep;
-    ui_header("Add XMB covers", pairs[i].visible);
-    game_add_cover(pairs[i].hidden, &ui, &rep);
-    if (rep.err)
-      bad++;
-    else
-      ok++;
-    if (off < (int)sizeof(done) - 120)
-      off += snprintf(done + off, sizeof(done) - off, "%s %.40s%s%s\n",
-                      rep.err ? "FAIL" : "OK  ", pairs[i].visible + 3,
-                      rep.err ? "  " : "", rep.err ? err_name(rep.err) : "");
-  }
-  if (off < (int)sizeof(done) - 80)
-    snprintf(done + off, sizeof(done) - off,
-             "\n%d cover%s added, %d failed. Return to the XMB (or reboot).", ok,
-             ok == 1 ? "" : "s", bad);
-  ui_text_view("Add XMB covers", done);
-}
-
-static void refresh_missing_images(void) {
-  int n = collect_pairs(), want = 0;
-  if (n < 0) return;
-  for (int i=0; i<n; i++) want += pairs[i].missing_cover;
-  if (!want) return;
-  char msg[450];
-  snprintf(msg, sizeof(msg), "%d game(s) still need an XMB image.\n\n"
-    "Missing, invalid and default jackets are flagged even after repair.\n"
-    "Fetch their matching artwork from the server now?\n\n"
-    "If unavailable, add <GAME-ID>_COV.png/jpg to ART or enable cover\n"
-    "downloads, restart udpfsd and run Repair again.", want);
-  if (!ui_confirm("XMB images needed", msg)) return;
-  int ok=0, bad=0;
-  for (int i=0; i<n; i++) if (pairs[i].missing_cover) {
-    install_report_t rep;
-    ui_header("Fetching missing XMB images", pairs[i].visible);
-    game_refresh_resources(pairs[i].visible, &rep);
-    if (rep.err) bad++; else ok++;
-  }
-  snprintf(msg, sizeof(msg), "%d image(s) updated; %d still need an image.\n\n"
-    "Unresolved games remain flagged. Add their ID-named covers to ART,\n"
-    "restart udpfsd and retry Repair or the game's Fetch XMB image action.", ok, bad);
-  ui_message("XMB image results", msg);
-}
-
-void flow_repair(void) {
-  if (g_app.app_mounted) {
-    static tx_journal_t txs[16];
-    int n = tx_scan_unfinished(APP_STATE_DIR, txs, 16);
-    if (n > 0) {
-      char msg[900];
-      int off = snprintf(msg, sizeof(msg), "%d unfinished transaction(s):\n\n", n);
-      for (int i = 0; i < n && off < (int)sizeof(msg) - 80; i++)
-        off += snprintf(msg + off, sizeof(msg) - off, " %s  %s  %s\n",
-                        txs[i].startup_id, tx_state_name(txs[i].state),
-                        txs[i].last_error);
-      snprintf(msg + off, sizeof(msg) - off,
-               "\nThey are listed below with their recovery actions.");
-      ui_message("Repair XMB Channels", msg);
+    if (!rm[i].selected) continue;
+    snprintf(msg, sizeof(msg), "Repairing %d/%d - do not power off", ++index, count);
+    ui_header("Repair XMB Channels", msg);
+    install_report_t rep = {0};
+    unsigned action = actions[i];
+    if (action & REPAIR_ADD_COVER) game_add_cover(pairs[i].hidden, &ui, &rep);
+    else if (action & REPAIR_CHANNEL) game_create_channel(pairs[i].hidden, &ui, &rep);
+    else if (action & REPAIR_PS1_HEADER) {
+      char title[64], boot_id[16], id[PART_ID_LEN + 1];
+      if (channel_get_title(pairs[i].visible, title, sizeof(title)) < 0 ||
+          part_id_from_partition(pairs[i].visible, boot_id) < 0 ||
+          boot_id_to_part_id(boot_id, id) < 0) rep.err = ERR_XMB_VERIFY;
+      else rep.err = osd_header_write(pairs[i].visible, XMB_SYSTEM_CNF, title, id, &rep.rc);
     }
+    if (!rep.err && (action & REPAIR_IMAGE)) game_refresh_resources(pairs[i].visible, &rep);
+    if (rep.err) bad++; else ok++;
+    if (off < sizeof(summary) - 150)
+      off += snprintf(summary + off, sizeof(summary) - off, "%s %.32s%s%s (code %d)\n",
+                      rep.err ? "FAILED" : "OK", pairs[i].visible + 3,
+                      rep.err ? " " : "", rep.err ? err_text(rep.err) : "", rep.rc);
   }
-  add_covers_to_all();
-  refresh_missing_images();
-  pair_list("Repair XMB Channels", 1);
+  snprintf(summary + off, sizeof(summary) - off, "\n%d repaired, %d failed. Restart the DESR to refresh the XMB.", ok, bad);
+  ui_text_view("Repair XMB Channels - summary", summary);
 }
 
-/* ------------------------------------------------------------------ */
-
-void flow_network_settings(void) {
+/* Settings entry point owns all configuration controls. */
+void flow_settings(void) {
  static char rows[6][UI_ROW_LEN];
   for (;;) {
     snprintf(rows[4], UI_ROW_LEN, "Copy engine: %s",
@@ -1616,8 +1645,8 @@ void flow_network_settings(void) {
              g_app.settings.local_ip);
     snprintf(rows[2], UI_ROW_LEN, "Save and restart network");
     snprintf(rows[3], UI_ROW_LEN, "Restart network (retry discovery)");
- snprintf(rows[5], UI_ROW_LEN, "DESR generation: %s", console_name(g_app.settings.console));
- int c = ui_select("Network / Console Settings", network_status_line(), rows, 6, 0, NULL, NULL);
+ snprintf(rows[5], UI_ROW_LEN, "Unit type (PSX1 / PSX2): %s", console_name(g_app.settings.console));
+ int c = ui_select("Settings", network_status_line(), rows, 6, 0, NULL, NULL);
     if (c < 0)
       return;
  if (c == 5) {

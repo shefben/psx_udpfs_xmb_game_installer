@@ -22,7 +22,7 @@
  */
 
 #define IOP_MAX_FAILS 16
-#define IOP_MAX_MODS 24
+#define IOP_MAX_MODS 28
 
 typedef struct {
   /* Every load attempt, in order (diagnostics; `data`/`size` is the
@@ -40,6 +40,7 @@ typedef struct {
   int pad_reused, sio2_reused; /* existing modules, not embedded IRX loads */
   unsigned short pad_version, sio2_version; /* resident IRX versions */
   int usb_ok;   /* usbd + bdm + bdmfs_fatfs + usbmass_bd loaded (mass0:) */
+  int disc_ok;  /* optional CDVD services, initialized on first disc use */
   int pump_ok;  /* hddpump loaded (overlapped network + HDD writes) */
   int net_ok;   /* smap + ministack + udpfs_ioman loaded */
   int udpfs_ok; /* udpfs: device registered (server discovered) */
@@ -68,5 +69,6 @@ void iop_boot_base(iop_status_t *st);
 void iop_boot_network(const char *local_ip, int dhcp, iop_status_t *st);
 
 int iop_load_memcard(iop_status_t *st);
+int iop_load_disc(iop_status_t *st);
 
 #endif

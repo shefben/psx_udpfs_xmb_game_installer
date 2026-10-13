@@ -50,7 +50,7 @@ typedef struct {
   uint32_t alloc_mb;      /* APA data partitions, excluding the channel */
   pair_state_t pair;      /* state on the HDD before the batch */
   batch_status_t status;
-  int selected;
+  int selected;          /* manual lists start unchecked; auto-select is explicit */
   int duplicate_of;       /* index, when status == BATCH_DUPLICATE */
   batch_result_t result;
   inst_err_t err;

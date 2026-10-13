@@ -117,7 +117,7 @@ DESR. Back up the HDD partition table before the first run (e.g.
      `installed, NOT VERIFIED`; **Installed Games > game > Verify game
      data** runs it later). A summary shows for 15 seconds, then the
      console returns to the XMB.
-   * **Manual**: **Install All Games from the server** (Square toggles a
+   * **Manual**: **Install Games from the server** (Square toggles a
      game, X starts), or **Install Games from UDPFS** for one game.
    * **USB**: **Install Games from USB** reads `.iso` and `.zso` from a
      FAT32/exFAT drive (no server needed; > 4 GiB needs exFAT).
@@ -128,7 +128,7 @@ DESR. Back up the HDD partition table before the first run (e.g.
    * In every list **L2** changes the order and **R2** searches by name.
    * Press **START** while a game copies to **pause** it; hold **SELECT + O**
      to abort. A paused or interrupted copy continues with **Installed
-     Games > game > Resume copy** (or Install All): the last copied part is
+     Games > game > Resume copy** (or Install Games): the last copied part is
      read back and checked first, and only data after the last good part is
      copied again.
    * **Installed Games > game > Rename** changes the title shown in the XMB.

@@ -66,10 +66,12 @@ $(BUILD)/.refs-ok: reference/REVISIONS.txt FORCE
 # PS2SDK: the pinned build (tools/ps2sdk.env, `make ps2sdk`). Its
 # ps2atad.irx must address the PS2 area of a DESR with LBA48-aware DVRP
 # firmware (dvrpwned) with LBA48; the stamp records which SDK built it.
-$(BUILD)/.sdk-ok: tools/ps2sdk.env FORCE
+$(BUILD)/.sdk-ok: tools/ps2sdk.env tools/build-psx-cdvd.sh $(wildcard patches/ps2sdk/*.patch) FORCE
 	@. tools/ps2sdk.env; grep -q "$$PS2SDK_ATAD_LBA48_MARK" "$(PS2SDK)/iop/irx/ps2atad.irx" || { \
 	  echo "ERROR: $(PS2SDK)/iop/irx/ps2atad.irx has no LBA48 DVRP support."; \
 	  echo "       Run 'make ps2sdk', then source tools/ps2env.sh again."; exit 1; }
+	@test -s "$(PS2SDK)/iop/irx/xcdvdman.irx" -a -s "$(PS2SDK)/iop/irx/xcdvdfsv.irx" || { \
+	  echo "ERROR: PSX XOSD optical drivers missing. Run 'make ps2sdk'."; exit 1; }
 	$(call UPDATE_STAMP,$@,$(PS2SDK) $(shell cat $(PS2SDK)/.psx-installer-rev 2>/dev/null))
 
 ps2sdk:
@@ -86,6 +88,7 @@ test:
 	$(MAKE) -C test/host
 	python3 test/host/test_driver.py
 	python3 test/host/test_iop_boot.py
+	python3 test/host/test_game_selection.py
 	python3 test/host/test_channel_layout.py
 	python3 test/host/test_extras_writes.py
 	python3 test/host/test_cover_refresh.py
@@ -296,7 +299,7 @@ dist: test $(BOOT_ELF) $(UDPFSD_BIN) $(OPL_RUNTIME) $(DIST_POPS)
 	bash tools/write-manifest.sh $(DIST) $(DRIVER) $(BUILD)/irx $(OPL_ELF) $(BUILD)/.kelf-mode
 
 # ---- 7. end-user zip (README, PS2 bootstrap ELF, PC/udpfsd folder) -----
-VERSION := 3.2
+VERSION := 3.5
 PACKAGE := $(ROOT)/PSX-UDPFS-Installer_V$(VERSION).zip
 package: dist
 	bash tools/make-package.sh $(DIST) $(PACKAGE)

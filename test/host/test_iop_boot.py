@@ -8,7 +8,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 SDK_HEADERS = ["delaythread.h", "iopcontrol.h", "iopheap.h", "kernel.h",
                "libpwroff.h", "loadfile.h", "sbv_patches.h", "sifrpc.h",
-               "fileXio_rpc.h", "smod.h"]
+               "fileXio_rpc.h", "smod.h", "libcdvd.h"]
 MOCK_SDK = r"""
 #include <stdint.h>
 typedef uint8_t u8;
@@ -31,6 +31,8 @@ void DelayThread(int);
 int fileXioSetRWBufferSize(int);
 int fileXioDopen(const char *);
 int fileXioDclose(int);
+#define SCECdINoD 0
+int sceCdInit(int);
 """
 HARNESS = r"""
 #include <assert.h>
@@ -42,8 +44,11 @@ BLOB(iomanX) BLOB(fileXio) BLOB(poweroff) BLOB(ps2dev9) BLOB(ps2atad)
 BLOB(ps2hdd_hdl) BLOB(ps2fs) BLOB(hdlfs) BLOB(smap) BLOB(ministack)
 BLOB(udpfs_ioman) BLOB(sio2man) BLOB(padman) BLOB(usbd) BLOB(bdm)
 BLOB(bdmfs_fatfs) BLOB(usbmass_bd) BLOB(hddpump) BLOB(mcman) BLOB(mcserv)
+BLOB(cdvdman) BLOB(cdvdfsv)
 int _iop_reboot_count;
 static int mc_loads;
+static int disc_loads, disc_inits, fail_disc;
+int sceCdInit(int mode) { (void)mode; disc_inits++; return 1; }
 void source_wire_set_request(uint32_t n) { (void)n; }
 static int existing_pad, existing_sio, fail_sio, fail_poweroff, poweroff_inits, pad_loads, sio_loads;
 static int storage_loads, reset_done, queries, resets, heap_ready;
@@ -60,6 +65,10 @@ int SifExecModuleBuffer(void *data, unsigned int size, int alen,
                         const char *args, int *rv) {
   (void)size; (void)alen; (void)args;
   *rv = 0;
+  if (data == cdvdman_irx || data == cdvdfsv_irx) {
+    disc_loads++;
+    if (fail_disc) { *rv = 1; return 42; }
+  }
   if (data == poweroff_irx && fail_poweroff) { *rv = 1; return 42; }
   if (data == mcman_irx || data == mcserv_irx) mc_loads++;
   if (data == sio2man_irx) {
@@ -101,6 +110,7 @@ int main(int argc, char **argv) {
   existing_sio = !strcmp(argv[1], "resident-sio");
   fail_sio = !strcmp(argv[1], "failed-sio");
   fail_poweroff = !strcmp(argv[1], "failed-poweroff");
+  fail_disc = !strcmp(argv[1], "failed-disc");
   iop_status_t st;
   if (!strcmp(argv[1], "memcard-bootstrap")) {
     /* libdebug's screen setup calls GetRomName through the IOP heap.
@@ -131,6 +141,16 @@ int main(int argc, char **argv) {
     assert(!st.pad_reused && !st.sio2_reused);
   }
   assert(mc_loads == 0); /* Memory card drivers are lazy. */
+  assert(disc_loads == 0 && !st.disc_ok);
+  if (fail_disc) {
+    assert(iop_load_disc(&st) < 0 && disc_inits == 0);
+    assert(st.hdd_ok && st.usb_ok);
+  } else {
+    assert(iop_load_disc(&st) == 0 && disc_loads == 2 && disc_inits == 1 && st.disc_ok);
+    assert(iop_load_disc(&st) == 0 && disc_loads == 2 && disc_inits == 1);
+    _iop_reboot_count++;
+    assert(iop_load_disc(&st) == 0 && disc_loads == 4 && disc_inits == 2);
+  }
   if (!fail_sio) {
     assert(iop_load_memcard(&st) == 0 && mc_loads == 2);
     assert(iop_load_memcard(&st) == 0 && mc_loads == 2);
@@ -161,7 +181,7 @@ def main():
                         "-include", str(tmp / "mock_sdk.h"),
                         str(ROOT / "src/iop_boot.c"), str(tmp / "harness.c"),
                         "-o", str(binary)], check=True)
-        for scenario in ("resident-pad", "resident-sio", "fresh", "failed-sio", "memcard-bootstrap", "failed-poweroff"):
+        for scenario in ("resident-pad", "resident-sio", "fresh", "failed-sio", "memcard-bootstrap", "failed-poweroff", "failed-disc"):
             subprocess.run([str(binary), scenario], check=True)
 
 

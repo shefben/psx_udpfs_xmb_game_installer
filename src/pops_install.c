@@ -17,6 +17,7 @@
 #include "pops_install.h"
 #include "source_udpfs.h"
 #include "source_wire.h"
+#include "disc_cdvd.h"
 #include "xmb_game_channel.h"
 #include "util.h"
 #include "xmb_text.h"
@@ -30,6 +31,7 @@ static uint8_t buf[POPS_BUF] __attribute__((aligned(64)));
 static GameSource g_src;
 static udpfs_src_t g_u;
 static wire_src_t g_w;
+static disc_src_t g_disc;
 
 static inst_err_t open_source(const char *path);
 
@@ -62,6 +64,7 @@ inst_err_t pops_plan_build(const char *path, pops_plan_t *p, int *rc_out) {
   base = base ? base + 1 : path;
   char t[64];
   str_copy(t, base, sizeof(t));
+  if (source_is_disc(path)) str_copy(t, p->vcd.volume_id[0] ? p->vcd.volume_id : p->vcd.boot_id, sizeof(t));
   size_t n = strlen(t);
   if (n > 4 && str_ends_with_ci(t, ".vcd"))
     t[n - 4] = 0;
@@ -78,6 +81,18 @@ inst_err_t pops_plan_build(const char *path, pops_plan_t *p, int *rc_out) {
  * opening the file: udpfsd answers getstat only for open files, so a
  * getstat probe reported POPSTARTER.KELF etc. missing on the server. */
 static int find_pops_file(const char *vcd_path, const char *name, char *out, size_t sz) {
+  /* A physical PS1 disc has no POPStarter runtime files. Use the same
+   * POPS folder on USB or the server as image installs. */
+  if (source_is_disc(vcd_path)) {
+    static const char *const roots[] = {"mass0:/POPS/", "udpfs:/POPS/"};
+    for (unsigned i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
+      if (i == 0 && !g_app.iop.usb_ok) continue;
+      if (i == 1 && g_app.net != NETWORK_READY) continue;
+      snprintf(out, sz, "%s%s", roots[i], name);
+      if (file_open_size(out) > 0) return 0;
+    }
+    return -1;
+  }
   const char *slash = strrchr(vcd_path, '/');
   if (slash) {
     snprintf(out, sz, "%.*s/%s", (int)(slash - vcd_path), vcd_path, name);
@@ -159,6 +174,10 @@ static void progress(const install_ui_t *ui, time_t start, time_t *last, uint64_
 /* The server's LZ4 frames when it offers them (only compressed bytes
  * cross the network), else plain reads. */
 static inst_err_t open_source(const char *path) {
+  if (source_is_disc(path)) {
+    source_cdvd_init(&g_src, &g_disc);
+    return source_open(&g_src, path);
+  }
   if (game_source_is_server(path) && g_manifest_loaded && g_manifest.wire_lz4f) {
     source_wire_init(&g_src, &g_w);
     if (source_open(&g_src, path) == ERR_OK)

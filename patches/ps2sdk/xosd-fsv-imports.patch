@@ -1,0 +1,19 @@
+diff --git a/iop/cdvd/cdvdfsv/src/imports.lst b/iop/cdvd/cdvdfsv/src/imports.lst
+--- a/iop/cdvd/cdvdfsv/src/imports.lst
++++ b/iop/cdvd/cdvdfsv/src/imports.lst
+@@ -113,2 +113,15 @@
+ I_sceCdDoesUniqueKeyExist
++#ifdef CDVD_VARIANT_XOSD
++I_sceCdChgSys
++I_sceCdXLEDCtl
++I_sceCdNoticeGameStart
++I_sceCdBuzzerCtl
++I_cdvdman_167_atapi2dragon
++I_cdvdman_169_dragon2atapi
++I_sceCdXBSPowerCtl
++I_sceCdSetMediumRemoval
++I_sceCdGetMediumRemoval
++I_sceCdXDVRPReset
++I_sceCdGetWakeUpReason
++#endif
+ cdvdman_IMPORTS_end

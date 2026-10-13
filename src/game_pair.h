@@ -71,6 +71,11 @@ int pair_can_verify(const pair_facts_t *f);
 /* "Add XMB cover": a complete game shown as one HDL partition whose boot
  * header is intact (a game with a cover partition already has one). */
 int pair_can_add_cover(const pair_facts_t *f);
+enum {
+  REPAIR_CHANNEL = 1, REPAIR_ADD_COVER = 2, REPAIR_IMAGE = 4, REPAIR_PS1_HEADER = 8
+};
+/* Automatic batch repair never promotes unknown data to a bootable channel. */
+unsigned pair_repair_actions(pair_state_t state, int can_cover, int missing_cover);
 
 /* One partition of the APA list. */
 typedef struct {

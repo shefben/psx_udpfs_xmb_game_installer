@@ -8,7 +8,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/ps2sdk.env"
 export PS2DEV="${PS2DEV:-/usr/local/ps2dev/ps2dev}"
 STAMP=$PS2SDK_PREFIX/.psx-installer-rev
-if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$PS2SDK_REV" ]; then
+if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$PS2SDK_REV" ] &&
+   [ -s "$PS2SDK_PREFIX/iop/irx/xcdvdman.irx" ] && [ -s "$PS2SDK_PREFIX/iop/irx/xcdvdfsv.irx" ]; then
   echo "build-ps2sdk: $PS2SDK_PREFIX is already $PS2SDK_REV"
   exit 0
 fi
@@ -26,6 +27,7 @@ rm -rf "$PS2SDK_PREFIX"
 mkdir -p "$PS2SDK_PREFIX"
 make -C "$SRC" -j"$(nproc)" >/dev/null
 make -C "$SRC" release >/dev/null
+bash "$ROOT/tools/build-psx-cdvd.sh" "$SRC" "$PS2SDK_PREFIX"
 grep -q "$PS2SDK_ATAD_LBA48_MARK" "$PS2SDK_PREFIX/iop/irx/ps2atad.irx" ||
   { echo "ERROR: built ps2atad.irx has no LBA48 DVRP support"; exit 1; }
 echo "$PS2SDK_REV" > "$STAMP"

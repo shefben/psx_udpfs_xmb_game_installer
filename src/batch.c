@@ -42,7 +42,6 @@ void batch_classify(batch_entry_t *e, int n) {
         }
       }
     }
-    e[i].selected = batch_selectable(e[i].status);
   }
 }
 

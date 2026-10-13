@@ -3,6 +3,7 @@
 #include <iopheap.h>
 #include <kernel.h>
 #include <libpwroff.h>
+#include <libcdvd.h>
 #include <loadfile.h>
 #include <sbv_patches.h>
 #include <sifrpc.h>
@@ -41,6 +42,8 @@ IRX(usbmass_bd);
 IRX(hddpump);
 IRX(mcman);
 IRX(mcserv);
+IRX(cdvdman);
+IRX(cdvdfsv);
 
 /* ps2hdd-hdl.irx: -o 4 -n 128 (as proven by ps2-usbhdl/HDLGameInstaller). */
 static const char PS2HDD_ARGS[] = "-o\0"
@@ -203,6 +206,27 @@ int iop_load_memcard(iop_status_t *st) {
   at_reboot = _iop_reboot_count;
   /* mcman needs sio2man, which iop_boot_base loaded for the pads. */
   loaded = LOAD(st, mcman, 0, NULL) == 0 && LOAD(st, mcserv, 0, NULL) == 0 ? 0 : -1;
+  return loaded;
+}
+
+int iop_load_disc(iop_status_t *st) {
+  static int loaded = -1, at_reboot = -1;
+  extern int _iop_reboot_count;
+  if (loaded >= 0 && at_reboot == _iop_reboot_count)
+    return loaded;
+  at_reboot = _iop_reboot_count;
+  st->disc_ok = 0;
+  smod_mod_info_t mod;
+  if (smod_get_mod_by_name("cdvd_driver", &mod) <= 0 && LOAD(st, cdvdman, 0, NULL) < 0) {
+    loaded = -1;
+    return loaded;
+  }
+  if (smod_get_mod_by_name("cdvd_ee_driver", &mod) <= 0 && LOAD(st, cdvdfsv, 0, NULL) < 0) {
+    loaded = -1;
+    return loaded;
+  }
+  loaded = sceCdInit(SCECdINoD) ? 0 : -1;
+  st->disc_ok = loaded == 0;
   return loaded;
 }
 

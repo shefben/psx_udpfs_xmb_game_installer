@@ -5,13 +5,20 @@
 * A PS2DEV toolchain (EE + IOP compilers). Used here:
   `/usr/local/ps2dev/ps2dev` (EE GCC 15.2.0) under Ubuntu on WSL2.
   Docker is optional for normal builds.
-* The pinned PS2SDK (`tools/ps2sdk.env`: ps2dev/ps2sdk 2c67045,
-  2026-10-06), built by `make ps2sdk` with that toolchain into
-  `/usr/local/ps2dev/ps2sdk-2c67045`; `tools/ps2env.sh` uses it when it
+* The pinned PS2SDK (`tools/ps2sdk.env`: ps2dev/ps2sdk 329e2bb,
+  master checked 2026-10-13), built by `make ps2sdk` with that toolchain into
+  `/usr/local/ps2dev/ps2sdk-329e2bb`; `tools/ps2env.sh` uses it when it
   exists. Its `ps2atad.irx` recognises LBA48-aware DVRP firmware
   (dvrpwned) and then uses 48-bit LBA for the whole PS2 area. Every build
   checks the embedded atad for that (`build/.sdk-ok`) and stops with an
   older PS2SDK.
+  LBA48 needs no application compiler flag or manually enabled global:
+  ATAD detects drive support and compatible DESR DVRP firmware automatically.
+  Unmodified DVRP firmware retains its compatibility workaround.
+* `make ps2sdk` also builds `xcdvdman.irx` and `xcdvdfsv.irx` for the
+  DESR optical drive using `CDVD_VARIANT_XOSD`. This flag affects the
+  optical backend only; ATAD is unmodified. `patches/ps2sdk/` supplies
+  missing XOSD bus/service imports. Both optical modules load lazily.
 * `make`, `patch`, `git`, `python3`, a native `cc` (host tests).
 * For signed releases: `kelftool` on PATH (or `KELFTOOL=...`) and your
   own `PS2KEYS.dat`. Neither is shipped, searched for or committed.

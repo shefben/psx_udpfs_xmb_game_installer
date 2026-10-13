@@ -20,6 +20,7 @@
 #include "sha256.h"
 #include "source_udpfs.h"
 #include "source_zso.h"
+#include "disc_cdvd.h"
 #include "transaction.h"
 #include "util.h"
 #include "xmb_game_channel.h"
@@ -53,12 +54,14 @@ static GameSource g_src, g_inner, g_fallback;
 static udpfs_src_t g_usrc, g_ufb;
 static zso_src_t g_zso;
 static wire_src_t g_wire;
+static disc_src_t g_disc;
 
 /* Any fileXio device (udpfs:, mass0:). ZSO is decompressed here: a raw
  * .zso (USB), and udpfsd's virtual "<x>.zso.iso" too - the raw .zso next
  * to it is read instead, so only the compressed bytes cross the network.
  * Same logical ISO bytes either way (CRC, resume, verify unchanged). */
 static void source_init_for(const char *path, int mode) {
+  if (source_is_disc(path)) { source_cdvd_init(&g_src, &g_disc); return; }
   int zso_on_ps2 = mode >= 1;
   if (mode == 2) { source_wire_init(&g_src, &g_wire); return; }
   int virt = zso_on_ps2 && game_source_is_server(path) && source_classify(path) == SRC_TYPE_ZSO;
@@ -635,7 +638,7 @@ void game_install(game_plan_t *p, int allow_without_opl, const install_ui_t *ui,
   /* HDD free space and the 128 GiB limit for games and data. */
   if (g_app.settings.console == CONSOLE_UNKNOWN) {
     rep->err = ERR_CONSOLE_UNKNOWN;
-    rep->detail = "select DESR generation in Network / Console Settings";
+    rep->detail = "select Unit type (PSX1 / PSX2) in Settings";
     goto out_src;
   }
   uint32_t required_mb = (p->resume ? 0 : p->alloc.total_mb) + CHANNEL_SIZE_MB;

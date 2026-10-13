@@ -1,12 +1,12 @@
-# PSX DESR UDPFS XMB Game Installer (v3.2)
+# PSX DESR UDPFS XMB Game Installer (v3.5)
 
 An installer for the PSX DESR that runs on the console as its own XMB
 channel. It installs PS2 and PS1 games to the internal HDD from a PC over
 the network ([udpfsd](https://github.com/pcm720/udpfsd)) or from a USB
-drive. Every installed game appears in the XMB and starts through
+drive or a physical game CD/DVD. Every installed game appears in the XMB and starts through
 [OPL-Launcher](https://github.com/ps2homebrew/OPL-Launcher) (PS2) or
 POPStarter (PS1). PS2 games use hidden HDL data plus a separate 128 MiB PFS
-cover/launch channel. Select PSX1 or PSX2 in Network / Console Settings to
+cover/launch channel. Select PSX1 or PSX2 in **Settings** to
 use the appropriate launcher wrapper.
 
 ```
@@ -21,15 +21,29 @@ package worked on hardware. For broader model coverage, see the
 [hardware checklist](docs/HARDWARE_TEST_CHECKLIST.md). Back up the HDD
 before the first run.
 
-**Download:** `PSX-UDPFS-Installer_V3.2.zip`
+**Download:** `PSX-UDPFS-Installer_V3.5.zip`
 contains the installer ELF, the ready-to-run server folder,
 `README.txt`, `CHANGELOG.txt` and `SERVER-MANUAL.txt`.
 
 ## Features
 
 ### Installing
-- **From the PC (udpfsd):** browse the server's folders, or use
-  **Install All** to pick several games (Square toggles).
+- **From the PC (udpfsd):** **Install Games** lists server games with
+  nothing selected initially. Square toggles each game; X installs the selection.
+- **From CD/DVD:** **Install Games from CD/DVD** detects PS1 CDs and PS2
+  CDs/DVDs, including dual-layer DVDs. PS1 discs are read as raw sectors
+  (including audio tracks) and stored as POPStarter VCDs. Keep the disc
+  inserted throughout the copy. Supply `POPSTARTER.KELF`, `POPS.ELF` and
+  `IOPRP252.IMG` in USB `POPS/` or the server `POPS/` folder; existing HDD
+  POPS runtime files are reused.
+- **Settings:** DHCP/static IP, fallback/local IP, network restart, copy
+  engine and PSX1/PSX2 unit type are together in the main-menu Settings entry.
+- **Remove / repair games:** Square selects multiple games, Start toggles
+  all/none, X runs the selected operation. Both lists start unchecked.
+  Removal requires a destructive confirmation. Batch repair skips unknown
+  or incomplete data; recover those games through Installed Games.
+- **Remove apps:** Apps → Remove installed apps deletes a chosen homebrew
+  XMB channel and its files after confirmation.
 - **Auto-install:** with `auto_install = yes` the console installs every
   new game that fits, with no button presses.
 - **From USB:** `.iso` and `.zso` files on a FAT32 or exFAT drive; no PC

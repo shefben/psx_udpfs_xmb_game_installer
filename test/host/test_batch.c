@@ -4,6 +4,11 @@
 
 #define MB (1024ull * 1024ull)
 
+static void batch_toggle_all(batch_entry_t *e, int n) {
+  for (int i = 0; i < n; i++)
+    batch_toggle(&e[i]);
+}
+
 static batch_entry_t ent(const char *name, inst_err_t probe, const char *hidden,
                          pair_state_t pair, uint32_t alloc_mb) {
   batch_entry_t e;
@@ -42,9 +47,8 @@ TEST(batch_classify_and_default_selection) {
   CHECK_EQ_INT(e[3].duplicate_of, 0);
   CHECK_EQ_INT(e[4].status, BATCH_TOO_BIG);
   CHECK_EQ_INT(e[5].status, BATCH_EXISTS); /* unverified data: use Repair */
-  CHECK_EQ_INT(batch_count_selected(e, 6), 1);
-  CHECK(e[0].selected);
-  for (int i = 1; i < 6; i++)
+  CHECK_EQ_INT(batch_count_selected(e, 6), 0);
+  for (int i = 0; i < 6; i++)
     CHECK(!e[i].selected);
 }
 
@@ -64,8 +68,8 @@ TEST(batch_toggle_only_eligible) {
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);
   e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_COMPLETE, 1024);
   batch_classify(e, 2);
-  CHECK_EQ_INT(batch_toggle(&e[0]), 0);
   CHECK_EQ_INT(batch_toggle(&e[0]), 1);
+  CHECK_EQ_INT(batch_toggle(&e[0]), 0);
   CHECK_EQ_INT(batch_toggle(&e[1]), 0);
   CHECK_EQ_INT(e[1].selected, 0);
 }
@@ -76,6 +80,8 @@ TEST(batch_space_counts_selected_data_and_channels) {
   e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_NONE, 1024);
   e[2] = ent("C.iso", ERR_OK, "__.SLUS-20314..C", PAIR_NONE, 512);
   batch_classify(e, 3);
+  CHECK_EQ_U64(batch_needed_mb(e, 3), 0);
+  batch_toggle_all(e, 3);
   CHECK_EQ_U64(batch_needed_mb(e, 3), 4096 + 1024 + 512 + 3 * 128);
   batch_toggle(&e[1]);
   CHECK_EQ_U64(batch_needed_mb(e, 3), 4096 + 512 + 2 * 128);
@@ -87,6 +93,7 @@ TEST(batch_rows_and_summary) {
   e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_NONE, 1024);
   e[2] = ent("C.iso", ERR_OK, "__.SLUS-20314..C", PAIR_COMPLETE, 512);
   batch_classify(e, 3);
+  batch_toggle_all(e, 3);
   char row[128];
   batch_format_row(&e[0], row, sizeof(row));
   CHECK(strstr(row, "[x]") == row);
@@ -141,7 +148,7 @@ TEST(batch_from_manifest_duplicate_iso_and_zso) {
   CHECK_EQ_INT(e[0].status, BATCH_ELIGIBLE);
   CHECK_EQ_INT(e[1].status, BATCH_DUPLICATE);
   CHECK_EQ_INT(e[2].status, BATCH_INVALID);
-  CHECK_EQ_INT(batch_count_selected(e, 3), 1);
+  CHECK_EQ_INT(batch_count_selected(e, 3), 0);
 }
 
 TEST(auto_start_only_when_idle_and_ready) {
@@ -154,7 +161,7 @@ TEST(auto_start_only_when_idle_and_ready) {
   CHECK(!auto_start_due(0, 1, 1, 1, 0, 0)); /* HDD unusable */
 }
 
-TEST(batch_resumable_copy_is_selected_and_needs_only_the_channel) {
+TEST(batch_resumable_copy_starts_unselected_and_needs_only_the_channel) {
   batch_entry_t e[3];
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_HIDDEN_UNVERIFIED, 4096);
   e[0].resumable = 1;
@@ -163,7 +170,8 @@ TEST(batch_resumable_copy_is_selected_and_needs_only_the_channel) {
   batch_classify(e, 3);
   CHECK_EQ_INT(e[0].status, BATCH_RESUME);
   CHECK_EQ_INT(e[1].status, BATCH_EXISTS);
-  CHECK(e[0].selected && !e[1].selected && e[2].selected);
+  CHECK(!e[0].selected && !e[1].selected && !e[2].selected);
+  batch_toggle_all(e, 3);
   CHECK_STR(batch_status_label(BATCH_RESUME), "resume copy");
   /* A resume needs its channel; a new game needs data and channel. */
   CHECK_EQ_U64(batch_needed_mb(e, 3), 1024 + 2 * 128);
@@ -181,6 +189,7 @@ TEST(batch_summary_counts_paused) {
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);
   e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_NONE, 4096);
   batch_classify(e, 2);
+  batch_toggle_all(e, 2);
   e[0].result = BATCH_PAUSED;
   e[1].result = BATCH_SKIPPED;
   char sum[512];
@@ -194,6 +203,7 @@ TEST(batch_summary_mentions_opl_cfg_failure) {
   batch_entry_t e[1];
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);
   batch_classify(e, 1);
+  batch_toggle_all(e, 1);
   e[0].result = BATCH_DONE;
   e[0].opl_cfg = "failed";
   char sum[512];
@@ -206,6 +216,7 @@ TEST(batch_summary_mentions_missing_cover) {
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);
   e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_NONE, 4096);
   batch_classify(e, 2);
+  batch_toggle_all(e, 2);
   e[0].result = e[1].result = BATCH_DONE;
   e[0].jacket = "missing"; /* server listed a cover, it could not be read */
   e[1].jacket = "server";
@@ -221,6 +232,7 @@ TEST(batch_summary_mentions_skipped_verification) {
   e[0] = ent("A.iso", ERR_OK, "__.SLUS-20312..A", PAIR_NONE, 4096);
   e[1] = ent("B.iso", ERR_OK, "__.SLUS-20313..B", PAIR_NONE, 4096);
   batch_classify(e, 2);
+  batch_toggle_all(e, 2);
   e[0].result = e[1].result = BATCH_DONE;
   e[1].verify_skipped = 1;
   char sum[512];
@@ -276,7 +288,7 @@ TEST(batch_same_id_different_titles_is_duplicate) {
   CHECK_EQ_INT(e[0].status, BATCH_ELIGIBLE);
   CHECK_EQ_INT(e[1].status, BATCH_DUPLICATE);
   CHECK_EQ_INT(e[1].duplicate_of, 0);
-  CHECK_EQ_INT(batch_count_selected(e, 2), 1);
+  CHECK_EQ_INT(batch_count_selected(e, 2), 0);
 }
 
 TEST(auto_waits_while_server_scans) {

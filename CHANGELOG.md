@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.5 - Disc installation and menu management
+
+- Add physical PS1 CD and PS2 CD/DVD sources, including raw PS1 audio
+  sectors, generated POPStarter VCD headers and DVD9 geometry checks.
+- Use latest checked PS2SDK 329e2bb and its PSX XOSD optical drivers;
+  retain automatic ATAD LBA48 detection without application flags.
+- Replace the UDPFS single-game main-menu entry with Install Games;
+  its batch list now starts entirely unselected. USB remains available.
+- Collect network, copy-engine and PSX1/PSX2 configuration in Settings.
+- Expose Apps → Remove installed apps and verify the partition disappeared.
+- Repair XMB Channels now supports selecting multiple games before any
+  writes; unknown/incomplete copies require individual recovery.
+- Keep multi-game removal, clarify controls and exercise selection,
+  cancellation and continued processing after a failure in host tests.
+- Physical disc installs and the new PSX optical modules need hardware
+  validation; host tests and compiler checks cannot prove drive behavior.
+
 ## Startup and cover repair fixes
 
 - Preserve odd-length network transfers so downloaded covers pass PNG validation; add a regression test for SMAP receive tails.

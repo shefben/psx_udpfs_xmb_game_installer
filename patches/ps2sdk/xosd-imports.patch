@@ -1,0 +1,38 @@
+diff --git a/iop/cdvd/cdvdman/Makefile b/iop/cdvd/cdvdman/Makefile
+--- a/iop/cdvd/cdvdman/Makefile
++++ b/iop/cdvd/cdvdman/Makefile
+@@ -14,5 +14,6 @@ IOP_IMPORT_INCS += \
+ 	system/loadcore \
+ 	system/stdio \
+ 	system/sysclib \
++	system/ssbusc \
+ 	system/sysmem \
+ 	system/threadman
+diff --git a/iop/cdvd/cdvdman/src/irx_imports.h b/iop/cdvd/cdvdman/src/irx_imports.h
+--- a/iop/cdvd/cdvdman/src/irx_imports.h
++++ b/iop/cdvd/cdvdman/src/irx_imports.h
+@@ -24,5 +24,8 @@
+ #include <sysclib.h>
+ #include <sysmem.h>
+ #include <thbase.h>
++#ifdef CDVD_VARIANT_XOSD
++#include <ssbusc.h>
++#endif
+ #include <thevent.h>
+ #include <thsemap.h>
+diff --git a/iop/cdvd/cdvdman/src/imports.lst b/iop/cdvd/cdvdman/src/imports.lst
+--- a/iop/cdvd/cdvdman/src/imports.lst
++++ b/iop/cdvd/cdvdman/src/imports.lst
+@@ -83,3 +83,12 @@
+ I_devctl
+ I_ioctl2
+ iomanX_IMPORTS_end
++
++#ifdef CDVD_VARIANT_XOSD
++ssbusc_IMPORTS_start
++I_SetDelay
++I_GetDelay
++I_SetBaseAddress
++I_GetBaseAddress
++ssbusc_IMPORTS_end
++#endif

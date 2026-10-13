@@ -124,6 +124,10 @@ static void installed_apps(void) {
                (unsigned long)(parts[i].size_sectors / 2048));
       n++;
     }
+    if (np < 0) {
+      ui_message("Remove installed apps", "Cannot read the HDD partition table. No apps were removed.");
+      return;
+    }
     if (!n) {
       ui_message("Installed Apps", "No app channels on the HDD.");
       return;
@@ -143,9 +147,15 @@ static void installed_apps(void) {
     pfs_umount(PFS_WORK);
     int rc = 0;
     inst_err_t e = hdd_remove_exact(names[c], &rc);
+    if (!e) {
+      rc = hdd_exists(names[c]);
+      if (rc != 0) e = ERR_PARTITION_DELETE;
+    }
     if (e) {
       snprintf(txt, sizeof(txt), "Could not remove %s\n%s (code %d).", names[c], err_text(e), rc);
       ui_message("Delete failed", txt);
+    } else {
+      ui_message("App removed", "The app channel and its files were removed. Restart the DESR to refresh the XMB.");
     }
   }
 }
@@ -154,7 +164,7 @@ void flow_apps(void) {
   static char rows[3][UI_ROW_LEN] = {
       "Install App from UDPFS (server folder APPS)",
       "Install App from USB (folder APPS)",
-      "Installed Apps",
+      "Remove installed apps",
   };
   int sel = 0;
   for (;;) {

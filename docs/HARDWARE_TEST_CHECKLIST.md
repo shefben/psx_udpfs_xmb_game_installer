@@ -1,5 +1,20 @@
 # Hardware test checklist
 
+## Disc and selection changes (2026-10-13)
+
+| Check | Expected result | Status |
+|---|---|---|
+| Install Games, Remove Games, Repair XMB Channels opened | Nothing selected; Square selects, Start toggles all/none where shown; O writes nothing | NOT RUN |
+| Select two games to remove; leave others unchecked | One destructive confirmation; only selected game/channel partitions removed | NOT RUN |
+| Select two channels to repair, with sorting/filtering | Only selected channels repaired; failed game reported; remaining selections still processed | NOT RUN |
+| Apps → Remove installed apps | Selected homebrew channel deleted; other apps and games retained | NOT RUN |
+| Settings | Network, copy engine and PSX1/PSX2 selection accessible; saved configuration survives reboot | NOT RUN |
+| Physical PS2 CD, DVD5 and DVD9 on both DESR generations | Full copy and HDD CRC verification; DVD9 includes layer 1; correct XMB launch | NOT RUN |
+| Physical PS1 data-only and mixed audio/data CDs | Complete VCD and CRC read-back; correct game ID, launch and CDDA playback | NOT RUN |
+| Disc removed/replaced or unreadable during copy | Read failure; no successful/verified channel claimed for incomplete data | NOT RUN |
+| Disc use followed by network restart and another disc install | Lazy CDVD services initialize again after IOP reset | NOT RUN |
+| LBA48-capable DVRP firmware, game data beyond 28-bit range | Automatic ATAD detection; copy/read-back works without application LBA48 flags | NOT RUN |
+
 Three verification levels. A feature is only described as supported on
 a DESR once its row in the corresponding table is `PASS`.
 

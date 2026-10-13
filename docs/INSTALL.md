@@ -90,7 +90,7 @@ channel** succeeds.
    `games`, `install`; see `udpfsd-example/README.txt`) and start it.
    The server reads every game once and publishes its list, titles,
    jackets and OPL configs.
-2. **Install All Games from the server**. The list appears at once (no
+2. **Install Games from the server**. The list appears at once (no
    per-game probing over the network) and shows type, file, startup ID,
    size and status: `new` (selected), `already on HDD`, `duplicate`
    (e.g. the same game as `.iso` and `.zso`), `not a PS2 image`,
